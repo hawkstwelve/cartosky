@@ -6,16 +6,23 @@ function GlassCard({
   title,
   desc,
   children,
+  right,
 }: {
   title: string;
   desc?: string;
   children?: React.ReactNode;
+  right?: React.ReactNode;
 }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-black/25 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
       <div className="p-5">
-        <div className="text-sm font-semibold text-white">{title}</div>
-        {desc ? <div className="mt-1 text-sm text-white/65">{desc}</div> : null}
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-sm font-semibold text-white">{title}</div>
+            {desc ? <div className="mt-1 text-sm text-white/65">{desc}</div> : null}
+          </div>
+          {right ? <div className="shrink-0">{right}</div> : null}
+        </div>
         {children ? <div className="mt-4">{children}</div> : null}
       </div>
     </div>
@@ -39,9 +46,7 @@ function formatRunLabel(runId?: string): string {
   const runMatch = normalized.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i);
   if (runMatch) {
     const [, year, month, day, hour] = runMatch;
-    const runDate = new Date(
-      Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), 0, 0)
-    );
+    const runDate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), 0, 0));
     const dateLabel = new Intl.DateTimeFormat("en-US", {
       month: "short",
       day: "numeric",
@@ -55,18 +60,42 @@ function formatRunLabel(runId?: string): string {
   return normalized;
 }
 
-type ModelRow = {
-  key: string;
-  modelId: string;
-  domain: string;
-  update: string;
-  resolution: string;
-  forecast: string;
-  notes: string;
+type ModelDef = {
+  id: string;
+  name: string;
+  oneLiner: string;
+  pills: string[];
+  bestFor: string[];
+  limitations: string[];
+  notes?: string[];
+  specs?: { k: string; v: string }[];
 };
+
+function Section({
+  label,
+  items,
+}: {
+  label: string;
+  items: string[];
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="text-[11px] uppercase tracking-wider text-white/55">{label}</div>
+      <ul className="space-y-1.5 text-sm text-white/80">
+        {items.map((t) => (
+          <li key={t} className="flex gap-2">
+            <span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-white/35" />
+            <span>{t}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export default function Models() {
   const [latestRunsByModel, setLatestRunsByModel] = useState<Record<string, string>>({});
+  const [openId, setOpenId] = useState<string>("hrrr"); // default open one model
 
   useEffect(() => {
     const controller = new AbortController();
@@ -79,41 +108,82 @@ export default function Models() {
         }
         setLatestRunsByModel(nextRuns);
       })
-      .catch(() => {
-        // keep fallback labels on transient errors
-      });
+      .catch(() => {});
 
     return () => controller.abort();
   }, []);
 
-  const rows: ModelRow[] = useMemo(
+  const models: ModelDef[] = useMemo(
     () => [
       {
-        key: "HRRR",
-        modelId: "hrrr",
-        domain: "CONUS",
-        update: "Hourly",
-        resolution: "3 km",
-        forecast: "0–18h*",
-        notes: "Storm-scale / mesoscale",
+        id: "hrrr",
+        name: "HRRR",
+        oneLiner: "Convection-permitting short range. Best for storms, wind, and mesoscale detail.",
+        pills: ["CONUS", "Hourly", "3 km"],
+        bestFor: [
+          "Convective evolution and storm mode hints",
+          "Wind maxima/gust potential and tight gradients",
+          "Banding structure (snow / deformation zones) at short lead",
+          "Rapidly evolving mesoscale features",
+        ],
+        limitations: [
+          "Short horizon compared to global guidance",
+          "Can be noisy beyond ~12–15h depending on regime",
+          "Boundary-layer biases can show up during strong mixing",
+        ],
+        notes: [
+          "Latest-run availability reflects what’s ingested and ready in this system.",
+        ],
+        specs: [
+          { k: "Domain", v: "CONUS" },
+          { k: "Cadence", v: "Hourly cycles" },
+          { k: "Horizon", v: "Short range (product-dependent)" },
+        ],
       },
       {
-        key: "NAM",
-        modelId: "nam",
-        domain: "CONUS",
-        update: "Every 6 hours",
-        resolution: "~5 km",
-        forecast: "0–60h",
-        notes: "Mesoscale (synoptic + regional)",
+        id: "gfs",
+        name: "GFS",
+        oneLiner: "Global guidance for synoptic trends and longer lead time. Great context setter.",
+        pills: ["Global", "Every 6 hours", "~25 km"],
+        bestFor: [
+          "Pattern recognition (ridges/troughs and timing)",
+          "Longer-range temperature trends",
+          "Broad QPF signals and large-scale forcing",
+          "Setting the baseline for ensembles/other guidance",
+        ],
+        limitations: [
+          "Under-resolves storm-scale detail",
+          "Convective placement/coverage often benefits from higher-res guidance",
+        ],
+        notes: [
+          "Later forecast hours typically step down in temporal granularity (product-dependent).",
+        ],
+        specs: [
+          { k: "Domain", v: "Global" },
+          { k: "Cadence", v: "00/06/12/18Z" },
+          { k: "Horizon", v: "Long range" },
+        ],
       },
       {
-        key: "GFS",
-        modelId: "gfs",
-        domain: "Global",
-        update: "Every 6 hours",
-        resolution: "~25 km",
-        forecast: "0–384h",
-        notes: "Global trends / ensembles context",
+        id: "nam",
+        name: "NAM",
+        oneLiner: "Mesoscale guidance with regional strength. Useful bridge between global and convection-permitting.",
+        pills: ["CONUS", "Every 6 hours", "~12 km"],
+        bestFor: [
+          "Synoptic-to-mesoscale structure and fronts",
+          "Thermal gradients / baroclinic setups",
+          "Broader precip placement vs storm-scale details",
+        ],
+        limitations: [
+          "Not convection-permitting at ~12 km",
+          "Use HRRR/high-res guidance for storm-scale evolution",
+        ],
+        notes: ["Included as a mid-resolution option for context and continuity."],
+        specs: [
+          { k: "Domain", v: "CONUS" },
+          { k: "Cadence", v: "Every 6 hours" },
+          { k: "Horizon", v: "Short-to-mid range" },
+        ],
       },
     ],
     []
@@ -125,15 +195,14 @@ export default function Models() {
       <section className="pt-6 md:pt-10">
         <div className="max-w-3xl">
           <h1 className="text-5xl md:text-6xl font-semibold tracking-tight leading-[1.02]">
-            Model Specs,
+            Models,
             <br />
-            <span className="text-[#577361]">No Guesswork.</span>
+            <span className="text-[#577361]">Clearly Defined.</span>
           </h1>
 
           <p className="mt-4 text-base md:text-lg text-white/70">
-            A technical catalog of supported guidance: cadence, coverage, and what each model is
-            best at. Rendering is optimized for correctness and speed—continuous fields stay smooth,
-            categorical fields stay crisp.
+            A technical catalog of supported guidance: cadence, coverage, and what each model is best at.
+            Built for fast inspection, smooth animation, and correct rendering.
           </p>
 
           <div className="mt-7 flex flex-wrap gap-3">
@@ -144,32 +213,16 @@ export default function Models() {
               Launch Viewer
             </Link>
             <Link
-              to="/variables"
+              to="/status"
               className="rounded-lg bg-black/20 px-4 py-2.5 text-sm font-medium text-white hover:bg-black/30 border border-white/15"
             >
-              Browse Variables
+              System Status
             </Link>
           </div>
         </div>
-
-        {/* Feature pills */}
-        <div className="mt-10 grid gap-4 md:grid-cols-3">
-          <GlassCard
-            title="Transparent cadence"
-            desc="Run times, update frequency, and forecast length—no ambiguity."
-          />
-          <GlassCard
-            title="Performance-first rendering"
-            desc="Fast frame animation, clean legends, and correct resampling by field type."
-          />
-          <GlassCard
-            title="Status-aware workflow"
-            desc="Know what’s ingesting, what’s ready, and what’s delayed."
-          />
-        </div>
       </section>
 
-      {/* MODEL CARDS */}
+      {/* MODEL LIST (clean) */}
       <section className="space-y-4">
         <div className="flex items-end justify-between">
           <div>
@@ -178,233 +231,105 @@ export default function Models() {
               Models
             </h2>
           </div>
-          <Link to="/status" className="text-sm text-white/70 hover:text-white">
-            System status →
-          </Link>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <GlassCard
-            title="HRRR"
-            desc="Convection-permitting short range. Best for storms, wind, and mesoscale detail."
-          >
-            <div className="grid grid-cols-3 gap-3">
-              <Pill>CONUS</Pill>
-              <Pill>Hourly</Pill>
-              <Pill>3 km</Pill>
-            </div>
+        <div className="space-y-4">
+          {models.map((m) => {
+            const isOpen = openId === m.id;
 
-            <div className="mt-4 space-y-3 text-sm text-white/75">
-              <div className="grid gap-2 md:grid-cols-2">
-                <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                  <div className="text-xs uppercase tracking-wider text-white/55">Best for</div>
-                  <div className="mt-2 text-white/80">
-                    Convective evolution, wind maxima/gusts, snow bands, rapid mesoscale changes.
+            return (
+              <GlassCard
+                key={m.id}
+                title={m.name}
+                desc={m.oneLiner}
+                right={
+                  <div className="text-xs text-white/55">
+                    Latest:{" "}
+                    <span className="text-white/75">
+                      {formatRunLabel(latestRunsByModel[m.id])}
+                    </span>
                   </div>
+                }
+              >
+                {/* pills */}
+                <div className="flex flex-wrap gap-2">
+                  {m.pills.map((p) => (
+                    <Pill key={p}>{p}</Pill>
+                  ))}
                 </div>
-                <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                  <div className="text-xs uppercase tracking-wider text-white/55">Limitations</div>
-                  <div className="mt-2 text-white/80">
-                    Short horizon; can be noisy beyond ~12–15h; boundary-layer bias during strong mixing.
+
+                {/* accordion toggle */}
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setOpenId((prev) => (prev === m.id ? "" : m.id))}
+                    className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-white/80 hover:bg-white/10 transition-colors"
+                    aria-expanded={isOpen}
+                    aria-controls={`model-${m.id}-details`}
+                  >
+                    {isOpen ? "Hide details" : "Show details"}
+                  </button>
+
+                  {m.specs?.length ? (
+                    <div className="hidden md:flex items-center gap-3 text-xs text-white/55">
+                      {m.specs.slice(0, 3).map((s) => (
+                        <span key={s.k}>
+                          {s.k}: <span className="text-white/75">{s.v}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* details */}
+                {isOpen ? (
+                  <div
+                    id={`model-${m.id}-details`}
+                    className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4"
+                  >
+                    <div className="grid gap-6 md:grid-cols-2">
+                      <Section label="Best for" items={m.bestFor} />
+                      <Section label="Limitations" items={m.limitations} />
+                    </div>
+
+                    {m.notes?.length ? (
+                      <>
+                        <div className="my-4 h-px bg-white/10" />
+                        <Section label="Notes" items={m.notes} />
+                      </>
+                    ) : null}
                   </div>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="text-xs uppercase tracking-wider text-white/55">Notes</div>
-                <div className="mt-2 text-white/80">
-                  Typical availability is ~45–75 minutes after initialization (pipeline + upstream availability can vary).
-                </div>
-              </div>
-            </div>
-          </GlassCard>
-
-          <GlassCard
-            title="GFS"
-            desc="Global guidance for synoptic trends and longer lead time. Great context setter."
-          >
-            <div className="grid grid-cols-3 gap-3">
-              <Pill>Global</Pill>
-              <Pill>Every 6 hours</Pill>
-              <Pill>~25 km</Pill>
-            </div>
-
-            <div className="mt-4 space-y-3 text-sm text-white/75">
-              <div className="grid gap-2 md:grid-cols-2">
-                <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                  <div className="text-xs uppercase tracking-wider text-white/55">Best for</div>
-                  <div className="mt-2 text-white/80">
-                    Pattern recognition, trough/ridge timing, long-range temperature trends, broad QPF signals.
-                  </div>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                  <div className="text-xs uppercase tracking-wider text-white/55">Limitations</div>
-                  <div className="mt-2 text-white/80">
-                    Under-resolves storm-scale detail; convective placement/coverage often better handled by high-res guidance.
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="text-xs uppercase tracking-wider text-white/55">Notes</div>
-                <div className="mt-2 text-white/80">
-                  Forecast length to 384h. Hourly output typically ends earlier with coarser time steps later (varies by product).
-                </div>
-              </div>
-            </div>
-          </GlassCard>
-
-          <GlassCard
-            title="NAM"
-            desc="Mesoscale guidance with regional strength. Useful bridge between global and convection-permitting."
-          >
-            <div className="grid grid-cols-3 gap-3">
-              <Pill>CONUS</Pill>
-              <Pill>Every 6 hours</Pill>
-              <Pill>~5 km</Pill>
-            </div>
-
-            <div className="mt-4 space-y-3 text-sm text-white/75">
-              <div className="grid gap-2 md:grid-cols-2">
-                <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                  <div className="text-xs uppercase tracking-wider text-white/55">Best for</div>
-                  <div className="mt-2 text-white/80">
-                    Synoptic-to-mesoscale structure, thermal gradients, fronts, and broader precipitation placement.
-                  </div>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                  <div className="text-xs uppercase tracking-wider text-white/55">Limitations</div>
-                  <div className="mt-2 text-white/80">
-                    Not convection-permitting at ~12 km; use HRRR/other high-res models for storm-scale detail.
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="text-xs uppercase tracking-wider text-white/55">Notes</div>
-                <div className="mt-2 text-white/80">
-                  Included as a mesoscale option for users who want a middle-ground view between GFS and HRRR.
-                </div>
-              </div>
-            </div>
-          </GlassCard>
-
-          <GlassCard
-            title="Roadmap"
-            desc="More models and domains are planned as the catalog expands."
-          >
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="text-xs uppercase tracking-wider text-white/55">Candidates</div>
-                <div className="mt-2 text-sm text-white/80">
-                  RAP, NAM 3km (CONUS), regional subsets, additional ensemble context.
-                </div>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="text-xs uppercase tracking-wider text-white/55">Principle</div>
-                <div className="mt-2 text-sm text-white/80">
-                  Add models only when we can deliver correct rendering + smooth interactive performance.
-                </div>
-              </div>
-            </div>
-          </GlassCard>
+                ) : null}
+              </GlassCard>
+            );
+          })}
         </div>
       </section>
 
-      {/* AT-A-GLANCE TABLE */}
+      {/* ROADMAP (simple) */}
       <section className="space-y-4">
-        <h3 className="text-lg font-semibold text-white">At-a-glance</h3>
+        <GlassCard
+          title="Roadmap"
+          desc="More models and domains are planned as the catalog expands."
+        >
+          <div className="space-y-3 text-sm text-white/75">
+            <div className="text-[11px] uppercase tracking-wider text-white/55">Candidates</div>
+            <div className="text-white/80">
+              RAP, additional high-res domains, regional subsets, more ensemble context.
+            </div>
 
-        <div className="rounded-2xl border border-white/10 bg-black/25 backdrop-blur-xl overflow-hidden">
-          <div className="grid grid-cols-7 gap-0 text-xs text-white/60 border-b border-white/10 bg-white/5">
-            <div className="px-4 py-3">Model</div>
-            <div className="px-4 py-3">Domain</div>
-            <div className="px-4 py-3">Update</div>
-            <div className="px-4 py-3">Latest Run</div>
-            <div className="px-4 py-3">Resolution</div>
-            <div className="px-4 py-3">Forecast</div>
-            <div className="px-4 py-3">Notes</div>
+            <div className="my-2 h-px bg-white/10" />
+
+            <div className="text-[11px] uppercase tracking-wider text-white/55">Principle</div>
+            <div className="text-white/80">
+              Add models only when we can deliver correct rendering + smooth interactive performance.
+            </div>
           </div>
-
-          {rows.map((row) => (
-            <div
-              key={row.key}
-              className="grid grid-cols-7 text-sm text-white/80 border-b border-white/5 last:border-b-0"
-            >
-              <div className="px-4 py-3 font-medium">{row.key}</div>
-              <div className="px-4 py-3 text-white/70">{row.domain}</div>
-              <div className="px-4 py-3 text-white/70">{row.update}</div>
-              <div className="px-4 py-3 text-white/70">{formatRunLabel(latestRunsByModel[row.modelId])}</div>
-              <div className="px-4 py-3 text-white/70">{row.resolution}</div>
-              <div className="px-4 py-3 text-white/70">{row.forecast}</div>
-              <div className="px-4 py-3 text-white/70">{row.notes}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="text-xs text-white/55">
-          *HRRR horizon can vary by cycle/product availability; the viewer displays what is currently ingested and ready.
-        </div>
-      </section>
-
-      {/* PIPELINE + RENDERING */}
-      <section className="space-y-4">
-        <div className="grid gap-4 md:grid-cols-2">
-          <GlassCard
-            title="Processing pipeline"
-            desc="What happens between a model run and what you see in the viewer."
-          >
-            <ol className="space-y-2 text-sm text-white/75 list-decimal pl-5">
-              <li>Detect run availability and select run metadata</li>
-              <li>Fetch GRIB subsets required for supported variables</li>
-              <li>Decode/extract fields; apply unit conversions where appropriate</li>
-              <li>Reproject to web map tiling space</li>
-              <li>Render RGBA frames (variable-specific color mapping + alpha policy)</li>
-              <li>Write Cloud-Optimized GeoTIFFs (COGs) + generate tile artifacts</li>
-              <li>Publish tiles and frame metadata; CDN cache warms automatically</li>
-            </ol>
-
-            <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-white/75">
-              Status and ingest timing are exposed on the <Link className="text-white hover:text-white/90 underline underline-offset-4" to="/status">Status</Link> page.
-            </div>
-          </GlassCard>
-
-          <GlassCard
-            title="Rendering policy"
-            desc="Correct resampling and crisp categorical boundaries."
-          >
-            <div className="space-y-3 text-sm text-white/75">
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="text-xs uppercase tracking-wider text-white/55">Continuous fields</div>
-                <div className="mt-2 text-white/80">
-                  Bilinear resampling for smooth gradients (temperature, wind, pressure, etc.).
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="text-xs uppercase tracking-wider text-white/55">Categorical / indexed fields</div>
-                <div className="mt-2 text-white/80">
-                  Nearest-neighbor resampling to preserve discrete classes (ptype, categorical hazards, etc.).
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="text-xs uppercase tracking-wider text-white/55">Overlay readability</div>
-                <div className="mt-2 text-white/80">
-                  Alpha and color mapping are tuned per variable to keep basemap context visible without destroying signal.
-                </div>
-              </div>
-
-              <div className="text-xs text-white/55">
-                Variable-specific notes (units, caveats, and interpretation) live on the Variables page.
-              </div>
-            </div>
-          </GlassCard>
-        </div>
+        </GlassCard>
       </section>
 
       {/* FOOTER TRUST ROW */}
-      <section className="pt-4">
+      <section className="pt-2">
         <div className="flex flex-wrap items-center gap-6 text-xs text-white/55">
           <span>Built for fast model map sharing</span>
           <span>•</span>
