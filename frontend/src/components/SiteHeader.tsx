@@ -36,8 +36,8 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   const isMarketingVariant = variant === "marketing";
   const hideInlineAuthOnMobile = variant === "marketing" && location.pathname === "/";
   const logoClassName = isMarketingVariant
-    ? "block h-full w-auto origin-left scale-[1.25] md:scale-[1.35]"
-    : "block h-full w-auto origin-left scale-[1.15]";
+    ? "block h-16 w-auto max-w-none md:h-20"
+    : "block h-14 w-auto max-w-none md:h-16";
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -80,11 +80,11 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
       <div
         className={
           isAppVariant
-            ? "flex h-14 items-center gap-3 px-4 md:px-5"
-            : "mx-auto flex h-16 max-w-6xl items-center gap-3 md:gap-6 px-5 md:px-8"
+            ? "flex h-20 items-center gap-3 px-4 md:px-5"
+            : "mx-auto flex h-24 max-w-6xl items-center gap-3 md:gap-6 px-5 md:px-8"
         }
       >
-        <NavLink to="/" className="flex self-stretch items-center font-semibold tracking-tight text-white">
+        <NavLink to="/" className="flex shrink-0 items-center font-semibold tracking-tight text-white">
           <img src="/assets/logo.png" alt="The Weather Models" className={logoClassName} />
         </NavLink>
 
