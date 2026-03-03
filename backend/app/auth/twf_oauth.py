@@ -42,7 +42,16 @@ AUTHORIZE_ENDPOINT = f"{TWF_BASE.rstrip('/')}/oauth/authorize/"
 TOKEN_ENDPOINT = f"{TWF_BASE.rstrip('/')}/oauth/token/"
 API_ME_ENDPOINT = os.getenv("TWF_ME_ENDPOINT", f"{TWF_BASE.rstrip('/')}/api/core/me/")
 API_CREATE_TOPIC = f"{TWF_BASE.rstrip('/')}/api/forums/topics"
+
 API_LIST_FORUMS = f"{TWF_BASE.rstrip('/')}/api/forums/forums"
+
+TWF_API_KEY = os.getenv("TWF_API_KEY", "").strip()
+
+def _auth_headers(access_token: str) -> dict[str, str]:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    if TWF_API_KEY:
+        headers["X-API-Key"] = TWF_API_KEY
+    return headers
 
 
 # ----------------------------
@@ -189,7 +198,7 @@ async def refresh_access_token(refresh_token: str) -> dict[str, Any]:
         return r.json()
 
 async def twf_me(access_token: str) -> dict[str, Any]:
-    headers = {"Authorization": f"Bearer {access_token}"}
+    headers = _auth_headers(access_token)
     base = API_ME_ENDPOINT
     # Try both slash/no-slash variants because IPS installs vary.
     urls = [base, base.rstrip("/"), base.rstrip("/") + "/"]
@@ -231,7 +240,7 @@ async def ensure_fresh_tokens(sess: TwfSession) -> TwfSession:
 
 async def create_topic(sess: TwfSession, forum_id: int, title: str, content: str) -> dict[str, Any]:
     sess = await ensure_fresh_tokens(sess)
-    headers = {"Authorization": f"Bearer {sess.access_token}"}
+    headers = _auth_headers(sess.access_token)
 
     # Invision expects form-encoded for POST/PUT in practice; use data= not json=
     data = {
@@ -247,7 +256,7 @@ async def create_topic(sess: TwfSession, forum_id: int, title: str, content: str
 
 async def list_forums(sess: TwfSession) -> dict[str, Any]:
     sess = await ensure_fresh_tokens(sess)
-    headers = {"Authorization": f"Bearer {sess.access_token}"}
+    headers = _auth_headers(sess.access_token)
     async with httpx.AsyncClient(timeout=20) as client:
         r = await client.get(API_LIST_FORUMS, headers=headers)
         r.raise_for_status()
