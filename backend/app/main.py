@@ -319,14 +319,12 @@ async def twf_share_guards(request: Request, call_next):
                 )
         if retry_after > 0:
             logger.warning(
-                "TWF rate limit exceeded",
-                extra={
-                    "request_id": request_id,
-                    "path": request.url.path,
-                    "client_ip": ip,
-                    "has_session": bool(session_id),
-                    "retry_after": retry_after,
-                },
+                "TWF rate limit exceeded request_id=%s path=%s ip=%s has_session=%s retry_after=%s",
+                request_id,
+                request.url.path,
+                ip,
+                bool(session_id),
+                retry_after,
             )
             response = _error_response(
                 status_code=429,
@@ -344,19 +342,18 @@ async def twf_share_guards(request: Request, call_next):
 
 @app.exception_handler(twf_oauth.TwfUpstreamError)
 async def twf_upstream_error_handler(request: Request, exc: twf_oauth.TwfUpstreamError) -> JSONResponse:
+    rid = getattr(request.state, "request_id", None)
     logger.warning(
-        "TWF upstream error",
-        extra={
-            "request_id": getattr(request.state, "request_id", None),
-            "path": request.url.path,
-            "method": request.method,
-            "client_ip": _client_ip(request),
-            "has_session": bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
-            "error_code": exc.code,
-            "upstream_status": exc.upstream_status,
-            "upstream_code": exc.upstream_code,
-            "status_code": exc.status_code,
-        },
+        "TWF upstream error request_id=%s path=%s method=%s ip=%s has_session=%s error_code=%s upstream_status=%s upstream_code=%s status_code=%s",
+        rid,
+        request.url.path,
+        request.method,
+        _client_ip(request),
+        bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
+        exc.code,
+        exc.upstream_status,
+        exc.upstream_code,
+        exc.status_code,
     )
     return _error_response(
         status_code=exc.status_code,
@@ -370,17 +367,16 @@ async def twf_upstream_error_handler(request: Request, exc: twf_oauth.TwfUpstrea
 
 @app.exception_handler(TwfApiError)
 async def twf_api_error_handler(request: Request, exc: TwfApiError) -> JSONResponse:
+    rid = getattr(request.state, "request_id", None)
     logger.warning(
-        "TWF API error",
-        extra={
-            "request_id": getattr(request.state, "request_id", None),
-            "path": request.url.path,
-            "method": request.method,
-            "client_ip": _client_ip(request),
-            "has_session": bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
-            "error_code": exc.code,
-            "status_code": exc.status_code,
-        },
+        "TWF API error request_id=%s path=%s method=%s ip=%s has_session=%s error_code=%s status_code=%s",
+        rid,
+        request.url.path,
+        request.method,
+        _client_ip(request),
+        bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
+        exc.code,
+        exc.status_code,
     )
     return _error_response(
         status_code=exc.status_code,
