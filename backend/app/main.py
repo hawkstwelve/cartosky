@@ -154,6 +154,23 @@ async def twf_start() -> RedirectResponse:
     )
     return resp
 
+from fastapi import HTTPException, Request
+from typing import Any
+
+@app.get("/auth/twf/me")
+async def twf_me_debug(request: Request) -> dict[str, Any]:
+    sid = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
+    if not sid:
+        raise HTTPException(status_code=401, detail="Not logged in")
+
+    sess = twf_oauth.get_session(sid)
+    if not sess:
+        raise HTTPException(status_code=401, detail="Not logged in")
+
+    # Ensure token is fresh, then call IPS "me"
+    sess = await twf_oauth.ensure_fresh_tokens(sess)
+    me = await twf_oauth.twf_me(sess.access_token)
+    return {"me": me}
 
 @app.get("/auth/twf/callback")
 async def twf_callback(
