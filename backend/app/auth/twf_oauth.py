@@ -40,7 +40,7 @@ FERNET = Fernet(TOKEN_ENC_KEY.encode("utf-8"))
 
 AUTHORIZE_ENDPOINT = f"{TWF_BASE.rstrip('/')}/oauth/authorize/"
 TOKEN_ENDPOINT = f"{TWF_BASE.rstrip('/')}/oauth/token/"
-API_ME_ENDPOINT = f"{TWF_BASE.rstrip('/')}/api/core/me"
+API_ME_ENDPOINT = os.getenv("TWF_ME_ENDPOINT", f"{TWF_BASE.rstrip('/')}/api/core/me/")
 API_CREATE_TOPIC = f"{TWF_BASE.rstrip('/')}/api/forums/topics"
 API_LIST_FORUMS = f"{TWF_BASE.rstrip('/')}/api/forums/forums"
 
@@ -190,10 +190,29 @@ async def refresh_access_token(refresh_token: str) -> dict[str, Any]:
 
 async def twf_me(access_token: str) -> dict[str, Any]:
     headers = {"Authorization": f"Bearer {access_token}"}
+    base = API_ME_ENDPOINT
+    # Try both slash/no-slash variants because IPS installs vary.
+    urls = [base, base.rstrip("/"), base.rstrip("/") + "/"]
+
+    last_exc: Exception | None = None
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(API_ME_ENDPOINT, headers=headers)
-        r.raise_for_status()
-        return r.json()
+        for url in urls:
+            try:
+                r = await client.get(url, headers=headers)
+                if r.status_code >= 400:
+                    detail = (r.text or "")
+                    raise httpx.HTTPStatusError(
+                        f"{r.status_code} for {url}: {detail[:500]}",
+                        request=r.request,
+                        response=r,
+                    )
+                return r.json()
+            except Exception as e:
+                last_exc = e
+                continue
+
+    assert last_exc is not None
+    raise last_exc
 
 async def ensure_fresh_tokens(sess: TwfSession) -> TwfSession:
     # refresh if expiring within 60 seconds
