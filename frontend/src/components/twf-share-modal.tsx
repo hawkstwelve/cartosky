@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Copy, ExternalLink, Loader2, Send, X } from "lucide-react";
 
 import { API_ORIGIN } from "@/lib/config";
@@ -250,6 +250,7 @@ async function writeClipboard(text: string): Promise<boolean> {
 
 export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
   const initialSharePrefs = useMemo(() => getSharePrefs(), []);
+  const wasOpenRef = useRef(false);
   const [twfStatus, setTwfStatus] = useState<TwfStatus>({ linked: false });
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -274,8 +275,13 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
   const [submitError, setSubmitError] = useState<ApiErrorInfo | null>(null);
   const [retryAfterSeconds, setRetryAfterSeconds] = useState<number | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<SharePostResult | null>(null);
+  const [submitTopicTitle, setSubmitTopicTitle] = useState<string | null>(null);
   const [clipboardStatus, setClipboardStatus] = useState<string | null>(null);
   const [showDetailsSummary, setShowDetailsSummary] = useState(false);
+  const [showAdvancedTopic, setShowAdvancedTopic] = useState(false);
+  const [isMessageExpanded, setIsMessageExpanded] = useState(false);
+  const [hasExpandedMessageEditor, setHasExpandedMessageEditor] = useState(false);
+  const [contentDirty, setContentDirty] = useState(false);
 
   const parsedTopicIdFromUrl = useMemo(() => parseTopicIdFromUrl(pastedTopicUrl), [pastedTopicUrl]);
   const pastedTopicUrlHasValue = pastedTopicUrl.trim().length > 0;
@@ -296,25 +302,53 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
   const defaultContent = useMemo(() => {
     return `Link to Viewer: ${payload.permalink}\nSummary: ${payload.summary}`;
   }, [payload.permalink, payload.summary]);
+  const selectedTopicTitle = useMemo(() => {
+    const topicId = parsedTopicIdFromUrl ?? selectedTopicId;
+    if (!Number.isFinite(topicId) || Number(topicId) <= 0) {
+      return null;
+    }
+    const found = topics.find((topic) => topic.id === Number(topicId));
+    if (found?.title) {
+      return found.title;
+    }
+    return parsedTopicIdFromUrl ? "Custom topic URL" : null;
+  }, [parsedTopicIdFromUrl, selectedTopicId, topics]);
 
   useEffect(() => {
     if (!open) {
+      wasOpenRef.current = false;
       return;
     }
+    if (wasOpenRef.current) {
+      return;
+    }
+    wasOpenRef.current = true;
     const prefs = getSharePrefs();
     const persistedForumId = forumIdFromPrefs(prefs);
     setSelectedForumId(persistedForumId);
     setShowOtherForums(prefs.forumMode === "other" || !isQuickForumId(persistedForumId));
     setSelectedTopicId(prefs.topicId ?? null);
     setContent(defaultContent);
+    setContentDirty(false);
+    setIsMessageExpanded(false);
+    setHasExpandedMessageEditor(false);
     setSubmitError(null);
     setSubmitSuccess(null);
+    setSubmitTopicTitle(null);
     setRetryAfterSeconds(null);
     setClipboardStatus(null);
     setShowDetailsSummary(false);
+    setShowAdvancedTopic(false);
     setPastedTopicUrl("");
     setTopicSearch("");
   }, [open, defaultContent]);
+
+  useEffect(() => {
+    if (!open || contentDirty) {
+      return;
+    }
+    setContent(defaultContent);
+  }, [open, defaultContent, contentDirty]);
 
   useEffect(() => {
     if (!open) {
@@ -434,6 +468,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
     setTopicsLoading(true);
     setTopicsError(null);
     setSubmitSuccess(null);
+    setSubmitTopicTitle(null);
 
     fetch(`${API_ORIGIN}/twf/topics?${params.toString()}`, {
       method: "GET",
@@ -479,6 +514,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
   const handleSubmitPost = async () => {
     setSubmitError(null);
     setSubmitSuccess(null);
+    setSubmitTopicTitle(null);
     setRetryAfterSeconds(null);
 
     if (twfStatus.linked !== true) {
@@ -486,10 +522,11 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
       return;
     }
     if (!Number.isFinite(effectiveTopicId) || Number(effectiveTopicId) <= 0) {
-      setSubmitError({ message: "Select a topic or paste a valid topic URL." });
+      setSubmitError({ message: "Select a topic to post." });
       return;
     }
-    const trimmedContent = content.trim();
+    const resolvedContent = (hasExpandedMessageEditor ? content : defaultContent).trim();
+    const trimmedContent = resolvedContent;
     if (!trimmedContent) {
       setSubmitError({ message: "Post content is required." });
       return;
@@ -525,11 +562,32 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
         return;
       }
       setSubmitSuccess(result);
+      setSubmitTopicTitle(selectedTopicTitle ?? "Selected topic");
     } catch {
       setSubmitError({ message: "Request failed. Please try again." });
     } finally {
       setSubmitBusy(false);
     }
+  };
+
+  const handleMessageToggle = () => {
+    setIsMessageExpanded((current) => {
+      const next = !current;
+      if (next) {
+        setHasExpandedMessageEditor(true);
+      }
+      return next;
+    });
+  };
+
+  const handleMessageChange = (nextValue: string) => {
+    setContent(nextValue);
+    setContentDirty(nextValue !== defaultContent);
+  };
+
+  const handleResetMessage = () => {
+    setContent(defaultContent);
+    setContentDirty(false);
   };
 
   if (!open) {
@@ -551,7 +609,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
         <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
           <div>
             <div className="text-sm font-semibold text-white">Share</div>
-            <div className="text-xs text-white/60">Copy permalink/summary or post directly to a target.</div>
+            <div className="text-xs text-white/60">Copy link/summary or post directly to The Weather Forums.</div>
           </div>
           <button
             type="button"
@@ -636,10 +694,10 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
               <div className="space-y-3">
                 <div className="flex items-center gap-2 rounded-lg border border-emerald-300/20 bg-emerald-400/10 px-3 py-2 text-sm text-emerald-50">
                   <CheckCircle2 className="h-4 w-4" />
-                  Post created successfully.
+                  Posted successfully.
                 </div>
                 <div className="text-xs text-white/70">
-                  Topic ID: {submitSuccess.topicId} - Post ID: {submitSuccess.postId}
+                  Posted to: <span className="text-white">{submitTopicTitle ?? "Selected topic"}</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <a
@@ -664,7 +722,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
               <div className="space-y-4">
                 <div className="grid gap-2">
                   <div>
-                    <div className="mb-1 text-xs uppercase tracking-wider text-white/60">Forum</div>
+                    <div className="mb-1 text-xs uppercase tracking-wider text-white/60">Choose forum</div>
                     <div className="flex flex-wrap items-center gap-2">
                       {QUICK_FORUMS.map((forum) => (
                         <button
@@ -750,30 +808,59 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
                       <div className="text-xs text-white/65">No topics loaded for this forum.</div>
                     )}
                     {topicsError ? <div className="mt-1 text-xs text-red-200">{topicsError}</div> : null}
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedTopic((current) => !current)}
+                      className="mt-2 text-[11px] font-medium text-emerald-200/90 hover:text-emerald-100"
+                    >
+                      {showAdvancedTopic ? "Advanced ▾" : "Advanced ▸"}
+                    </button>
                   </div>
 
-                  <div>
-                    <div className="mb-1 text-xs uppercase tracking-wider text-white/60">Paste topic URL (optional)</div>
-                    <input
-                      value={pastedTopicUrl}
-                      onChange={(event) => setPastedTopicUrl(event.target.value)}
-                      placeholder="https://www.theweatherforums.com/topic/123..."
-                      className="h-8 w-full rounded-md border border-white/15 bg-black/35 px-2 text-xs text-white outline-none placeholder:text-white/40 focus:border-emerald-300/40"
-                    />
-                    {pastedTopicUrlError ? <div className="mt-1 text-xs text-red-200">{pastedTopicUrlError}</div> : null}
-                    {parsedTopicIdFromUrl ? (
-                      <div className="mt-1 text-xs text-emerald-200/90">Using topic ID {parsedTopicIdFromUrl} from URL.</div>
-                    ) : null}
-                  </div>
+                  {showAdvancedTopic ? (
+                    <div>
+                      <div className="mb-1 text-xs uppercase tracking-wider text-white/60">Paste topic URL (optional)</div>
+                      <input
+                        value={pastedTopicUrl}
+                        onChange={(event) => setPastedTopicUrl(event.target.value)}
+                        placeholder="https://www.theweatherforums.com/topic/123..."
+                        className="h-8 w-full rounded-md border border-white/15 bg-black/35 px-2 text-xs text-white outline-none placeholder:text-white/40 focus:border-emerald-300/40"
+                      />
+                      {pastedTopicUrlError ? <div className="mt-1 text-xs text-red-200">{pastedTopicUrlError}</div> : null}
+                      {parsedTopicIdFromUrl ? (
+                        <div className="mt-1 text-xs text-emerald-200/90">Using selected topic from pasted URL.</div>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   <div>
                     <div className="mb-1 text-xs uppercase tracking-wider text-white/60">Post content</div>
-                    <textarea
-                      value={content}
-                      onChange={(event) => setContent(event.target.value)}
-                      rows={6}
-                      className="w-full rounded-md border border-white/15 bg-black/35 px-2 py-2 text-xs text-white outline-none focus:border-emerald-300/40"
-                    />
+                    <button
+                      type="button"
+                      onClick={handleMessageToggle}
+                      className="text-[11px] font-medium text-emerald-200/90 hover:text-emerald-100"
+                    >
+                      {isMessageExpanded ? "Auto-generated message ▾" : "Auto-generated message ▸"}
+                    </button>
+                    {!isMessageExpanded ? (
+                      <div className="mt-1 text-xs text-white/60">Auto-generated message (click to edit)</div>
+                    ) : (
+                      <div className="mt-1 space-y-1.5">
+                        <textarea
+                          value={content}
+                          onChange={(event) => handleMessageChange(event.target.value)}
+                          rows={6}
+                          className="w-full rounded-md border border-white/15 bg-black/35 px-2 py-2 text-xs text-white outline-none focus:border-emerald-300/40"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleResetMessage}
+                          className="text-[11px] font-medium text-emerald-200/90 hover:text-emerald-100"
+                        >
+                          Reset to default
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -787,7 +874,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
 
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-xs text-white/60">
-                    {effectiveTopicId ? `Posting to topic ID ${effectiveTopicId}` : "Select or paste a topic to post"}
+                    {selectedTopicTitle ? `Posting in: ${selectedTopicTitle}` : "Select a topic to post"}
                   </div>
                   <button
                     type="button"
