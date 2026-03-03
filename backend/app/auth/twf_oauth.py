@@ -41,9 +41,9 @@ FERNET = Fernet(TOKEN_ENC_KEY.encode("utf-8"))
 AUTHORIZE_ENDPOINT = f"{TWF_BASE.rstrip('/')}/oauth/authorize/"
 TOKEN_ENDPOINT = f"{TWF_BASE.rstrip('/')}/oauth/token/"
 API_ME_ENDPOINT = os.getenv("TWF_ME_ENDPOINT", f"{TWF_BASE.rstrip('/')}/api/core/me/")
-API_CREATE_TOPIC = f"{TWF_BASE.rstrip('/')}/api/forums/topics"
-
-API_LIST_FORUMS = f"{TWF_BASE.rstrip('/')}/api/forums/forums"
+# IPS REST routing differs by install (friendly vs index.php). Your site uses index.php routing.
+API_CREATE_TOPIC = os.getenv("TWF_TOPICS_ENDPOINT", f"{TWF_BASE.rstrip('/')}/api/index.php?/forums/topics").strip()
+API_LIST_FORUMS = os.getenv("TWF_FORUMS_ENDPOINT", f"{TWF_BASE.rstrip('/')}/api/index.php?/forums/forums").strip()
 
 TWF_API_KEY = os.getenv("TWF_API_KEY", "").strip()
 
@@ -249,18 +249,56 @@ async def create_topic(sess: TwfSession, forum_id: int, title: str, content: str
         "post": content,
     }
 
+    base = API_CREATE_TOPIC
+    urls = [base, base.rstrip("/"), base.rstrip("/") + "/"]
+
+    last_exc: Exception | None = None
     async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(API_CREATE_TOPIC, headers=headers, data=data)
-        r.raise_for_status()
-        return r.json()
+        for url in urls:
+            try:
+                r = await client.post(url, headers=headers, data=data)
+                if r.status_code >= 400:
+                    detail = (r.text or "")
+                    raise httpx.HTTPStatusError(
+                        f"{r.status_code} for {url}: {detail[:500]}",
+                        request=r.request,
+                        response=r,
+                    )
+                return r.json()
+            except Exception as e:
+                last_exc = e
+                continue
+
+    assert last_exc is not None
+    raise last_exc
 
 async def list_forums(sess: TwfSession) -> dict[str, Any]:
     sess = await ensure_fresh_tokens(sess)
     headers = _auth_headers(sess.access_token)
+
+    # Try configured endpoint plus slash/no-slash variants.
+    base = API_LIST_FORUMS
+    urls = [base, base.rstrip("/"), base.rstrip("/") + "/"]
+
+    last_exc: Exception | None = None
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(API_LIST_FORUMS, headers=headers)
-        r.raise_for_status()
-        return r.json()
+        for url in urls:
+            try:
+                r = await client.get(url, headers=headers)
+                if r.status_code >= 400:
+                    detail = (r.text or "")
+                    raise httpx.HTTPStatusError(
+                        f"{r.status_code} for {url}: {detail[:500]}",
+                        request=r.request,
+                        response=r,
+                    )
+                return r.json()
+            except Exception as e:
+                last_exc = e
+                continue
+
+    assert last_exc is not None
+    raise last_exc
 
 
 # ----------------------------
