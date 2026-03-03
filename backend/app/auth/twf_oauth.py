@@ -296,8 +296,10 @@ def _plain_text_to_ips_html(content: str) -> str:
 async def create_post(sess: TwfSession, topic_id: int, content: str) -> dict[str, Any]:
     sess = await ensure_fresh_tokens(sess)
     headers = _auth_headers(sess.access_token)
-    payload = {
-        "topic": int(topic_id),
+
+    # Match create_topic(): form-encoded, not JSON
+    data = {
+        "topic": str(topic_id),
         "post": _plain_text_to_ips_html(content),
     }
 
@@ -308,7 +310,7 @@ async def create_post(sess: TwfSession, topic_id: int, content: str) -> dict[str
     async with httpx.AsyncClient(timeout=30) as client:
         for url in urls:
             try:
-                r = await client.post(url, headers=headers, json=payload)
+                r = await client.post(url, headers=headers, data=data)  # <-- data= not json=
                 if r.status_code >= 400:
                     detail = (r.text or "")
                     raise httpx.HTTPStatusError(
