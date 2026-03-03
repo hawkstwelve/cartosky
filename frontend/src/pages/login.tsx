@@ -11,6 +11,13 @@ type ShareResult = {
   title: string;
 };
 
+type TwfForum = {
+  id: number;
+  name: string;
+  path?: string;
+  url?: string;
+};
+
 function GlassCard({
   title,
   desc,
@@ -46,6 +53,11 @@ export default function Login() {
   const [statusError, setStatusError] = useState<string | null>(null);
 
   const [shareForumId, setShareForumId] = useState<string>("");
+
+  const [forums, setForums] = useState<TwfForum[]>([]);
+  const [forumsLoading, setForumsLoading] = useState(false);
+  const [forumsError, setForumsError] = useState<string | null>(null);
+
   const [shareTitle, setShareTitle] = useState<string>("Map share from The Weather Models");
   const [shareContent, setShareContent] = useState<string>(
     "Sharing a map from The Weather Models.\n\n(Replace this with your map link, GIF, or details.)"
@@ -82,6 +94,69 @@ export default function Login() {
 
     return () => controller.abort();
   }, [apiBase]);
+
+  const connected = status.linked === true;
+
+  useEffect(() => {
+    if (!connected) {
+      setForums([]);
+      setForumsError(null);
+      setForumsLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setForumsLoading(true);
+    setForumsError(null);
+
+    fetch(`${apiBase}/twf/forums`, {
+      method: "GET",
+      credentials: "include",
+      signal: controller.signal,
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const text = await r.text().catch(() => "");
+          throw new Error(text || `Forums request failed (${r.status})`);
+        }
+        return (await r.json()) as any;
+      })
+      .then((data: any) => {
+        const list: any[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.results)
+          ? data.results
+          : Array.isArray(data?.forums)
+          ? data.forums
+          : [];
+
+        const normalized: TwfForum[] = list
+          .map((f: any) => ({
+            id: Number(f?.id),
+            name: String(f?.name ?? ""),
+            path: typeof f?.path === "string" ? f.path : undefined,
+            url: typeof f?.url === "string" ? f.url : undefined,
+          }))
+          .filter((f) => Number.isFinite(f.id) && f.id > 0 && f.name.trim().length > 0)
+          .sort((a, b) => (a.path ?? a.name).localeCompare(b.path ?? b.name));
+
+        setForums(normalized);
+
+        // Auto-select the first forum if none chosen yet.
+        if (!shareForumId && normalized.length > 0) {
+          setShareForumId(String(normalized[0].id));
+        }
+      })
+      .catch((e: unknown) => {
+        if ((e as any)?.name === "AbortError") return;
+        setForums([]);
+        setForumsError((e as Error).message || "Failed to load forums");
+      })
+      .finally(() => setForumsLoading(false));
+
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBase, connected]);
 
   function startTwfLogin() {
     // Full-page redirect is required for OAuth.
@@ -150,8 +225,6 @@ export default function Login() {
       setShareBusy(false);
     }
   }
-
-  const connected = status.linked === true;
 
   return (
     <div className="space-y-10">
@@ -238,15 +311,37 @@ export default function Login() {
             <div className="space-y-4">
               <div className="grid gap-3">
                 <div>
-                  <label className="block text-xs uppercase tracking-wider text-white/60">Forum ID</label>
-                  <input
-                    value={shareForumId}
-                    onChange={(e) => setShareForumId(e.target.value)}
-                    placeholder="e.g. 12"
-                    className="mt-2 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white placeholder:text-white/35 outline-none focus:border-white/20"
-                  />
+                  <label className="block text-xs uppercase tracking-wider text-white/60">Forum</label>
+
+                  {forumsLoading ? (
+                    <div className="mt-2 text-sm text-white/65">Loading forums…</div>
+                  ) : forumsError ? (
+                    <div className="mt-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-100">
+                      {forumsError}
+                    </div>
+                  ) : (
+                    <select
+                      value={shareForumId}
+                      onChange={(e) => {
+                        setShareForumId(e.target.value);
+                        setShareResult(null);
+                      }}
+                      className="mt-2 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-white/20"
+                    >
+                      {forums.length === 0 ? (
+                        <option value="">No forums found</option>
+                      ) : (
+                        forums.map((f) => (
+                          <option key={f.id} value={String(f.id)}>
+                            {(f.path ?? f.name) + ` (ID: ${f.id})`}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  )}
+
                   <div className="mt-1 text-xs text-white/55">
-                    Tip: call <span className="text-white/70">{apiBase}/twf/forums</span> to list forums and IDs.
+                    Source: <span className="text-white/70">{apiBase}/twf/forums</span>
                   </div>
                 </div>
 
