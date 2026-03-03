@@ -239,8 +239,9 @@ async def _request_json_with_variants(
             if params is not None:
                 if "index.php?/" in url:
                     # IPS legacy endpoints can mis-handle http client params= on index.php?/ routes;
-                    # inline query params after '?&' for compatibility.
-                    request_url = f"{url}?&{urlencode(params)}"
+                    # inline query params after '&' for compatibility.
+                    sep = "" if url.endswith("&") else "&"
+                    request_url = f"{url}{sep}{urlencode(params)}"
                 else:
                     request_kwargs["params"] = params
             logger.info(

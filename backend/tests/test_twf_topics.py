@@ -78,7 +78,8 @@ async def test_request_json_with_variants_inlines_params_for_index_php_routes(
     assert result == {"ok": True}
     sent_url = str(captured["url"])
     sent_kwargs = captured["kwargs"]
-    assert sent_url.endswith("index.php?/forums/topics?&forum=4&pinned=1&sortBy=updated")
+    assert sent_url.endswith("index.php?/forums/topics&forum=4&pinned=1&sortBy=updated")
+    assert "index.php?/forums/topics?&" not in sent_url
     assert "index.php?/forums/topics?forum=4" not in sent_url
     assert isinstance(sent_kwargs, dict)
     assert "params" not in sent_kwargs
