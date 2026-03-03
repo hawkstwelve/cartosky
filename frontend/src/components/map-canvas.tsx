@@ -572,6 +572,7 @@ export function MapCanvas({
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [showAttribution, setShowAttribution] = useState(false);
   const activeBufferRef = useRef<OverlayBuffer>("a");
   const activeTileUrlRef = useRef(tileUrl);
   const swapTokenRef = useRef(0);
@@ -978,9 +979,6 @@ export function MapCanvas({
       maxZoom: view.maxZoom ?? 11,
       attributionControl: false,
     });
-
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
-    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
     const handleMapError = (event: { error?: unknown }) => {
       const err = event?.error;
@@ -1835,12 +1833,98 @@ export function MapCanvas({
     };
   }, [isLoaded]);
 
+  const handleZoomIn = useCallback(() => {
+    mapRef.current?.zoomIn({ duration: 180 });
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    mapRef.current?.zoomOut({ duration: 180 });
+  }, []);
+
   return (
-    <div
-      ref={mapContainerRef}
-      className="absolute inset-0"
-      style={{ backgroundColor: getMapBackgroundColor(basemapMode) }}
-      aria-label="Weather map"
-    />
+    <>
+      <div
+        ref={mapContainerRef}
+        className="absolute inset-0"
+        style={{ backgroundColor: getMapBackgroundColor(basemapMode) }}
+        aria-label="Weather map"
+      />
+
+      <div className="pointer-events-none absolute left-4 top-[7.5rem] z-50">
+        <div className="pointer-events-auto overflow-hidden rounded-xl border border-white/10 bg-black/40 shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md">
+          <button
+            type="button"
+            className="flex h-[34px] w-[34px] items-center justify-center text-lg font-semibold text-white/95 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            onClick={handleZoomIn}
+            aria-label="Zoom in"
+            title="Zoom in"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className="flex h-[34px] w-[34px] items-center justify-center border-t border-white/10 text-xl font-semibold text-white/95 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            onClick={handleZoomOut}
+            aria-label="Zoom out"
+            title="Zoom out"
+          >
+            -
+          </button>
+        </div>
+      </div>
+
+      <div className="pointer-events-none absolute bottom-[7.25rem] left-4 z-50 sm:bottom-24">
+        <div className="pointer-events-auto">
+          <button
+            type="button"
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-black/40 text-sm font-semibold text-white/95 shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            onClick={() => setShowAttribution((prev) => !prev)}
+            aria-label={showAttribution ? "Hide map attribution" : "Show map attribution"}
+            title={showAttribution ? "Hide map attribution" : "Show map attribution"}
+          >
+            i
+          </button>
+
+          {showAttribution ? (
+            <div className="mt-2 max-w-[320px] rounded-xl border border-white/10 bg-black/55 px-3 py-2 text-[11px] leading-relaxed text-white/90 shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md">
+              Maps:
+              {" "}
+              <a
+                href="https://www.maplibre.org/"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-white"
+              >
+                MapLibre
+              </a>
+              {" "}
+              |
+              {" "}
+              <a
+                href="https://www.openstreetmap.org/copyright"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-white"
+              >
+                OpenStreetMap contributors
+              </a>
+              {" "}
+              |
+              {" "}
+              <a
+                href="https://carto.com/attributions"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-white"
+              >
+                CARTO
+              </a>
+              <br />
+              Boundaries: Natural Earth and U.S. Census Bureau TIGER/Cartographic Boundary.
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </>
   );
 }
