@@ -172,4 +172,23 @@
   .maplibregl-ctrl-top-left .maplibregl-ctrl-group .maplibregl-ctrl-icon {
     filter: invert(1) brightness(1.45);
   }
+
+  .maplibregl-ctrl-bottom-left .maplibregl-ctrl-attrib {
+    margin: 0 0 1rem 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.75rem;
+    background-color: rgba(0, 0, 0, 0.38);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(16px) saturate(1.8);
+    -webkit-backdrop-filter: blur(16px) saturate(1.8);
+  }
+
+  .maplibregl-ctrl-bottom-left .maplibregl-ctrl-attrib a,
+  .maplibregl-ctrl-bottom-left .maplibregl-ctrl-attrib-button {
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .maplibregl-ctrl-bottom-left .maplibregl-ctrl-attrib-button:focus-visible {
+    box-shadow: inset 0 0 0 1px hsl(var(--ring));
+  }
 }
