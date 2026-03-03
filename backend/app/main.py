@@ -6,12 +6,15 @@ import hashlib
 import io
 import json
 import logging
+import math
 import os
 import re
 import secrets
 import tempfile
 import threading
 import time
+from collections import deque
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -19,6 +22,8 @@ from typing import Any
 import numpy as np
 import rasterio
 from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from PIL import Image
@@ -64,6 +69,26 @@ LOOP_TIER_CONFIG: dict[int, dict[str, int]] = {
 
 CACHE_HIT = "public, max-age=31536000, immutable"
 CACHE_MISS = "public, max-age=15"
+_TWF_SHARE_BODY_CAP_BYTES = 16 * 1024
+_TWF_RATE_WINDOW_SECONDS = 60.0
+_TWF_IP_LIMIT = 20
+_TWF_SESSION_LIMIT = 10
+_TWF_RATE_LIMIT_MESSAGE = "Too many requests. Try again shortly."
+_TWF_RATE_LIMIT_PATHS = {"/twf/share/topic", "/twf/share/post"}
+_TWF_GUARDED_PATHS = _TWF_RATE_LIMIT_PATHS
+_TWF_ERROR_PATHS = {
+    "/auth/twf/status",
+    "/auth/twf/disconnect",
+    "/twf/forums",
+    "/twf/share/topic",
+    "/twf/share/post",
+}
+_TWF_RATE_PRUNE_INTERVAL_SECONDS = 60.0
+
+_twf_rate_lock = threading.Lock()
+_twf_ip_windows: dict[str, deque[float]] = {}
+_twf_session_windows: dict[str, deque[float]] = {}
+_twf_last_prune_monotonic = 0.0
 
 
 def _frames_cache_control(run: str, *, run_complete: bool) -> str:
@@ -114,6 +139,194 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@dataclass
+class TwfApiError(Exception):
+    status_code: int
+    code: str
+    message: str
+    upstream_status: int | None = None
+    upstream_code: str | None = None
+    upstream_message: str | None = None
+
+
+def _error_payload(
+    *,
+    code: str,
+    message: str,
+    upstream_status: int | None = None,
+    upstream_code: str | None = None,
+    upstream_message: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"code": code, "message": message}
+    if upstream_status is not None:
+        payload["upstream_status"] = upstream_status
+    if upstream_code is not None:
+        payload["upstream_code"] = upstream_code
+    if upstream_message is not None:
+        payload["upstream_message"] = upstream_message
+    return {"error": payload}
+
+
+def _error_response(
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    upstream_status: int | None = None,
+    upstream_code: str | None = None,
+    upstream_message: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content=_error_payload(
+            code=code,
+            message=message,
+            upstream_status=upstream_status,
+            upstream_code=upstream_code,
+            upstream_message=upstream_message,
+        ),
+        headers=headers,
+    )
+
+
+def _validation_message(exc: RequestValidationError) -> str:
+    errors = exc.errors()
+    if not errors:
+        return "Invalid request payload."
+    first = errors[0]
+    msg = first.get("msg")
+    if isinstance(msg, str) and msg.strip():
+        return msg
+    return "Invalid request payload."
+
+
+def _rate_limit_check(
+    bucket: dict[str, deque[float]],
+    *,
+    key: str,
+    limit: int,
+    window_seconds: float,
+    now: float,
+) -> int:
+    timestamps = bucket.setdefault(key, deque())
+    cutoff = now - window_seconds
+    while timestamps and timestamps[0] <= cutoff:
+        timestamps.popleft()
+    if len(timestamps) >= limit:
+        retry_after = max(1, int(math.ceil(window_seconds - (now - timestamps[0]))))
+        return retry_after
+    timestamps.append(now)
+    return 0
+
+
+def _prune_rate_limit_bucket(
+    bucket: dict[str, deque[float]],
+    *,
+    cutoff: float,
+) -> None:
+    to_delete: list[str] = []
+    for key, timestamps in bucket.items():
+        while timestamps and timestamps[0] <= cutoff:
+            timestamps.popleft()
+        if not timestamps:
+            to_delete.append(key)
+    for key in to_delete:
+        bucket.pop(key, None)
+
+
+def _maybe_prune_rate_limit_state(now: float) -> None:
+    global _twf_last_prune_monotonic
+    if now - _twf_last_prune_monotonic < _TWF_RATE_PRUNE_INTERVAL_SECONDS:
+        return
+    cutoff = now - _TWF_RATE_WINDOW_SECONDS
+    _prune_rate_limit_bucket(_twf_ip_windows, cutoff=cutoff)
+    _prune_rate_limit_bucket(_twf_session_windows, cutoff=cutoff)
+    _twf_last_prune_monotonic = now
+
+
+def _client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        first = forwarded_for.split(",")[0].strip()
+        if first:
+            return first
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+@app.middleware("http")
+async def twf_share_guards(request: Request, call_next):
+    if request.method == "POST" and request.url.path in _TWF_GUARDED_PATHS:
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > _TWF_SHARE_BODY_CAP_BYTES:
+                    return _error_response(
+                        status_code=413,
+                        code="PAYLOAD_TOO_LARGE",
+                        message="Request body too large",
+                    )
+            except ValueError:
+                pass
+
+        body = await request.body()
+        buffered_body = body
+
+        async def receive() -> dict[str, Any]:
+            nonlocal buffered_body
+            chunk = buffered_body
+            buffered_body = b""
+            return {"type": "http.request", "body": chunk, "more_body": False}
+
+        request = Request(request.scope, receive)
+        request._body = body
+        if len(body) > _TWF_SHARE_BODY_CAP_BYTES:
+            return _error_response(
+                status_code=413,
+                code="PAYLOAD_TOO_LARGE",
+                message="Request body too large",
+            )
+
+        now = time.monotonic()
+        ip = _client_ip(request)
+        session_id = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
+        retry_after = 0
+        with _twf_rate_lock:
+            _maybe_prune_rate_limit_state(now)
+            retry_after = _rate_limit_check(
+                _twf_ip_windows,
+                key=ip,
+                limit=_TWF_IP_LIMIT,
+                window_seconds=_TWF_RATE_WINDOW_SECONDS,
+                now=now,
+            )
+            if retry_after == 0 and session_id:
+                retry_after = _rate_limit_check(
+                    _twf_session_windows,
+                    key=session_id,
+                    limit=_TWF_SESSION_LIMIT,
+                    window_seconds=_TWF_RATE_WINDOW_SECONDS,
+                    now=now,
+                )
+        if retry_after > 0:
+            logger.warning(
+                "TWF rate limit exceeded path=%s ip=%s has_session=%s retry_after=%s",
+                request.url.path,
+                ip,
+                bool(session_id),
+                retry_after,
+            )
+            return _error_response(
+                status_code=429,
+                code="RATE_LIMITED",
+                message=_TWF_RATE_LIMIT_MESSAGE,
+                headers={"Retry-After": str(retry_after)},
+            )
+
+    return await call_next(request)
+
 
 @app.exception_handler(twf_oauth.TwfUpstreamError)
 async def twf_upstream_error_handler(request: Request, exc: twf_oauth.TwfUpstreamError) -> JSONResponse:
@@ -123,17 +336,61 @@ async def twf_upstream_error_handler(request: Request, exc: twf_oauth.TwfUpstrea
         exc.upstream_status,
         exc.upstream_message,
     )
-    error: dict[str, Any] = {
-        "code": exc.code,
-        "message": exc.message,
-    }
-    if exc.upstream_status is not None:
-        error["upstream_status"] = exc.upstream_status
-    if exc.upstream_code is not None:
-        error["upstream_code"] = exc.upstream_code
-    if exc.upstream_message is not None:
-        error["upstream_message"] = exc.upstream_message
-    return JSONResponse(status_code=exc.status_code, content={"error": error})
+    return _error_response(
+        status_code=exc.status_code,
+        code=exc.code,
+        message=exc.message,
+        upstream_status=exc.upstream_status,
+        upstream_code=exc.upstream_code,
+        upstream_message=exc.upstream_message,
+    )
+
+
+@app.exception_handler(TwfApiError)
+async def twf_api_error_handler(request: Request, exc: TwfApiError) -> JSONResponse:
+    return _error_response(
+        status_code=exc.status_code,
+        code=exc.code,
+        message=exc.message,
+        upstream_status=exc.upstream_status,
+        upstream_code=exc.upstream_code,
+        upstream_message=exc.upstream_message,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    if request.url.path in _TWF_ERROR_PATHS:
+        return _error_response(
+            status_code=400,
+            code="TWF_VALIDATION_ERROR",
+            message=_validation_message(exc),
+        )
+    return await request_validation_exception_handler(request, exc)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    if request.url.path in _TWF_ERROR_PATHS:
+        detail = exc.detail
+        if isinstance(detail, dict):
+            return _error_response(
+                status_code=exc.status_code,
+                code=str(detail.get("code") or "HTTP_ERROR"),
+                message=str(detail.get("message") or "Request failed."),
+            )
+        if isinstance(detail, str):
+            return _error_response(
+                status_code=exc.status_code,
+                code="HTTP_ERROR",
+                message=detail,
+            )
+        return _error_response(
+            status_code=exc.status_code,
+            code="HTTP_ERROR",
+            message="Request failed.",
+        )
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.exception_handler(Exception)
@@ -151,10 +408,18 @@ def _require_twf_session(request: Request) -> twf_oauth.TwfSession:
     """
     sid = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
     if not sid:
-        raise HTTPException(status_code=401, detail="Not logged in")
+        raise TwfApiError(
+            status_code=401,
+            code="TWF_NOT_LOGGED_IN",
+            message="Not logged in",
+        )
     sess = twf_oauth.get_session(sid)
     if not sess:
-        raise HTTPException(status_code=401, detail="Session not found")
+        raise TwfApiError(
+            status_code=401,
+            code="TWF_SESSION_NOT_FOUND",
+            message="Session not found",
+        )
     return sess
 
 # ----------------------------
@@ -289,18 +554,24 @@ async def twf_forums(request: Request) -> dict[str, Any]:
 class ShareTopicIn(BaseModel):
     forum_id: int = Field(..., ge=1)
     title: str = Field(..., min_length=1, max_length=255)
-    content: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1, max_length=5000)
 
 
 @app.post("/twf/share/topic")
 async def twf_share_topic(request: Request, body: ShareTopicIn) -> dict[str, Any]:
     sess = _require_twf_session(request)
+    title = body.title.strip()
+    content = body.content.strip()
+    if not title:
+        raise TwfApiError(status_code=400, code="TWF_VALIDATION_ERROR", message="Title is required.")
+    if not content:
+        raise TwfApiError(status_code=400, code="TWF_VALIDATION_ERROR", message="Content is required.")
 
     topic = await twf_oauth.create_topic(
         sess,
         forum_id=body.forum_id,
-        title=body.title,
-        content=body.content,
+        title=title,
+        content=content,
     )
 
     # IPS returns a big object; return only what the frontend actually needs.
@@ -310,9 +581,11 @@ async def twf_share_topic(request: Request, body: ShareTopicIn) -> dict[str, Any
     forum_id = forum.get("id") or body.forum_id
 
     if not topic_id or not topic_url:
-        # If IPS changes shape or returns partial data, fail loudly instead of
-        # silently returning junk to the UI.
-        raise HTTPException(status_code=502, detail="Unexpected response from TWF create topic")
+        raise TwfApiError(
+            status_code=502,
+            code="IPS_UPSTREAM_ERROR",
+            message="Forum API temporarily unavailable.",
+        )
 
     return {
         "topicId": int(topic_id),
@@ -324,17 +597,20 @@ async def twf_share_topic(request: Request, body: ShareTopicIn) -> dict[str, Any
 
 class SharePostIn(BaseModel):
     topic_id: int = Field(..., ge=1)
-    content: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1, max_length=5000)
 
 
 @app.post("/twf/share/post")
 async def twf_share_post(request: Request, body: SharePostIn) -> dict[str, Any]:
     sess = _require_twf_session(request)
+    content = body.content.strip()
+    if not content:
+        raise TwfApiError(status_code=400, code="TWF_VALIDATION_ERROR", message="Content is required.")
 
     post = await twf_oauth.create_post(
         sess,
         topic_id=body.topic_id,
-        content=body.content,
+        content=content,
     )
 
     post_id = post.get("id")
@@ -344,7 +620,11 @@ async def twf_share_post(request: Request, body: SharePostIn) -> dict[str, Any]:
         topic_id = body.topic_id
 
     if not post_id or not post_url:
-        raise HTTPException(status_code=502, detail="Unexpected response from TWF create post")
+        raise TwfApiError(
+            status_code=502,
+            code="IPS_UPSTREAM_ERROR",
+            message="Forum API temporarily unavailable.",
+        )
 
     return {
         "postId": int(post_id),

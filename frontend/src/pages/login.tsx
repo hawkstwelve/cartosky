@@ -24,6 +24,11 @@ type TwfForum = {
   url?: string;
 };
 
+type ApiErrorInfo = {
+  code?: string;
+  message: string;
+};
+
 function GlassCard({
   title,
   desc,
@@ -51,32 +56,18 @@ function getApiBase(): string {
   return base.replace(/\/$/, "");
 }
 
-function formatCodeMessage(code: unknown, message: unknown): string | null {
-  if (typeof code === "string" && code.trim() && typeof message === "string" && message.trim()) {
-    return `${code}: ${message}`;
-  }
-  if (typeof message === "string" && message.trim()) {
-    return message;
+async function readApiError(response: Response): Promise<ApiErrorInfo | null> {
+  try {
+    const body = (await response.json()) as any;
+    const err = body?.error;
+    if (err && typeof err === "object" && typeof err.message === "string" && err.message.trim()) {
+      const code = typeof err.code === "string" && err.code.trim() ? err.code : undefined;
+      return { code, message: err.message };
+    }
+  } catch {
+    return null;
   }
   return null;
-}
-
-async function readApiError(response: Response, fallback: string): Promise<string> {
-  const text = await response.text().catch(() => "");
-  if (!text) return fallback;
-
-  try {
-    const body = JSON.parse(text) as any;
-    const fromError = formatCodeMessage(body?.error?.code, body?.error?.message);
-    if (fromError) return fromError;
-    const fromDetailObject = formatCodeMessage(body?.detail?.code, body?.detail?.message);
-    if (fromDetailObject) return fromDetailObject;
-    if (typeof body?.detail === "string" && body.detail.trim()) return body.detail;
-  } catch {
-    // Non-JSON response; fall through to plain text.
-  }
-
-  return text || fallback;
 }
 
 export default function Login() {
@@ -97,12 +88,12 @@ export default function Login() {
     "Sharing a map from The Weather Models.\n\n(Replace this with your map link, GIF, or details.)"
   );
   const [shareBusy, setShareBusy] = useState(false);
-  const [shareError, setShareError] = useState<string | null>(null);
+  const [shareError, setShareError] = useState<ApiErrorInfo | null>(null);
   const [shareResult, setShareResult] = useState<ShareResult | null>(null);
   const [replyTopicId, setReplyTopicId] = useState<string>("");
   const [replyContent, setReplyContent] = useState<string>("Reply from The Weather Models.");
   const [replyBusy, setReplyBusy] = useState(false);
-  const [replyError, setReplyError] = useState<string | null>(null);
+  const [replyError, setReplyError] = useState<ApiErrorInfo | null>(null);
   const [replyResult, setReplyResult] = useState<ReplyResult | null>(null);
 
   useEffect(() => {
@@ -155,7 +146,8 @@ export default function Login() {
     })
       .then(async (r) => {
         if (!r.ok) {
-          throw new Error(await readApiError(r, `Forums request failed (${r.status})`));
+          const err = await readApiError(r);
+          throw new Error(err?.message || `Forums request failed (${r.status})`);
         }
         return (await r.json()) as any;
       })
@@ -225,15 +217,15 @@ export default function Login() {
 
     const forumIdNum = Number(shareForumId);
     if (!Number.isFinite(forumIdNum) || forumIdNum <= 0) {
-      setShareError("Enter a valid forum_id (numeric)");
+      setShareError({ message: "Enter a valid forum_id (numeric)" });
       return;
     }
     if (!shareTitle.trim()) {
-      setShareError("Title is required");
+      setShareError({ message: "Title is required" });
       return;
     }
     if (!shareContent.trim()) {
-      setShareError("Content is required");
+      setShareError({ message: "Content is required" });
       return;
     }
 
@@ -251,13 +243,14 @@ export default function Login() {
       });
 
       if (!r.ok) {
-        throw new Error(await readApiError(r, `Share failed (${r.status})`));
+        setShareError((await readApiError(r)) ?? { message: "Request failed. Please try again." });
+        return;
       }
 
       const data = (await r.json()) as ShareResult;
       setShareResult(data);
-    } catch (e: unknown) {
-      setShareError((e as Error).message || "Share failed");
+    } catch {
+      setShareError({ message: "Request failed. Please try again." });
     } finally {
       setShareBusy(false);
     }
@@ -269,11 +262,11 @@ export default function Login() {
 
     const topicIdNum = Number(replyTopicId);
     if (!Number.isFinite(topicIdNum) || topicIdNum <= 0) {
-      setReplyError("Enter a valid topic_id (numeric)");
+      setReplyError({ message: "Enter a valid topic_id (numeric)" });
       return;
     }
     if (!replyContent.trim()) {
-      setReplyError("Reply content is required");
+      setReplyError({ message: "Reply content is required" });
       return;
     }
 
@@ -290,13 +283,14 @@ export default function Login() {
       });
 
       if (!r.ok) {
-        throw new Error(await readApiError(r, `Reply failed (${r.status})`));
+        setReplyError((await readApiError(r)) ?? { message: "Request failed. Please try again." });
+        return;
       }
 
       const data = (await r.json()) as ReplyResult;
       setReplyResult(data);
-    } catch (e: unknown) {
-      setReplyError((e as Error).message || "Reply failed");
+    } catch {
+      setReplyError({ message: "Request failed. Please try again." });
     } finally {
       setReplyBusy(false);
     }
@@ -454,7 +448,8 @@ export default function Login() {
 
               {shareError ? (
                 <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-                  {shareError}
+                  <div>{shareError.message}</div>
+                  {shareError.code ? <div className="mt-1 text-xs text-red-100/80">{shareError.code}</div> : null}
                 </div>
               ) : null}
 
@@ -518,7 +513,8 @@ export default function Login() {
 
               {replyError ? (
                 <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-                  {replyError}
+                  <div>{replyError.message}</div>
+                  {replyError.code ? <div className="mt-1 text-xs text-red-100/80">{replyError.code}</div> : null}
                 </div>
               ) : null}
 
