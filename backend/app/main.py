@@ -154,24 +154,6 @@ async def twf_start() -> RedirectResponse:
     )
     return resp
 
-from fastapi import HTTPException, Request
-from typing import Any
-
-@app.get("/auth/twf/me")
-async def twf_me_debug(request: Request) -> dict[str, Any]:
-    sid = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
-    if not sid:
-        raise HTTPException(status_code=401, detail="Not logged in")
-
-    sess = twf_oauth.get_session(sid)
-    if not sess:
-        raise HTTPException(status_code=401, detail="Not logged in")
-
-    # Ensure token is fresh, then call IPS "me"
-    sess = await twf_oauth.ensure_fresh_tokens(sess)
-    me = await twf_oauth.twf_me(sess.access_token)
-    return {"me": me}
-
 @app.get("/auth/twf/callback")
 async def twf_callback(
     request: Request,
@@ -277,12 +259,31 @@ class ShareTopicIn(BaseModel):
 @app.post("/twf/share/topic")
 async def twf_share_topic(request: Request, body: ShareTopicIn) -> dict[str, Any]:
     sess = _require_twf_session(request)
-    return await twf_oauth.create_topic(
+
+    topic = await twf_oauth.create_topic(
         sess,
         forum_id=body.forum_id,
         title=body.title,
         content=body.content,
     )
+
+    # IPS returns a big object; return only what the frontend actually needs.
+    topic_id = topic.get("id")
+    topic_url = topic.get("url")
+    forum = topic.get("forum") or {}
+    forum_id = forum.get("id") or body.forum_id
+
+    if not topic_id or not topic_url:
+        # If IPS changes shape or returns partial data, fail loudly instead of
+        # silently returning junk to the UI.
+        raise HTTPException(status_code=502, detail="Unexpected response from TWF create topic")
+
+    return {
+        "topicId": int(topic_id),
+        "topicUrl": str(topic_url),
+        "forumId": int(forum_id),
+        "title": str(topic.get("title") or body.title),
+    }
 
 _wgs84_to_3857 = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 

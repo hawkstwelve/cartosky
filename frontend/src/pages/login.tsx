@@ -5,9 +5,10 @@ type TwfStatus =
   | { linked: true; member_id: number; display_name: string };
 
 type ShareResult = {
-  id?: number;
-  url?: string;
-  [k: string]: unknown;
+  topicId: number;
+  topicUrl: string;
+  forumId: number;
+  title: string;
 };
 
 function GlassCard({
@@ -287,11 +288,22 @@ export default function Login() {
               ) : null}
 
               {shareResult ? (
-                <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">
-                  <div className="text-xs uppercase tracking-wider text-white/60">Result</div>
-                  <div className="mt-2 break-words text-xs text-white/70">
-                    <pre className="whitespace-pre-wrap">{JSON.stringify(shareResult, null, 2)}</pre>
+                <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80 space-y-2">
+                  <div className="text-xs uppercase tracking-wider text-white/60">Topic created</div>
+                  <div className="text-sm text-white">
+                    {shareResult.title}
                   </div>
+                  <div className="text-xs text-white/60">
+                    Forum ID: {shareResult.forumId} • Topic ID: {shareResult.topicId}
+                  </div>
+                  <a
+                    href={shareResult.topicUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block mt-1 text-sm text-[#8fb3a7] hover:underline"
+                  >
+                    Open topic →
+                  </a>
                 </div>
               ) : null}
             </div>

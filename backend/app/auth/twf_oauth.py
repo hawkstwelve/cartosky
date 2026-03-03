@@ -214,9 +214,6 @@ async def twf_me(access_token: str) -> dict[str, Any]:
                         request=r.request,
                         response=r,
                     )
-                    import json
-                    import logging
-                    logging.getLogger("uvicorn.error").error("TWF_ME=%s", json.dumps(me)[:8000])
                 return r.json()
             except Exception as e:
                 last_exc = e
