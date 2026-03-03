@@ -234,6 +234,15 @@ async def _request_json_with_variants(
                     request_url = f"{url}?&{urlencode(params)}"
                 else:
                     request_kwargs["params"] = params
+            logger.info(
+                "TWF upstream request",
+                extra={
+                    "method": method,
+                    "request_url": request_url,
+                    "has_params_inline": bool(params is not None and "index.php?/" in url),
+                    "has_query_params": "params" in request_kwargs,
+                },
+            )
             try:
                 return await _request_json(client, method, request_url, **request_kwargs)
             except TwfUpstreamError as exc:
