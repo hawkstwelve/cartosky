@@ -106,7 +106,7 @@ async def test_twf_topics_forum_id_validation_uses_twf_envelope(client: httpx.As
     assert isinstance(payload["error"]["message"], str)
 
 
-async def test_twf_topics_merges_dedupes_and_orders_pinned_first(
+async def test_twf_topics_merges_dedupes_orders_and_filters_to_requested_forum(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -154,24 +154,73 @@ async def test_twf_topics_merges_dedupes_and_orders_pinned_first(
                 if match and key not in resolved:
                     resolved[key] = match.group(1)
             calls.append(resolved)
+            forum = str(resolved.get("forum", ""))
             pinned = str(resolved.get("pinned", "0"))
-            if pinned == "1":
+            if forum == "4" and pinned == "1":
+                return FakeResponse(
+                    {
+                        "results": [
+                            {
+                                "id": 201,
+                                "title": "March 2026 West Monthly Thread",
+                                "url": "https://forums.example.com/topic/201-march-2026-west-monthly-thread/",
+                                "pinned": True,
+                                "updated": "2026-03-02T12:00:00Z",
+                                "forum": {"id": 4},
+                            },
+                            {
+                                "id": 901,
+                                "title": "East Topic leaked into West response",
+                                "url": "https://forums.example.com/topic/901-east-leak/",
+                                "pinned": True,
+                                "updated": "2026-02-20T10:00:00Z",
+                                "forum": {"id": 9},
+                            },
+                        ]
+                    }
+                )
+            if forum == "4" and pinned == "0":
+                return FakeResponse(
+                    {
+                        "results": [
+                            {
+                                "id": 202,
+                                "title": "West Nowcasting",
+                                "url": "https://forums.example.com/topic/202-west-nowcasting/",
+                                "pinned": False,
+                                "updated": "2026-03-03T09:00:00Z",
+                                "forum": {"id": 4},
+                            },
+                            {
+                                "id": 902,
+                                "title": "East chatter leaked into West response",
+                                "url": "https://forums.example.com/topic/902-east-leak/",
+                                "pinned": False,
+                                "updated": "2026-02-28T08:00:00Z",
+                                "forum": {"id": 9},
+                            },
+                        ]
+                    }
+                )
+            if forum == "9" and pinned == "1":
                 return FakeResponse(
                     {
                         "results": [
                             {
                                 "id": 101,
-                                "title": "March 2026 Mid-Atlantic Thread",
-                                "url": "https://forums.example.com/topic/101-march-2026-mid-atlantic-thread/",
+                                "title": "March 2026 East Monthly Thread",
+                                "url": "https://forums.example.com/topic/101-march-2026-east-monthly-thread/",
                                 "pinned": True,
                                 "updated": "2026-03-02T12:00:00Z",
+                                "forum": {"id": 9},
                             },
                             {
-                                "id": 102,
-                                "title": "Pinned Archives",
-                                "url": "https://forums.example.com/topic/102-pinned-archives/",
+                                "id": 801,
+                                "title": "West Topic leaked into East response",
+                                "url": "https://forums.example.com/topic/801-west-leak/",
                                 "pinned": True,
                                 "updated": "2026-02-20T10:00:00Z",
+                                "forum": {"id": 4},
                             },
                         ]
                     }
@@ -181,24 +230,27 @@ async def test_twf_topics_merges_dedupes_and_orders_pinned_first(
                     "results": [
                         {
                             "id": 103,
-                            "title": "Nowcasting",
-                            "url": "https://forums.example.com/topic/103-nowcasting/",
+                            "title": "East Nowcasting",
+                            "url": "https://forums.example.com/topic/103-east-nowcasting/",
                             "pinned": False,
                             "updated": "2026-03-03T09:00:00Z",
+                            "forum": {"id": 9},
                         },
                         {
                             "id": 101,
-                            "title": "March 2026 Mid-Atlantic Thread",
-                            "url": "https://forums.example.com/topic/101-march-2026-mid-atlantic-thread/",
+                            "title": "March 2026 East Monthly Thread",
+                            "url": "https://forums.example.com/topic/101-march-2026-east-monthly-thread/",
                             "pinned": False,
                             "updated": "2026-03-01T03:00:00Z",
+                            "forum": {"id": 9},
                         },
                         {
-                            "id": 104,
-                            "title": "Old chatter",
-                            "url": "https://forums.example.com/topic/104-old-chatter/",
+                            "id": 802,
+                            "title": "West chatter leaked into East response",
+                            "url": "https://forums.example.com/topic/802-west-leak/",
                             "pinned": False,
                             "updated": "2026-02-28T08:00:00Z",
+                            "forum": {"id": 4},
                         },
                     ]
                 }
@@ -206,23 +258,30 @@ async def test_twf_topics_merges_dedupes_and_orders_pinned_first(
 
     monkeypatch.setattr(main_module.twf_oauth.httpx, "AsyncClient", FakeAsyncClient)
 
-    response = await client.get("/twf/topics", params={"forum_id": 9, "limit": 15})
+    west_response = await client.get("/twf/topics", params={"forum_id": 4, "limit": 15})
+    assert west_response.status_code == 200
+    west_payload = west_response.json()
+    assert west_payload["forum_id"] == 4
+    west_ids = [row["id"] for row in west_payload["results"]]
+    assert west_ids == [201, 202]
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["forum_id"] == 9
+    east_response = await client.get("/twf/topics", params={"forum_id": 9, "limit": 15})
+    assert east_response.status_code == 200
+    east_payload = east_response.json()
+    assert east_payload["forum_id"] == 9
+    east_ids = [row["id"] for row in east_payload["results"]]
+    assert east_ids == [101, 103]
 
-    ids = [row["id"] for row in payload["results"]]
-    assert ids == [101, 102, 103, 104]
-    assert payload["results"][0]["pinned"] is True
-    assert payload["results"][1]["pinned"] is True
-    assert payload["results"][2]["pinned"] is False
-    assert payload["results"][3]["pinned"] is False
-
-    assert len(calls) == 2
-    assert calls[0]["forum"] == "9"
+    assert len(calls) == 4
+    assert calls[0]["forum"] == "4"
     assert calls[0]["pinned"] == "1"
     assert calls[0]["perPage"] == "5"
-    assert calls[1]["forum"] == "9"
+    assert calls[1]["forum"] == "4"
     assert calls[1]["pinned"] == "0"
     assert calls[1]["perPage"] == "15"
+    assert calls[2]["forum"] == "9"
+    assert calls[2]["pinned"] == "1"
+    assert calls[2]["perPage"] == "5"
+    assert calls[3]["forum"] == "9"
+    assert calls[3]["pinned"] == "0"
+    assert calls[3]["perPage"] == "15"

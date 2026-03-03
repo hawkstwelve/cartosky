@@ -614,6 +614,29 @@ def _extract_topics(payload: dict[str, Any]) -> list[Any]:
     return []
 
 
+def _topic_forum_id(t: dict[str, Any]) -> int | None:
+    """Best-effort extraction of a topic's forum id across IPS shapes."""
+    v = t.get("forum")
+    if isinstance(v, dict):
+        fid = v.get("id")
+        try:
+            return int(fid) if fid is not None else None
+        except Exception:
+            return None
+    if isinstance(v, (int, str)):
+        try:
+            return int(v)
+        except Exception:
+            return None
+    v2 = t.get("forum_id")
+    if isinstance(v2, (int, str)):
+        try:
+            return int(v2)
+        except Exception:
+            return None
+    return None
+
+
 def _is_truthy_topic_flag(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -708,15 +731,39 @@ async def twf_topics(
 
     pinned_payload = await twf_oauth.list_topics(sess, forum_id=forum_id, pinned=True, per_page=min(5, limit))
     regular_payload = await twf_oauth.list_topics(sess, forum_id=forum_id, pinned=False, per_page=limit)
+    pinned_items = [item for item in _extract_topics(pinned_payload) if isinstance(item, dict)]
+    unpinned_items = [item for item in _extract_topics(regular_payload) if isinstance(item, dict)]
+
+    def _filter_forum(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for it in items:
+            fid = _topic_forum_id(it)
+            if fid is None:
+                continue
+            if fid == forum_id:
+                out.append(it)
+        return out
+
+    pinned_items = _filter_forum(pinned_items)
+    unpinned_items = _filter_forum(unpinned_items)
+    logger.info(
+        "TWF topics filtered",
+        extra={
+            "request_id": getattr(request.state, "request_id", None),
+            "forum_id": forum_id,
+            "pinned_count": len(pinned_items),
+            "unpinned_count": len(unpinned_items),
+        },
+    )
 
     merged_by_id: dict[int, dict[str, Any]] = {}
-    for raw_topic in _extract_topics(pinned_payload):
+    for raw_topic in pinned_items:
         normalized = _normalize_topic(raw_topic, force_pinned=True)
         if normalized is None:
             continue
         merged_by_id[normalized["id"]] = normalized
 
-    for raw_topic in _extract_topics(regular_payload):
+    for raw_topic in unpinned_items:
         normalized = _normalize_topic(raw_topic, force_pinned=False)
         if normalized is None:
             continue
