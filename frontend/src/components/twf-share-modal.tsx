@@ -302,7 +302,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
   }, [topics, topicSearch]);
 
   const defaultContent = useMemo(() => {
-    return `Permalink: ${payload.permalink}\nSummary: ${payload.summary}`;
+    return `Link to Viewer: ${payload.permalink}\nSummary: ${payload.summary}`;
   }, [payload.permalink, payload.summary]);
 
   useEffect(() => {
@@ -597,7 +597,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
               {clipboardStatus ? <span className="text-xs text-emerald-200/90">{clipboardStatus}</span> : null}
             </div>
             <div className="mt-2 text-xs text-white/65">
-              <div className="truncate">Permalink: {payload.permalink}</div>
+              <div className="truncate">Link to Viewer: {payload.permalink}</div>
               <div className="line-clamp-2">Summary: {payload.summary}</div>
             </div>
           </div>
