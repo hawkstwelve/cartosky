@@ -51,6 +51,34 @@ function getApiBase(): string {
   return base.replace(/\/$/, "");
 }
 
+function formatCodeMessage(code: unknown, message: unknown): string | null {
+  if (typeof code === "string" && code.trim() && typeof message === "string" && message.trim()) {
+    return `${code}: ${message}`;
+  }
+  if (typeof message === "string" && message.trim()) {
+    return message;
+  }
+  return null;
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  const text = await response.text().catch(() => "");
+  if (!text) return fallback;
+
+  try {
+    const body = JSON.parse(text) as any;
+    const fromError = formatCodeMessage(body?.error?.code, body?.error?.message);
+    if (fromError) return fromError;
+    const fromDetailObject = formatCodeMessage(body?.detail?.code, body?.detail?.message);
+    if (fromDetailObject) return fromDetailObject;
+    if (typeof body?.detail === "string" && body.detail.trim()) return body.detail;
+  } catch {
+    // Non-JSON response; fall through to plain text.
+  }
+
+  return text || fallback;
+}
+
 export default function Login() {
   const apiBase = useMemo(() => getApiBase(), []);
 
@@ -127,8 +155,7 @@ export default function Login() {
     })
       .then(async (r) => {
         if (!r.ok) {
-          const text = await r.text().catch(() => "");
-          throw new Error(text || `Forums request failed (${r.status})`);
+          throw new Error(await readApiError(r, `Forums request failed (${r.status})`));
         }
         return (await r.json()) as any;
       })
@@ -224,8 +251,7 @@ export default function Login() {
       });
 
       if (!r.ok) {
-        const text = await r.text().catch(() => "");
-        throw new Error(text || `Share failed (${r.status})`);
+        throw new Error(await readApiError(r, `Share failed (${r.status})`));
       }
 
       const data = (await r.json()) as ShareResult;
@@ -264,8 +290,7 @@ export default function Login() {
       });
 
       if (!r.ok) {
-        const text = await r.text().catch(() => "");
-        throw new Error(text || `Reply failed (${r.status})`);
+        throw new Error(await readApiError(r, `Reply failed (${r.status})`));
       }
 
       const data = (await r.json()) as ReplyResult;

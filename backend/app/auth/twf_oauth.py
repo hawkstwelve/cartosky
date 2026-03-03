@@ -128,7 +128,8 @@ class TwfUpstreamError(Exception):
     code: str
     message: str
     upstream_status: int | None = None
-    upstream_body: str | None = None
+    upstream_code: str | None = None
+    upstream_message: str | None = None
 
     def __str__(self) -> str:
         return f"{self.code}: {self.message}"
@@ -161,57 +162,59 @@ def _parse_ips_error_response(response: httpx.Response) -> tuple[str | None, str
     return parsed_code, parsed_message, upstream_body
 
 
-def _map_upstream_error(upstream_status: int, error_message: str | None) -> tuple[int, str, str]:
+def _map_upstream_error(upstream_status: int | None, error_message: str | None) -> tuple[int, str, str]:
     normalized_message = (error_message or "").strip().upper()
-    if upstream_status == 401 and normalized_message == "NO_API_KEY":
-        return 502, "IPS_NO_API_KEY", "Forum API key missing/invalid on upstream."
-    if upstream_status == 401 and normalized_message == "NO_TOPIC":
+    if normalized_message == "NO_TOPIC":
         return 400, "IPS_NO_TOPIC", "Topic not found or you don't have access."
-    if upstream_status == 403:
-        return 403, "IPS_FORBIDDEN", "Not permitted by forum permissions."
-    if upstream_status == 404:
-        return 404, "IPS_NOT_FOUND", "Resource not found."
+    if normalized_message == "NO_API_KEY":
+        return 502, "IPS_NO_API_KEY", "Forum API key missing/invalid on upstream."
+    if upstream_status in (401, 403):
+        return 401, "IPS_UNAUTHORIZED", "Forum authorization failed."
     if upstream_status == 429:
-        return 429, "IPS_RATE_LIMIT", "Forum rate limit exceeded."
-    if upstream_status >= 500:
+        return 429, "IPS_RATE_LIMITED", "Forum API rate limit exceeded."
+    if upstream_status is not None and upstream_status >= 500:
         return 502, "IPS_UPSTREAM_ERROR", "Forum API temporarily unavailable."
     return 502, "IPS_UPSTREAM_ERROR", "Forum API temporarily unavailable."
 
 
+def _log_upstream_error(err: TwfUpstreamError) -> None:
+    logger.warning(
+        "TWF upstream error code=%s upstream_status=%s upstream_message=%r",
+        err.code,
+        err.upstream_status,
+        err.upstream_message,
+    )
+
+
 def _raise_mapped_response_error(response: httpx.Response) -> NoReturn:
     upstream_status = response.status_code
-    _, error_message, upstream_body = _parse_ips_error_response(response)
+    upstream_code, error_message, upstream_body = _parse_ips_error_response(response)
     status_code, code, message = _map_upstream_error(upstream_status, error_message)
-    logger.warning(
-        "TWF upstream failure code=%s upstream_status=%s upstream_body=%r",
-        code,
-        upstream_status,
-        upstream_body,
-    )
-    raise TwfUpstreamError(
+    upstream_message = error_message or upstream_body
+    err = TwfUpstreamError(
         status_code=status_code,
         code=code,
         message=message,
         upstream_status=upstream_status,
-        upstream_body=upstream_body,
+        upstream_code=upstream_code,
+        upstream_message=upstream_message,
     )
+    _log_upstream_error(err)
+    raise err
 
 
-def _raise_mapped_request_error(exc: httpx.RequestError) -> NoReturn:
-    logger.warning(
-        "TWF upstream request error code=%s upstream_status=%s upstream_body=%r error=%s",
-        "IPS_UPSTREAM_ERROR",
-        None,
-        None,
-        str(exc),
-    )
-    raise TwfUpstreamError(
-        status_code=502,
-        code="IPS_UPSTREAM_ERROR",
-        message="Forum API temporarily unavailable.",
+def _raise_mapped_request_error(exc: httpx.RequestError, upstream_message: str | None = None) -> NoReturn:
+    status_code, code, message = _map_upstream_error(None, upstream_message)
+    err = TwfUpstreamError(
+        status_code=status_code,
+        code=code,
+        message=message,
         upstream_status=None,
-        upstream_body=None,
-    ) from exc
+        upstream_code=None,
+        upstream_message=upstream_message or str(exc),
+    )
+    _log_upstream_error(err)
+    raise err from exc
 
 
 async def _request_json_with_variants(
@@ -223,38 +226,45 @@ async def _request_json_with_variants(
     data: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     last_error: TwfUpstreamError | None = None
-    last_request_exc: httpx.RequestError | None = None
     async with httpx.AsyncClient(timeout=timeout) as client:
         for url in urls:
             try:
-                if method == "GET":
-                    r = await client.get(url, headers=headers)
-                elif method == "POST":
-                    r = await client.post(url, headers=headers, data=data)
-                else:
-                    raise RuntimeError(f"Unsupported method: {method}")
-            except httpx.RequestError as exc:
-                last_request_exc = exc
+                return await _request_json(client, method, url, headers=headers, data=data)
+            except TwfUpstreamError as exc:
+                last_error = exc
                 continue
-            if r.status_code >= 400:
-                try:
-                    _raise_mapped_response_error(r)
-                except TwfUpstreamError as exc:
-                    last_error = exc
-                    continue
-            return r.json()
 
     if last_error is not None:
         raise last_error
-    if last_request_exc is not None:
-        _raise_mapped_request_error(last_request_exc)
     raise TwfUpstreamError(
         status_code=502,
         code="IPS_UPSTREAM_ERROR",
         message="Forum API temporarily unavailable.",
         upstream_status=None,
-        upstream_body=None,
+        upstream_code=None,
+        upstream_message=None,
     )
+
+
+async def _request_json(client: httpx.AsyncClient, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
+    try:
+        if method == "GET":
+            kwargs.pop("data", None)
+            r = await client.get(url, **kwargs)
+        elif method == "POST":
+            r = await client.post(url, **kwargs)
+        else:
+            raise RuntimeError(f"Unsupported method: {method}")
+    except httpx.HTTPStatusError as exc:
+        if exc.response is not None:
+            _raise_mapped_response_error(exc.response)
+        _raise_mapped_request_error(httpx.RequestError(str(exc), request=exc.request))
+    except httpx.RequestError as exc:
+        _raise_mapped_request_error(exc)
+
+    if r.status_code >= 400:
+        _raise_mapped_response_error(r)
+    return r.json()
 
 
 def upsert_session(sess: TwfSession) -> None:
@@ -336,9 +346,7 @@ async def exchange_code_for_token(code: str, code_verifier: str) -> dict[str, An
         "code_verifier": code_verifier,
     }
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.post(TOKEN_ENDPOINT, data=data)
-        r.raise_for_status()
-        return r.json()
+        return await _request_json(client, "POST", TOKEN_ENDPOINT, data=data)
 
 async def refresh_access_token(refresh_token: str) -> dict[str, Any]:
     data = {
@@ -348,9 +356,7 @@ async def refresh_access_token(refresh_token: str) -> dict[str, Any]:
         "refresh_token": refresh_token,
     }
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.post(TOKEN_ENDPOINT, data=data)
-        r.raise_for_status()
-        return r.json()
+        return await _request_json(client, "POST", TOKEN_ENDPOINT, data=data)
 
 async def twf_me(access_token: str) -> dict[str, Any]:
     headers = _auth_headers(access_token)
@@ -358,25 +364,31 @@ async def twf_me(access_token: str) -> dict[str, Any]:
     # Try both slash/no-slash variants because IPS installs vary.
     urls = [base, base.rstrip("/"), base.rstrip("/") + "/"]
 
-    last_exc: Exception | None = None
+    last_error: TwfUpstreamError | None = None
+    last_request_exc: httpx.RequestError | None = None
     async with httpx.AsyncClient(timeout=20) as client:
         for url in urls:
             try:
-                r = await client.get(url, headers=headers)
-                if r.status_code >= 400:
-                    detail = (r.text or "")
-                    raise httpx.HTTPStatusError(
-                        f"{r.status_code} for {url}: {detail[:500]}",
-                        request=r.request,
-                        response=r,
-                    )
-                return r.json()
-            except Exception as e:
-                last_exc = e
+                return await _request_json(client, "GET", url, headers=headers)
+            except TwfUpstreamError as err:
+                last_error = err
+                continue
+            except httpx.RequestError as exc:
+                last_request_exc = exc
                 continue
 
-    assert last_exc is not None
-    raise last_exc
+    if last_error is not None:
+        raise last_error
+    if last_request_exc is not None:
+        _raise_mapped_request_error(last_request_exc)
+    raise TwfUpstreamError(
+        status_code=502,
+        code="IPS_UPSTREAM_ERROR",
+        message="Forum API temporarily unavailable.",
+        upstream_status=None,
+        upstream_code=None,
+        upstream_message=None,
+    )
 
 async def ensure_fresh_tokens(sess: TwfSession) -> TwfSession:
     # refresh if expiring within 60 seconds
@@ -394,14 +406,7 @@ async def ensure_fresh_tokens(sess: TwfSession) -> TwfSession:
     return sess
 
 async def create_topic(sess: TwfSession, forum_id: int, title: str, content: str) -> dict[str, Any]:
-    try:
-        sess = await ensure_fresh_tokens(sess)
-    except TwfUpstreamError:
-        raise
-    except httpx.RequestError as exc:
-        _raise_mapped_request_error(exc)
-    except httpx.HTTPStatusError as exc:
-        _raise_mapped_response_error(exc.response)
+    sess = await ensure_fresh_tokens(sess)
     headers = _auth_headers(sess.access_token)
 
     # Invision expects form-encoded for POST/PUT in practice; use data= not json=
@@ -427,14 +432,7 @@ def _plain_text_to_ips_html(content: str) -> str:
     return escaped.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
 
 async def create_post(sess: TwfSession, topic_id: int, content: str) -> dict[str, Any]:
-    try:
-        sess = await ensure_fresh_tokens(sess)
-    except TwfUpstreamError:
-        raise
-    except httpx.RequestError as exc:
-        _raise_mapped_request_error(exc)
-    except httpx.HTTPStatusError as exc:
-        _raise_mapped_response_error(exc.response)
+    sess = await ensure_fresh_tokens(sess)
     headers = _auth_headers(sess.access_token)
 
     # Match create_topic(): form-encoded, not JSON
@@ -455,14 +453,7 @@ async def create_post(sess: TwfSession, topic_id: int, content: str) -> dict[str
     )
 
 async def list_forums(sess: TwfSession) -> dict[str, Any]:
-    try:
-        sess = await ensure_fresh_tokens(sess)
-    except TwfUpstreamError:
-        raise
-    except httpx.RequestError as exc:
-        _raise_mapped_request_error(exc)
-    except httpx.HTTPStatusError as exc:
-        _raise_mapped_response_error(exc.response)
+    sess = await ensure_fresh_tokens(sess)
     headers = _auth_headers(sess.access_token)
 
     # Try configured endpoint plus slash/no-slash variants.

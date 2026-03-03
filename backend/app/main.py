@@ -16,7 +16,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import httpx
 import numpy as np
 import rasterio
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -116,21 +115,33 @@ app.add_middleware(
 )
 
 
-@app.exception_handler(httpx.RequestError)
-async def upstream_request_error_handler(request: Request, exc: httpx.RequestError) -> JSONResponse:
-    logger.warning("Unhandled upstream request error: %s", str(exc))
-    return JSONResponse(
-        status_code=502,
-        content={"code": "UPSTREAM_HTTPX_ERROR", "message": "Upstream request failed."},
+@app.exception_handler(twf_oauth.TwfUpstreamError)
+async def twf_upstream_error_handler(request: Request, exc: twf_oauth.TwfUpstreamError) -> JSONResponse:
+    logger.warning(
+        "TwfUpstreamError code=%s upstream_status=%s upstream_message=%r",
+        exc.code,
+        exc.upstream_status,
+        exc.upstream_message,
     )
+    error: dict[str, Any] = {
+        "code": exc.code,
+        "message": exc.message,
+    }
+    if exc.upstream_status is not None:
+        error["upstream_status"] = exc.upstream_status
+    if exc.upstream_code is not None:
+        error["upstream_code"] = exc.upstream_code
+    if exc.upstream_message is not None:
+        error["upstream_message"] = exc.upstream_message
+    return JSONResponse(status_code=exc.status_code, content={"error": error})
 
 
-@app.exception_handler(httpx.HTTPStatusError)
-async def upstream_status_error_handler(request: Request, exc: httpx.HTTPStatusError) -> JSONResponse:
-    logger.warning("Unhandled upstream status error: %s", str(exc))
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled server exception")
     return JSONResponse(
-        status_code=502,
-        content={"code": "UPSTREAM_HTTPX_ERROR", "message": "Upstream request failed."},
+        status_code=500,
+        content={"error": {"code": "INTERNAL_ERROR", "message": "Unexpected server error"}},
     )
 
 def _require_twf_session(request: Request) -> twf_oauth.TwfSession:
@@ -272,10 +283,7 @@ async def twf_disconnect(request: Request) -> JSONResponse:
 @app.get("/twf/forums")
 async def twf_forums(request: Request) -> dict[str, Any]:
     sess = _require_twf_session(request)
-    try:
-        return await twf_oauth.list_forums(sess)
-    except twf_oauth.TwfUpstreamError as e:
-        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
+    return await twf_oauth.list_forums(sess)
 
 
 class ShareTopicIn(BaseModel):
@@ -288,15 +296,12 @@ class ShareTopicIn(BaseModel):
 async def twf_share_topic(request: Request, body: ShareTopicIn) -> dict[str, Any]:
     sess = _require_twf_session(request)
 
-    try:
-        topic = await twf_oauth.create_topic(
-            sess,
-            forum_id=body.forum_id,
-            title=body.title,
-            content=body.content,
-        )
-    except twf_oauth.TwfUpstreamError as e:
-        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
+    topic = await twf_oauth.create_topic(
+        sess,
+        forum_id=body.forum_id,
+        title=body.title,
+        content=body.content,
+    )
 
     # IPS returns a big object; return only what the frontend actually needs.
     topic_id = topic.get("id")
@@ -326,14 +331,11 @@ class SharePostIn(BaseModel):
 async def twf_share_post(request: Request, body: SharePostIn) -> dict[str, Any]:
     sess = _require_twf_session(request)
 
-    try:
-        post = await twf_oauth.create_post(
-            sess,
-            topic_id=body.topic_id,
-            content=body.content,
-        )
-    except twf_oauth.TwfUpstreamError as e:
-        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
+    post = await twf_oauth.create_post(
+        sess,
+        topic_id=body.topic_id,
+        content=body.content,
+    )
 
     post_id = post.get("id")
     post_url = post.get("url")
