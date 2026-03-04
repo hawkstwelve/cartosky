@@ -53,7 +53,8 @@ from app.services.colormaps import get_color_map_spec
 logger = logging.getLogger(__name__)
 
 CONTRACT_VERSION = "3.0"
-VALUE_HOVER_DOWNSAMPLE_FACTOR = 4
+# Value COG base grid must match RGBA COG grid for render-time parity.
+VALUE_HOVER_DOWNSAMPLE_FACTOR = 1
 CANONICAL_COVERAGE = "conus"
 
 

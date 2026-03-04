@@ -348,9 +348,8 @@ def write_value_cog(
     nodata : float
         Nodata value. Defaults to NaN.
     downsample_factor : int
-        Optional integer factor for coarser value-grid output (e.g. 4 means
-        4x larger pixel size and ~1/16 pixel count). Intended for lightweight
-        hover sampling payloads while keeping the same model/region extent.
+        Deprecated compatibility argument. Value COG base resolution now always
+        matches the model/region target grid used by RGBA COGs.
 
     Returns
     -------
@@ -376,25 +375,16 @@ def write_value_cog(
             f"grid ({expected_h}, {expected_w}) for {model}/{region} at {grid_m}m"
         )
 
+    if downsample_factor > 1:
+        logger.warning(
+            "write_value_cog downsample_factor=%d ignored; writing full-resolution base grid for %s/%s",
+            downsample_factor,
+            model,
+            region,
+        )
+
     transform = base_transform
     output_grid_m = grid_m
-    if downsample_factor > 1:
-        output_grid_m = grid_m * downsample_factor
-        transform, out_h, out_w = compute_transform_and_shape(bbox, output_grid_m)
-        downsampled = np.full((out_h, out_w), float("nan"), dtype=np.float32)
-        reproject(
-            source=values_f32,
-            destination=downsampled,
-            src_transform=base_transform,
-            src_crs="EPSG:3857",
-            dst_transform=transform,
-            dst_crs="EPSG:3857",
-            resampling=Resampling.nearest,
-            src_nodata=float("nan"),
-            dst_nodata=float("nan"),
-        )
-        values_f32 = downsampled
-        data_h, data_w = values_f32.shape
 
     # Expand to (1, H, W) for rasterio
     data_3d = values_f32[np.newaxis, :, :]
@@ -426,8 +416,8 @@ def write_value_cog(
         _gtiff_to_cog(tmp_gtiff, output_path)
 
     logger.info(
-        "Wrote value COG: %s (%dx%d, %d overviews, grid=%.1fm, downsample=%dx)",
-        output_path, data_w, data_h, len(levels), output_grid_m, downsample_factor,
+        "Wrote value COG: %s (%dx%d, %d overviews, grid=%.1fm)",
+        output_path, data_w, data_h, len(levels), output_grid_m,
     )
     return output_path
 
