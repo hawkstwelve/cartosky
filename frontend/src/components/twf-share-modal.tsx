@@ -300,7 +300,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
   }, [topics, topicSearch]);
 
   const defaultContent = useMemo(() => {
-    return `Link to Viewer: ${payload.permalink}\nSummary: ${payload.summary}`;
+    return `${payload.summary}\n${payload.permalink}`;
   }, [payload.permalink, payload.summary]);
   const selectedTopicTitle = useMemo(() => {
     const topicId = parsedTopicIdFromUrl ?? selectedTopicId;
@@ -667,8 +667,12 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
             </div>
           </div>
 
+          <div className="h-px bg-white/10" aria-hidden="true" />
+
           <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">
-            <div className="mb-3 text-sm font-semibold text-white">Post to The Weather Forums</div>
+            <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/65">
+              Post to The Weather Forums
+            </div>
 
             {statusLoading ? (
               <div className="flex items-center gap-2 text-sm text-white/70">
@@ -722,7 +726,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
               <div className="space-y-4">
                 <div className="grid gap-2">
                   <div>
-                    <div className="mb-1 text-xs uppercase tracking-wider text-white/60">Choose forum</div>
+                    <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">Choose forum</div>
                     <div className="flex flex-wrap items-center gap-2">
                       {QUICK_FORUMS.map((forum) => (
                         <button
@@ -780,13 +784,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
                   </div>
 
                   <div>
-                    <div className="mb-1 text-xs uppercase tracking-wider text-white/60">Topic</div>
-                    <input
-                      value={topicSearch}
-                      onChange={(event) => setTopicSearch(event.target.value)}
-                      placeholder="Search loaded topics"
-                      className="mb-2 h-8 w-full rounded-md border border-white/15 bg-black/35 px-2 text-xs text-white outline-none placeholder:text-white/40 focus:border-emerald-300/40"
-                    />
+                    <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">Topic</div>
                     {topicsLoading ? (
                       <div className="flex items-center gap-2 text-xs text-white/70">
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -818,7 +816,19 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
                   </div>
 
                   {showAdvancedTopic ? (
-                    <div>
+                    <div className="space-y-2">
+                      <div>
+                        <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">
+                          Search loaded topics
+                        </div>
+                        <input
+                          value={topicSearch}
+                          onChange={(event) => setTopicSearch(event.target.value)}
+                          placeholder="Search loaded topics"
+                          className="h-8 w-full rounded-md border border-white/15 bg-black/35 px-2 text-xs text-white outline-none placeholder:text-white/40 focus:border-emerald-300/40"
+                        />
+                      </div>
+                      <div>
                       <div className="mb-1 text-xs uppercase tracking-wider text-white/60">Paste topic URL (optional)</div>
                       <input
                         value={pastedTopicUrl}
@@ -830,21 +840,20 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
                       {parsedTopicIdFromUrl ? (
                         <div className="mt-1 text-xs text-emerald-200/90">Using selected topic from pasted URL.</div>
                       ) : null}
+                      </div>
                     </div>
                   ) : null}
 
                   <div>
-                    <div className="mb-1 text-xs uppercase tracking-wider text-white/60">Post content</div>
+                    <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">Post content</div>
                     <button
                       type="button"
                       onClick={handleMessageToggle}
                       className="text-[11px] font-medium text-emerald-200/90 hover:text-emerald-100"
                     >
-                      {isMessageExpanded ? "Auto-generated message ▾" : "Auto-generated message ▸"}
+                      {isMessageExpanded ? "Customize message ▾" : "Customize message ▸"}
                     </button>
-                    {!isMessageExpanded ? (
-                      <div className="mt-1 text-xs text-white/60">Auto-generated message (click to edit)</div>
-                    ) : (
+                    {isMessageExpanded ? (
                       <div className="mt-1 space-y-1.5">
                         <textarea
                           value={content}
@@ -860,7 +869,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
                           Reset to default
                         </button>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
@@ -882,7 +891,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
                       void handleSubmitPost();
                     }}
                     disabled={submitBusy}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-emerald-300/25 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] px-2.5 text-xs font-semibold text-emerald-50 hover:brightness-110 disabled:opacity-60 disabled:hover:brightness-100"
+                    className="inline-flex h-9 items-center gap-1.5 rounded-md border border-emerald-200/35 bg-[linear-gradient(to_top_right,#244238_0%,#5f7f6f_100%)] px-3 text-sm font-semibold text-emerald-50 shadow-[0_0_18px_rgba(94,164,135,0.22)] hover:brightness-110 disabled:opacity-60 disabled:hover:brightness-100"
                   >
                     {submitBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                     {submitBusy ? "Posting..." : "Post to TWF"}
