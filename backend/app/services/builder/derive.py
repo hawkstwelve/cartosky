@@ -1141,6 +1141,10 @@ def _derive_snowfall_kuchera_total_cumulative(
     del var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     apcp_component = str(hints.get("apcp_component", "apcp_step"))
+    apcp_product_raw = str(hints.get("kuchera_apcp_product", "")).strip()
+    apcp_product = apcp_product_raw or None
+    profile_product_raw = str(hints.get("kuchera_profile_product", "")).strip()
+    profile_product = profile_product_raw or None
     levels_hpa = _parse_kuchera_levels_hpa(hints.get("kuchera_levels_hpa"))
     require_rh = _parse_hint_bool(
         hints.get("kuchera_require_rh"),
@@ -1160,11 +1164,13 @@ def _derive_snowfall_kuchera_total_cumulative(
 
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, default_step_hours=6)
     logger.info(
-        "derive %s fh%03d apcp_steps=%d profile_levels=%s%s",
+        "derive %s fh%03d apcp_steps=%d profile_levels=%s apcp_product=%s profile_product=%s%s",
         var_key,
         fh,
         len(step_fhs),
         levels_hpa,
+        apcp_product or product,
+        profile_product or product,
         _cadence_hint_suffix(hints),
     )
     logger.debug("derive %s fh%03d apcp_steps=%s", var_key, fh, step_fhs)
@@ -1186,11 +1192,17 @@ def _derive_snowfall_kuchera_total_cumulative(
     if use_warped_components and not target_grid_id:
         target_grid_id = f"{model_id}:{target_region}"
 
-    def _fetch_for_step(step_fh: int, component_var: str) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    def _fetch_for_step(
+        step_fh: int,
+        component_var: str,
+        *,
+        component_product: str | None = None,
+    ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+        resolved_product = str(component_product or product)
         if use_warped_components:
             return _fetch_component_warped(
                 model_id=model_id,
-                product=product,
+                product=resolved_product,
                 run_date=run_date,
                 fh=step_fh,
                 model_plugin=model_plugin,
@@ -1202,7 +1214,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             )
         return _fetch_component(
             model_id=model_id,
-            product=product,
+            product=resolved_product,
             run_date=run_date,
             fh=step_fh,
             model_plugin=model_plugin,
@@ -1221,7 +1233,11 @@ def _derive_snowfall_kuchera_total_cumulative(
     unavailable_rh_levels: set[int] = set()
 
     for step_fh in step_fhs:
-        apcp_step, step_crs, step_transform = _fetch_for_step(step_fh, apcp_component)
+        apcp_step, step_crs, step_transform = _fetch_for_step(
+            step_fh,
+            apcp_component,
+            component_product=apcp_product,
+        )
         apcp_valid = np.isfinite(apcp_step) & (apcp_step >= 0.0)
         step_apcp_clean = np.where(apcp_valid, apcp_step, 0.0).astype(np.float32, copy=False)
         if min_step_lwe > 0.0:
@@ -1236,7 +1252,11 @@ def _derive_snowfall_kuchera_total_cumulative(
 
             temp_component = f"tmp{level_hpa}"
             try:
-                temp_data, _, _ = _fetch_for_step(step_fh, temp_component)
+                temp_data, _, _ = _fetch_for_step(
+                    step_fh,
+                    temp_component,
+                    component_product=profile_product,
+                )
             except (HerbieTransientUnavailableError, RuntimeError, ValueError) as exc:
                 if isinstance(exc, ValueError):
                     unavailable_temp_levels.add(level_hpa)
@@ -1255,7 +1275,11 @@ def _derive_snowfall_kuchera_total_cumulative(
 
             if require_rh or level_hpa not in unavailable_rh_levels:
                 try:
-                    rh_data, _, _ = _fetch_for_step(step_fh, rh_component)
+                    rh_data, _, _ = _fetch_for_step(
+                        step_fh,
+                        rh_component,
+                        component_product=profile_product,
+                    )
                     if rh_data.shape != step_apcp_clean.shape:
                         raise ValueError(
                             f"Kuchera RH shape mismatch for {model_id}/{var_key} at fh{step_fh:03d} level={level_hpa}: "

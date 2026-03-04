@@ -111,3 +111,58 @@ def test_kuchera_falls_back_to_ten_to_one_with_insufficient_levels(monkeypatch, 
     np.testing.assert_allclose(data, expected, rtol=1e-6, atol=1e-6, equal_nan=True)
     assert "kuchera_profile insufficient_levels=1/4 fallback=10to1" in caplog.text
     assert "snow_ratio method=kuchera fh=2 levels=[925, 850, 700, 600, 500] fallback=10to1" in caplog.text
+
+
+def test_kuchera_can_use_distinct_profile_product(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    apcp = np.full((2, 2), 1.0, dtype=np.float32)
+    temp = np.full((2, 2), -14.0, dtype=np.float32)
+    rh = np.full((2, 2), 90.0, dtype=np.float32)
+
+    seen_products: list[tuple[str, str, int]] = []
+
+    def _fake_fetch_component(**kwargs):
+        product = str(kwargs["product"])
+        var_key = str(kwargs["var_key"])
+        fh = int(kwargs["fh"])
+        seen_products.append((product, var_key, fh))
+        if var_key == "apcp_step":
+            return apcp, crs, transform
+        if var_key.startswith("tmp"):
+            return temp, crs, transform
+        if var_key.startswith("rh"):
+            return rh, crs, transform
+        raise AssertionError(f"unexpected component {var_key}")
+
+    monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+
+    var_spec_model = SimpleNamespace(
+        selectors=SimpleNamespace(
+            hints={
+                "apcp_component": "apcp_step",
+                "step_hours": "1",
+                "kuchera_profile_product": "prs",
+                "kuchera_levels_hpa": "850,700,600,500",
+                "kuchera_require_rh": "true",
+                "kuchera_min_levels": "4",
+            }
+        )
+    )
+    data, out_crs, out_transform = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="hrrr",
+        var_key="snowfall_kuchera_total",
+        product="sfc",
+        run_date=datetime(2026, 3, 4, 20, 0),
+        fh=1,
+        var_spec_model=var_spec_model,
+        var_capability=None,
+        model_plugin=object(),
+    )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    assert np.isfinite(data).all()
+    assert ("sfc", "apcp_step", 1) in seen_products
+    assert ("prs", "tmp850", 1) in seen_products
+    assert ("prs", "rh850", 1) in seen_products

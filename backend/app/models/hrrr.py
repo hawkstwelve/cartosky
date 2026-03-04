@@ -230,6 +230,7 @@ HRRR_VARS: dict[str, VarSpec] = {
             hints={
                 "apcp_component": "apcp_step",
                 "step_hours": "1",
+                "kuchera_profile_product": "prs",
                 **kuchera_hint_overrides(levels_hpa=(850, 700, 600, 500)),
             }
         ),
