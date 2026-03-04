@@ -33,6 +33,7 @@ import {
   WEBP_RENDER_MODE_THRESHOLDS,
 } from "@/lib/config";
 import { buildRunOptions } from "@/lib/run-options";
+import { type ScreenshotExportState } from "@/lib/screenshot_export";
 import { buildShareSummary } from "@/lib/share-summary";
 import { buildTileUrlFromFrame } from "@/lib/tiles";
 import { buildPermalinkSearch, readPermalink, replaceUrlQuery } from "@/lib/permalink";
@@ -722,6 +723,7 @@ export default function App() {
   const tierFailoverCycleRef = useRef<{ key: string; emitted: boolean }>({ key: "", emitted: false });
   const runsLoadedForModelRef = useRef<string>("");
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
+  const legendContainerRef = useRef<HTMLDivElement | null>(null);
   const mapViewRef = useRef({
     lat: MAP_VIEW_DEFAULTS.center[0],
     lon: MAP_VIEW_DEFAULTS.center[1],
@@ -2944,6 +2946,36 @@ export default function App() {
   const resolvedForecastHourPermalink = Number.isFinite(forecastHour)
     ? forecastHour
     : pendingInitialForecastHourRef.current;
+  const selectedModelLabel = useMemo(() => {
+    const fromOptions = models.find((entry) => entry.value === model)?.label;
+    return fromOptions ?? model;
+  }, [models, model]);
+  const selectedRunLabel = useMemo(() => {
+    const fromOptions = runOptions.find((entry) => entry.value === run)?.label;
+    if (fromOptions) {
+      return fromOptions;
+    }
+    if (run === "latest") {
+      return latestRunId ? `Latest (${latestRunId})` : "Latest";
+    }
+    return run;
+  }, [runOptions, run, latestRunId]);
+  const selectedVariableLabel = useMemo(() => {
+    const fromOptions = variables.find((entry) => entry.value === variable)?.label;
+    if (fromOptions) {
+      return fromOptions;
+    }
+    const fromCapabilities = selectedCapabilityVarMap.get(variable)?.displayName;
+    if (fromCapabilities) {
+      return fromCapabilities;
+    }
+    const manifestVariable = runManifest?.variables?.[variable];
+    return manifestVariable?.display_name ?? manifestVariable?.name ?? manifestVariable?.label ?? variable;
+  }, [variables, variable, selectedCapabilityVarMap, runManifest]);
+  const selectedRegionLabel = useMemo(() => {
+    const fromOptions = regions.find((entry) => entry.value === region)?.label;
+    return fromOptions ?? regionPresets[region]?.label ?? region;
+  }, [regions, regionPresets, region]);
   const sharePayload = useMemo<SharePayload>(() => {
     const runForSummary = run === "latest" ? (latestRunId ?? "latest") : run;
     const mapView = mapViewRef.current;
@@ -2978,6 +3010,53 @@ export default function App() {
     regionPresets,
     resolvedLoopPermalink,
     mapViewTick,
+  ]);
+
+  const buildScreenshotExportState = useCallback((): ScreenshotExportState | null => {
+    const map = mapInstanceRef.current;
+    if (!map) {
+      return null;
+    }
+    const style = map.getStyle();
+    if (!style) {
+      return null;
+    }
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+    if (!Number.isFinite(center.lng) || !Number.isFinite(center.lat) || !Number.isFinite(zoom)) {
+      return null;
+    }
+
+    return {
+      style,
+      center: [center.lng, center.lat],
+      zoom,
+      bearing: map.getBearing(),
+      pitch: map.getPitch(),
+      model: selectedModelLabel || model || "Model",
+      run: selectedRunLabel || run || "Run",
+      variable: {
+        key: variable || "variable",
+        label: selectedVariableLabel || variable || "Variable",
+      },
+      fh: Number.isFinite(forecastHour) ? Math.round(forecastHour) : 0,
+      region: {
+        id: region || "region",
+        label: selectedRegionLabel || region || "Region",
+      },
+      loopEnabled: isLoopDisplayActive,
+    };
+  }, [
+    selectedModelLabel,
+    model,
+    selectedRunLabel,
+    run,
+    variable,
+    selectedVariableLabel,
+    forecastHour,
+    region,
+    selectedRegionLabel,
+    isLoopDisplayActive,
   ]);
 
   const handleOpenShareModal = useCallback(() => {
@@ -3154,7 +3233,7 @@ export default function App() {
           {basemapMode === "dark" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
         </button>
 
-        <MapLegend legend={legend} onOpacityChange={setOpacity} />
+        <MapLegend legend={legend} onOpacityChange={setOpacity} containerRef={legendContainerRef} />
 
         <BottomForecastControls
           forecastHour={forecastHour}
@@ -3174,6 +3253,8 @@ export default function App() {
         open={isShareModalOpen}
         onClose={() => setIsShareModalOpen(false)}
         payload={sharePayload}
+        buildScreenshotState={buildScreenshotExportState}
+        getLegendElement={() => legendContainerRef.current}
       />
     </div>
   );

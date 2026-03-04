@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 import { Slider } from "@/components/ui/slider";
@@ -206,9 +206,10 @@ function groupPrecipPtypeRows(
 type MapLegendProps = {
   legend: LegendPayload | null;
   onOpacityChange: (opacity: number) => void;
+  containerRef?: Ref<HTMLDivElement>;
 };
 
-export function MapLegend({ legend, onOpacityChange }: MapLegendProps) {
+export function MapLegend({ legend, onOpacityChange, containerRef }: MapLegendProps) {
   const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsedPreference());
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [fadeKey, setFadeKey] = useState(0);
@@ -237,7 +238,10 @@ export function MapLegend({ legend, onOpacityChange }: MapLegendProps) {
 
   if (!legend) {
     return (
-      <div className={cn("pointer-events-none fixed z-[55]", isSmallScreen ? "bottom-40 right-4" : "right-4 top-36")}>
+      <div
+        ref={containerRef}
+        className={cn("pointer-events-none fixed z-[55]", isSmallScreen ? "bottom-40 right-4" : "right-4 top-36")}
+      >
         <UnavailablePlaceholder />
       </div>
     );
@@ -255,6 +259,7 @@ export function MapLegend({ legend, onOpacityChange }: MapLegendProps) {
 
   return (
     <div
+      ref={containerRef}
       className={cn(
         "fixed z-[55] flex flex-col max-h-[70vh] overflow-hidden rounded-xl glass bg-black/34 shadow-[0_6px_22px_rgba(0,0,0,0.3)] transition-all duration-200",
         showPrecipPtypeRows ? "w-[220px]" : "w-[120px]",

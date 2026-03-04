@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Copy, ExternalLink, Loader2, Send, X } from "lucide-react";
+import { CheckCircle2, Copy, Download, ExternalLink, Image, Loader2, Send, X } from "lucide-react";
 
 import { API_ORIGIN } from "@/lib/config";
+import { exportViewerScreenshotPng, type ScreenshotExportState } from "@/lib/screenshot_export";
 import { getSharePrefs, setSharePrefs, type SharePrefs } from "@/lib/share_prefs";
 
 export type SharePayload = {
@@ -44,6 +45,8 @@ type TwfShareModalProps = {
   open: boolean;
   onClose: () => void;
   payload: SharePayload;
+  buildScreenshotState?: () => ScreenshotExportState | null;
+  getLegendElement?: () => HTMLElement | null;
 };
 
 const QUICK_FORUMS: Array<{ id: number; label: string }> = [
@@ -248,7 +251,33 @@ async function writeClipboard(text: string): Promise<boolean> {
   }
 }
 
-export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
+function sanitizeFilenamePart(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return sanitized || "value";
+}
+
+function screenshotFilename(state: ScreenshotExportState): string {
+  const parts = [
+    sanitizeFilenamePart(state.model),
+    sanitizeFilenamePart(state.run),
+    `fh${Number.isFinite(state.fh) ? Math.max(0, Math.round(state.fh)) : 0}`,
+    sanitizeFilenamePart(state.variable.key || state.variable.label),
+    sanitizeFilenamePart(state.region?.id ?? "region"),
+  ];
+  return `twf-${parts.join("-")}.png`;
+}
+
+export function TwfShareModal({
+  open,
+  onClose,
+  payload,
+  buildScreenshotState,
+  getLegendElement,
+}: TwfShareModalProps) {
   const initialSharePrefs = useMemo(() => getSharePrefs(), []);
   const wasOpenRef = useRef(false);
   const [twfStatus, setTwfStatus] = useState<TwfStatus>({ linked: false });
@@ -281,6 +310,10 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
   const [isMessageExpanded, setIsMessageExpanded] = useState(false);
   const [hasExpandedMessageEditor, setHasExpandedMessageEditor] = useState(false);
   const [contentDirty, setContentDirty] = useState(false);
+  const [screenshotBusy, setScreenshotBusy] = useState(false);
+  const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  const [screenshotBlobUrl, setScreenshotBlobUrl] = useState<string | null>(null);
+  const [screenshotFilenameValue, setScreenshotFilenameValue] = useState("twf-map-screenshot.png");
 
   const parsedTopicIdFromUrl = useMemo(() => parseTopicIdFromUrl(pastedTopicUrl), [pastedTopicUrl]);
   const pastedTopicUrlHasValue = pastedTopicUrl.trim().length > 0;
@@ -339,6 +372,15 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
     setShowAdvancedTopic(false);
     setPastedTopicUrl("");
     setTopicSearch("");
+    setScreenshotBusy(false);
+    setScreenshotError(null);
+    setScreenshotFilenameValue("twf-map-screenshot.png");
+    setScreenshotBlobUrl((previous) => {
+      if (previous) {
+        URL.revokeObjectURL(previous);
+      }
+      return null;
+    });
   }, [open, defaultContent]);
 
   useEffect(() => {
@@ -347,6 +389,14 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
     }
     setContent(defaultContent);
   }, [open, defaultContent, contentDirty]);
+
+  useEffect(() => {
+    return () => {
+      if (screenshotBlobUrl) {
+        URL.revokeObjectURL(screenshotBlobUrl);
+      }
+    };
+  }, [screenshotBlobUrl]);
 
   useEffect(() => {
     if (!open) {
@@ -503,6 +553,55 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
     return () => controller.abort();
   }, [open, twfStatus, selectedForumId]);
 
+  const handleGenerateScreenshot = async () => {
+    setScreenshotError(null);
+    if (!buildScreenshotState) {
+      setScreenshotError("Screenshot export is unavailable right now.");
+      return;
+    }
+
+    const state = buildScreenshotState();
+    if (!state) {
+      setScreenshotError("Map is still loading. Try again in a moment.");
+      return;
+    }
+
+    setScreenshotBusy(true);
+    try {
+      const blob = await exportViewerScreenshotPng(state, {
+        legendEl: getLegendElement?.() ?? null,
+      });
+      const objectUrl = URL.createObjectURL(blob);
+      setScreenshotFilenameValue(screenshotFilename(state));
+      setScreenshotBlobUrl((previous) => {
+        if (previous) {
+          URL.revokeObjectURL(previous);
+        }
+        return objectUrl;
+      });
+    } catch (error) {
+      const message = error instanceof Error && error.message
+        ? error.message
+        : "Screenshot generation failed.";
+      setScreenshotError(message);
+    } finally {
+      setScreenshotBusy(false);
+    }
+  };
+
+  const handleDownloadScreenshot = () => {
+    if (!screenshotBlobUrl) {
+      return;
+    }
+    const link = document.createElement("a");
+    link.href = screenshotBlobUrl;
+    link.download = screenshotFilenameValue;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
   const handleCopy = async (kind: "link" | "summary") => {
     const text = kind === "link" ? payload.permalink : payload.summary;
     const ok = await writeClipboard(text);
@@ -607,7 +706,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
         <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
           <div>
             <div className="text-sm font-semibold text-white">Share</div>
-            <div className="text-xs text-white/60">Copy link/summary or post directly to The Weather Forums.</div>
+            <div className="text-xs text-white/60">Copy link/summary, generate a screenshot, or post to TWF.</div>
           </div>
           <button
             type="button"
@@ -649,6 +748,49 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
               <div className="line-clamp-2">{payload.summary}</div>
               <div className="mt-1 truncate text-white/60">{payload.permalink}</div>
             </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/65">Include Screenshot</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  void handleGenerateScreenshot();
+                }}
+                disabled={screenshotBusy}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35 disabled:opacity-60 disabled:hover:bg-black/25"
+              >
+                {screenshotBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Image className="h-3.5 w-3.5" />}
+                {screenshotBusy ? "Generating..." : "Generate Screenshot"}
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadScreenshot}
+                disabled={!screenshotBlobUrl || screenshotBusy}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35 disabled:opacity-60 disabled:hover:bg-black/25"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download PNG
+              </button>
+              <span className="text-[11px] text-white/55">1600x900 PNG export</span>
+            </div>
+            {screenshotError ? (
+              <div className="mt-2 rounded-md border border-red-400/25 bg-red-500/10 px-2 py-1.5 text-xs text-red-100">
+                {screenshotError}
+              </div>
+            ) : null}
+            {screenshotBlobUrl ? (
+              <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                <img
+                  src={screenshotBlobUrl}
+                  alt="Screenshot preview"
+                  className="h-auto w-full"
+                />
+              </div>
+            ) : (
+              <div className="mt-2 text-xs text-white/55">Generate a screenshot to preview and download it.</div>
+            )}
           </div>
 
           <div className="h-px bg-white/10" aria-hidden="true" />
