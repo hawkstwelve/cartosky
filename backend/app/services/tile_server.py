@@ -1,9 +1,10 @@
-"""TWF V3 Tile Server — dumb RGBA COG → PNG tile server.
+"""TWF V3 Tile Server — PNG tile responses from published artifacts.
 
-Hard Rule: No runtime colormap transformation.
-The tile server reads pre-styled 4-band RGBA COGs and returns PNG tiles.
-Render-time resampling is kind-driven (continuous vs categorical) to keep
-tile extraction consistent with loop WebP rendering.
+Default path serves pre-styled 4-band RGBA COGs.
+Coarse-model continuous fields may be value-rendered at request time:
+value COG sample -> in-memory colorize -> PNG encode.
+Render-time resampling remains kind-driven to keep tile extraction aligned
+with loop WebP rendering.
 """
 
 from __future__ import annotations
@@ -15,16 +16,19 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 import traceback
 from pathlib import Path
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 from rio_tiler.io.rasterio import Reader
 from rio_tiler.errors import TileOutsideBounds
 
-from .render_resampling import rio_tiler_resampling_kwargs
+from .builder.colorize import float_to_rgba
+from .render_resampling import rio_tiler_resampling_kwargs, use_value_render_for_variable, variable_color_map_id
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +52,11 @@ CACHE_HIT = "public, max-age=31536000, immutable"
 CACHE_MISS = "public, max-age=15"
 # Empty gzip-compressed MVT tile body; use 200 responses for expected-empty vector tiles.
 EMPTY_GZIP_MVT_TILE = base64.b64decode("H4sIAHR2n2kC/wMAAAAAAAAAAAA=")
+TILE_RENDER_COUNTER_LOG_EVERY = 200
+
+_tile_render_counter_lock = threading.Lock()
+_tile_render_totals: dict[str, int] = {"rgba": 0, "value": 0}
+_tile_render_by_model_var: dict[str, dict[tuple[str, str], int]] = {"rgba": {}, "value": {}}
 
 
 def _mbtiles_get_metadata(path: Path) -> dict[str, str]:
@@ -190,6 +199,7 @@ def _read_tile_compat(
     x: int,
     y: int,
     z: int,
+    indexes: tuple[int, ...] = (1, 2, 3, 4),
     resampling_method: str,
     reproject_method: str,
 ):
@@ -200,7 +210,7 @@ def _read_tile_compat(
     gracefully fall back to defaults to avoid service outages.
     """
     common_args = {
-        "indexes": (1, 2, 3, 4),
+        "indexes": indexes,
         "tilesize": 512,
         "resampling_method": resampling_method,
         "reproject_method": reproject_method,
@@ -242,6 +252,124 @@ def _render_png_compat(tile) -> bytes:
     except TypeError:
         logger.warning("tile.render(add_mask=...) unsupported; falling back")
         return tile.render(img_format="PNG")
+
+
+def _resolve_value_cog_path(model: str, run: str, var: str, fh: int) -> Path | None:
+    resolved = run
+    if run == "latest":
+        resolved = _resolve_latest_run(model)
+        if resolved is None:
+            return None
+
+    fh_str = f"fh{fh:03d}"
+    filename = f"{fh_str}.val.cog.tif"
+    candidate = PUBLISHED_ROOT / model / resolved / var / filename
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def _maybe_blur_value_tile(values: np.ndarray, *, sigma: float | None = None) -> np.ndarray:
+    # Reserved optional hook for coarse-model value rendering.
+    # Deliberately disabled for this change set (sigma=None everywhere).
+    if sigma is None:
+        return values
+    try:
+        if float(sigma) <= 0.0:
+            return values
+    except (TypeError, ValueError):
+        return values
+    return values
+
+
+def _colorize_value_tile(
+    tile,
+    *,
+    model: str,
+    var: str,
+    blur_sigma: float | None = None,
+) -> np.ndarray | None:
+    color_map_id = variable_color_map_id(model, var)
+    if not color_map_id:
+        logger.warning("Value-render color_map_id missing for model=%s var=%s", model, var)
+        return None
+
+    raw_data = np.asarray(getattr(tile, "data", None))
+    if raw_data.size == 0:
+        return None
+    if raw_data.ndim == 3:
+        values = raw_data[0]
+    elif raw_data.ndim == 2:
+        values = raw_data
+    else:
+        logger.warning(
+            "Unexpected value tile ndim for model=%s var=%s: shape=%s",
+            model,
+            var,
+            getattr(raw_data, "shape", None),
+        )
+        return None
+
+    values_f32 = np.asarray(values, dtype=np.float32)
+    mask = getattr(tile, "mask", None)
+    if mask is not None:
+        mask_arr = np.asarray(mask)
+        if mask_arr.shape == values_f32.shape:
+            values_f32 = values_f32.copy()
+            values_f32[mask_arr == 0] = np.nan
+    values_f32 = _maybe_blur_value_tile(values_f32, sigma=blur_sigma)
+
+    rgba, _ = float_to_rgba(
+        values_f32,
+        color_map_id,
+        meta_var_key=var,
+    )
+    return rgba
+
+
+def _rgba_array_to_png_bytes(rgba: np.ndarray) -> bytes:
+    rgba_hwc = np.moveaxis(rgba, 0, -1)
+    image = Image.fromarray(rgba_hwc, mode="RGBA")
+    buf = io.BytesIO()
+    image.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _record_tile_render_mode(mode: str, *, model: str, var: str) -> None:
+    if mode not in {"rgba", "value"}:
+        return
+    model_key = str(model or "").strip().lower() or "<unknown-model>"
+    var_key = str(var or "").strip().lower() or "<unknown-var>"
+    with _tile_render_counter_lock:
+        _tile_render_totals[mode] = _tile_render_totals.get(mode, 0) + 1
+        key = (model_key, var_key)
+        per_mode = _tile_render_by_model_var.setdefault(mode, {})
+        per_mode[key] = per_mode.get(key, 0) + 1
+
+        total = _tile_render_totals.get("rgba", 0) + _tile_render_totals.get("value", 0)
+        if total <= 0 or total % TILE_RENDER_COUNTER_LOG_EVERY != 0:
+            return
+
+        value_total = _tile_render_totals.get("value", 0)
+        rgba_total = _tile_render_totals.get("rgba", 0)
+        value_top = sorted(
+            _tile_render_by_model_var.get("value", {}).items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:4]
+        rgba_top = sorted(
+            _tile_render_by_model_var.get("rgba", {}).items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:4]
+    logger.info(
+        "Tile render counters total=%d value=%d rgba=%d value_top=%s rgba_top=%s",
+        total,
+        value_total,
+        rgba_total,
+        value_top,
+        rgba_top,
+    )
 
 
 def _transparent_png_response(*, cache_control: str) -> Response:
@@ -396,10 +524,75 @@ def get_tile(
     model: str, run: str, var: str, fh: int,
     z: int, x: int, y: int,
 ):
-    """Serve a single PNG map tile from a pre-styled RGBA COG.
+    """Serve a single PNG weather tile.
 
-    No colormap logic. No var-branching. Read 4 bands, encode PNG, return.
+    Default path: RGBA COG -> PNG.
+    Gated path: value COG -> colorize -> PNG.
     """
+    use_value_render = use_value_render_for_variable(model_id=model, var_key=var)
+
+    if use_value_render:
+        val_path = _resolve_value_cog_path(model, run, var, fh)
+        if val_path is not None:
+            try:
+                with Reader(input=str(val_path)) as val_cog:
+                    resampling_kwargs = rio_tiler_resampling_kwargs(model_id=model, var_key=var)
+                    tile = _read_tile_compat(
+                        val_cog,
+                        x=x,
+                        y=y,
+                        z=z,
+                        indexes=(1,),
+                        resampling_method=resampling_kwargs["resampling_method"],
+                        reproject_method=resampling_kwargs["reproject_method"],
+                    )
+
+                if _tile_is_fully_masked(tile):
+                    _record_tile_render_mode("value", model=model, var=var)
+                    return _transparent_png_response(cache_control=CACHE_HIT)
+
+                rgba = _colorize_value_tile(tile, model=model, var=var, blur_sigma=None)
+                if rgba is not None:
+                    content = _rgba_array_to_png_bytes(rgba)
+                    _record_tile_render_mode("value", model=model, var=var)
+                    return Response(
+                        content=content,
+                        media_type="image/png",
+                        headers={"Cache-Control": CACHE_HIT},
+                    )
+                logger.warning(
+                    "Value-render colorization failed; falling back to RGBA path for %s/%s/%s/fh%03d/%d/%d/%d",
+                    model,
+                    run,
+                    var,
+                    fh,
+                    z,
+                    x,
+                    y,
+                )
+            except TileOutsideBounds:
+                # Tile coordinates outside extent are expected-empty tiles.
+                return _transparent_png_response(cache_control=CACHE_MISS)
+            except Exception:
+                logger.exception(
+                    "Value-render tile read/colorize failed; trying RGBA fallback: %s/%s/%s/fh%03d/%d/%d/%d",
+                    model,
+                    run,
+                    var,
+                    fh,
+                    z,
+                    x,
+                    y,
+                )
+        else:
+            logger.debug(
+                "Value COG missing for value-render path; trying RGBA fallback: %s/%s/%s/fh%03d",
+                model,
+                run,
+                var,
+                fh,
+            )
+
     cog_path = _resolve_cog_path(model, run, var, fh)
     if cog_path is None:
         return Response(
@@ -420,9 +613,11 @@ def get_tile(
             )
 
         if _tile_is_fully_masked(tile):
+            _record_tile_render_mode("rgba", model=model, var=var)
             return _transparent_png_response(cache_control=CACHE_HIT)
 
         content = _render_png_compat(tile)
+        _record_tile_render_mode("rgba", model=model, var=var)
         return Response(
             content=content,
             media_type="image/png",
@@ -434,7 +629,7 @@ def get_tile(
         return _transparent_png_response(cache_control=CACHE_MISS)
     except Exception as exc:
         logger.exception(
-            "Tile read failed: %s/%s/%s/%s/fh%03d/%d/%d/%d",
+            "Tile read failed: %s/%s/%s/fh%03d/%d/%d/%d",
             model, run, var, fh, z, x, y,
         )
         raise HTTPException(

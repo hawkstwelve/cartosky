@@ -35,7 +35,12 @@ from pydantic import BaseModel, Field
 
 from .config.regions import REGION_PRESETS
 from .models.registry import list_model_capabilities
-from .services.render_resampling import rasterio_resampling_for_loop
+from .services.builder.colorize import float_to_rgba
+from .services.render_resampling import (
+    rasterio_resampling_for_loop,
+    use_value_render_for_variable,
+    variable_color_map_id,
+)
 from backend.app.auth import twf_oauth
 
 logger = logging.getLogger(__name__)
@@ -1418,6 +1423,72 @@ def _legacy_loop_webp_path(model: str, run: str, var: str, fh: int, *, tier: int
     return None
 
 
+def _maybe_blur_loop_values(values: np.ndarray, *, sigma: float | None = None) -> np.ndarray:
+    # Optional hook for value-rendered loop frames. Disabled by default.
+    if sigma is None:
+        return values
+    try:
+        if float(sigma) <= 0.0:
+            return values
+    except (TypeError, ValueError):
+        return values
+    return values
+
+
+def _render_loop_rgba_hwc(
+    *,
+    cog_path: Path,
+    value_cog_path: Path | None,
+    model_id: str,
+    var_key: str,
+    out_h: int,
+    out_w: int,
+    blur_sigma: float | None = None,
+) -> np.ndarray | None:
+    use_value_render = use_value_render_for_variable(model_id=model_id, var_key=var_key)
+    if use_value_render and value_cog_path is not None and value_cog_path.is_file():
+        color_map_id = variable_color_map_id(model_id, var_key)
+        if color_map_id:
+            try:
+                resampling = rasterio_resampling_for_loop(model_id=model_id, var_key=var_key)
+                with rasterio.open(value_cog_path) as value_ds:
+                    sampled_values = value_ds.read(
+                        1,
+                        out_shape=(out_h, out_w),
+                        resampling=resampling,
+                    ).astype(np.float32, copy=False)
+                sampled_values = _maybe_blur_loop_values(sampled_values, sigma=blur_sigma)
+                rgba, _ = float_to_rgba(
+                    sampled_values,
+                    color_map_id,
+                    meta_var_key=var_key,
+                )
+                return np.moveaxis(rgba, 0, -1)
+            except Exception:
+                logger.exception(
+                    "Loop value-render failed; falling back to RGBA path: model=%s var=%s src=%s val=%s",
+                    model_id,
+                    var_key,
+                    cog_path,
+                    value_cog_path,
+                )
+        else:
+            logger.warning(
+                "Loop value-render color_map_id missing; falling back to RGBA path: model=%s var=%s",
+                model_id,
+                var_key,
+            )
+
+    resampling = rasterio_resampling_for_loop(model_id=model_id, var_key=var_key)
+    with rasterio.open(cog_path) as ds:
+        data = ds.read(
+            indexes=(1, 2, 3, 4),
+            out_shape=(4, out_h, out_w),
+            resampling=resampling,
+        )
+    return np.moveaxis(data, 0, -1)
+
+
 def _ensure_loop_webp(
     cog_path: Path,
     out_path: Path,
@@ -1425,6 +1496,7 @@ def _ensure_loop_webp(
     model_id: str,
     var_key: str,
     tier: int,
+    value_cog_path: Path | None = None,
 ) -> bool:
     if out_path.is_file():
         return True
@@ -1441,7 +1513,6 @@ def _ensure_loop_webp(
         tmp_path = Path(tmp.name)
 
     try:
-        resampling = rasterio_resampling_for_loop(model_id=model_id, var_key=var_key)
         with rasterio.open(cog_path) as ds:
             src_h = int(ds.height)
             src_w = int(ds.width)
@@ -1453,13 +1524,17 @@ def _ensure_loop_webp(
             out_h = max(1, int(round(src_h * scale)))
             out_w = max(1, int(round(src_w * scale)))
 
-            data = ds.read(
-                indexes=(1, 2, 3, 4),
-                out_shape=(4, out_h, out_w),
-                resampling=resampling,
-            )
-
-        rgba = np.moveaxis(data, 0, -1)
+        rgba = _render_loop_rgba_hwc(
+            cog_path=cog_path,
+            value_cog_path=value_cog_path,
+            model_id=model_id,
+            var_key=var_key,
+            out_h=out_h,
+            out_w=out_w,
+            blur_sigma=None,
+        )
+        if rgba is None:
+            return False
         image = Image.fromarray(rgba, mode="RGBA")
         image.save(tmp_path, format="WEBP", quality=quality_cfg, method=6)
         tmp_path.replace(out_path)
@@ -1480,6 +1555,7 @@ def _render_loop_webp_bytes(
     model_id: str,
     var_key: str,
     tier: int,
+    value_cog_path: Path | None = None,
 ) -> bytes | None:
     tier_cfg = LOOP_TIER_CONFIG.get(tier)
     if tier_cfg is None:
@@ -1489,7 +1565,6 @@ def _render_loop_webp_bytes(
     quality_cfg = max(1, min(100, int(tier_cfg.get("quality", LOOP_WEBP_QUALITY))))
 
     try:
-        resampling = rasterio_resampling_for_loop(model_id=model_id, var_key=var_key)
         with rasterio.open(cog_path) as ds:
             src_h = int(ds.height)
             src_w = int(ds.width)
@@ -1501,13 +1576,17 @@ def _render_loop_webp_bytes(
             out_h = max(1, int(round(src_h * scale)))
             out_w = max(1, int(round(src_w * scale)))
 
-            data = ds.read(
-                indexes=(1, 2, 3, 4),
-                out_shape=(4, out_h, out_w),
-                resampling=resampling,
-            )
-
-        rgba = np.moveaxis(data, 0, -1)
+        rgba = _render_loop_rgba_hwc(
+            cog_path=cog_path,
+            value_cog_path=value_cog_path,
+            model_id=model_id,
+            var_key=var_key,
+            out_h=out_h,
+            out_w=out_w,
+            blur_sigma=None,
+        )
+        if rgba is None:
+            return None
         image = Image.fromarray(rgba, mode="RGBA")
         buffer = io.BytesIO()
         image.save(buffer, format="WEBP", quality=quality_cfg, method=6)
@@ -1910,6 +1989,7 @@ def get_loop_webp(
     cog_path = _resolve_rgba_cog(model, resolved, var, fh)
     if cog_path is None:
         return Response(status_code=404, headers={"Cache-Control": CACHE_MISS})
+    value_cog_path = _resolve_val_cog(model, resolved, var, fh)
 
     legacy_path = _legacy_loop_webp_path(model, resolved, var, fh, tier=tier)
     if legacy_path is not None:
@@ -1930,6 +2010,7 @@ def get_loop_webp(
         model_id=model,
         var_key=var,
         tier=tier,
+        value_cog_path=value_cog_path,
     ):
         # Graceful degradation path: avoid surfacing hard 500s to clients when
         # cache writes fail (permissions/disk), and allow tier-1 to fall back.
@@ -1949,6 +2030,7 @@ def get_loop_webp(
                 model_id=model,
                 var_key=var,
                 tier=0,
+                value_cog_path=value_cog_path,
             ):
                 return FileResponse(
                     path=str(tier0_out),
@@ -1961,6 +2043,7 @@ def get_loop_webp(
                 model_id=model,
                 var_key=var,
                 tier=0,
+                value_cog_path=value_cog_path,
             )
             if tier0_bytes is not None:
                 return Response(content=tier0_bytes, media_type="image/webp", headers={"Cache-Control": CACHE_MISS})
@@ -1970,6 +2053,7 @@ def get_loop_webp(
             model_id=model,
             var_key=var,
             tier=tier,
+            value_cog_path=value_cog_path,
         )
         if content is not None:
             return Response(content=content, media_type="image/webp", headers={"Cache-Control": CACHE_MISS})

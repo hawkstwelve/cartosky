@@ -4,9 +4,22 @@ from app.services import render_resampling
 
 
 def _set_capabilities(monkeypatch, variable_catalog):
-    capabilities = {"gfs": SimpleNamespace(variable_catalog=variable_catalog)}
+    capabilities = {
+        "gfs": SimpleNamespace(
+            variable_catalog=variable_catalog,
+            grid_meters_by_region={"conus": 25000.0},
+            canonical_region="conus",
+        ),
+        "hrrr": SimpleNamespace(
+            variable_catalog=variable_catalog,
+            grid_meters_by_region={"conus": 3000.0},
+            canonical_region="conus",
+        ),
+    }
     monkeypatch.setattr(render_resampling, "list_model_capabilities", lambda: capabilities)
     render_resampling._lookup_kind_from_capabilities.cache_clear()
+    render_resampling._lookup_variable_catalog_entry.cache_clear()
+    render_resampling._lookup_model_grid_km.cache_clear()
     render_resampling._warned_unknown_kind.clear()
     render_resampling._unknown_kind_hits.clear()
 
@@ -48,3 +61,22 @@ def test_unknown_kind_falls_back_to_bilinear_and_warns(monkeypatch, caplog):
     assert second == "bilinear"
     assert render_resampling._unknown_kind_hits[("gfs", "tmp2m")] == 2
     assert "defaulting resampling to bilinear" in caplog.text
+
+
+def test_value_render_gate_true_for_gfs_continuous(monkeypatch):
+    _set_capabilities(
+        monkeypatch,
+        {"tmp2m": SimpleNamespace(kind="continuous", color_map_id="tmp2m")},
+    )
+
+    assert render_resampling.use_value_render_for_variable(model_id="gfs", var_key="tmp2m") is True
+    assert render_resampling.variable_color_map_id("gfs", "tmp2m") == "tmp2m"
+
+
+def test_value_render_gate_false_for_hrrr_continuous(monkeypatch):
+    _set_capabilities(
+        monkeypatch,
+        {"tmp2m": SimpleNamespace(kind="continuous", color_map_id="tmp2m")},
+    )
+
+    assert render_resampling.use_value_render_for_variable(model_id="hrrr", var_key="tmp2m") is False

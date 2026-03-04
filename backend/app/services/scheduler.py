@@ -17,8 +17,13 @@ import rasterio
 from PIL import Image
 
 from app.models.registry import MODEL_REGISTRY
+from app.services.builder.colorize import float_to_rgba
 from app.services.builder.pipeline import build_frame
-from app.services.render_resampling import rasterio_resampling_for_loop
+from app.services.render_resampling import (
+    rasterio_resampling_for_loop,
+    use_value_render_for_variable,
+    variable_color_map_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -568,37 +573,86 @@ def _convert_rgba_cog_to_loop_webp(
     model_id: str,
     var_key: str,
     cog_path: Path,
+    value_cog_path: Path | None,
     out_path: Path,
     quality: int,
     max_dim: int,
-) -> bool:
+) -> tuple[bool, str]:
+    mode_used = "rgba"
+
+    def _maybe_blur_value_frame(values: np.ndarray, *, sigma: float | None = None) -> np.ndarray:
+        # Reserved optional hook for value-render loop frames.
+        # Disabled by default (sigma=None everywhere in this change).
+        if sigma is None:
+            return values
+        try:
+            if float(sigma) <= 0.0:
+                return values
+        except (TypeError, ValueError):
+            return values
+        return values
+
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        resampling = rasterio_resampling_for_loop(model_id=model_id, var_key=var_key)
         with rasterio.open(cog_path) as ds:
             src_h = int(ds.height)
             src_w = int(ds.width)
             max_side = max(src_h, src_w)
             if max_side <= 0:
-                return False
+                return False, mode_used
 
             scale = min(1.0, float(max_dim) / float(max_side))
             out_h = max(1, int(round(src_h * scale)))
             out_w = max(1, int(round(src_w * scale)))
 
-            data = ds.read(
-                indexes=(1, 2, 3, 4),
-                out_shape=(4, out_h, out_w),
-                resampling=resampling,
-            )
+            use_value_render = use_value_render_for_variable(model_id=model_id, var_key=var_key)
+            if use_value_render and value_cog_path is not None and value_cog_path.is_file():
+                color_map_id = variable_color_map_id(model_id, var_key)
+                if color_map_id:
+                    try:
+                        resampling = rasterio_resampling_for_loop(model_id=model_id, var_key=var_key)
+                        with rasterio.open(value_cog_path) as value_ds:
+                            sampled_values = value_ds.read(
+                                1,
+                                out_shape=(out_h, out_w),
+                                resampling=resampling,
+                            ).astype(np.float32, copy=False)
+                        sampled_values = _maybe_blur_value_frame(sampled_values, sigma=None)
+                        rgba, _ = float_to_rgba(
+                            sampled_values,
+                            color_map_id,
+                            meta_var_key=var_key,
+                        )
+                        rgba_hwc = np.moveaxis(rgba, 0, -1)
+                        image = Image.fromarray(rgba_hwc, mode="RGBA")
+                        image.save(out_path, format="WEBP", quality=quality, method=6)
+                        return True, "value"
+                    except Exception:
+                        logger.exception(
+                            "Loop value-render failed; falling back to RGBA path: model=%s var=%s src=%s val=%s out=%s",
+                            model_id,
+                            var_key,
+                            cog_path,
+                            value_cog_path,
+                            out_path,
+                        )
+                else:
+                    logger.warning(
+                        "Loop value-render color_map_id missing; falling back to RGBA path: model=%s var=%s",
+                        model_id,
+                        var_key,
+                    )
+
+            resampling = rasterio_resampling_for_loop(model_id=model_id, var_key=var_key)
+            data = ds.read(indexes=(1, 2, 3, 4), out_shape=(4, out_h, out_w), resampling=resampling)
 
         rgba = np.moveaxis(data, 0, -1)
         image = Image.fromarray(rgba, mode="RGBA")
         image.save(out_path, format="WEBP", quality=quality, method=6)
-        return True
+        return True, mode_used
     except Exception:
         logger.exception("Loop WebP conversion failed: %s -> %s", cog_path, out_path)
-        return False
+        return False, mode_used
 
 
 def _pregenerate_loop_webp_for_run(
@@ -622,16 +676,17 @@ def _pregenerate_loop_webp_for_run(
         (1, int(tier1_quality), int(tier1_max_dim)),
     )
 
-    jobs: list[tuple[str, Path, Path, int, int, int]] = []
+    jobs: list[tuple[str, Path, Path | None, Path, int, int, int]] = []
     for var_dir in sorted([p for p in published_run.iterdir() if p.is_dir()]):
         variable = var_dir.name
         for cog_path in sorted(var_dir.glob("fh*.rgba.cog.tif")):
             fh = cog_path.name.split(".")[0]
+            value_cog_path = var_dir / f"{fh}.val.cog.tif"
             for tier, quality, max_dim in tier_specs:
                 out_path = loop_cache_root / model / run_id / variable / f"tier{tier}" / f"{fh}.loop.webp"
                 if out_path.is_file():
                     continue
-                jobs.append((variable, cog_path, out_path, quality, max_dim, tier))
+                jobs.append((variable, cog_path, value_cog_path, out_path, quality, max_dim, tier))
 
     if not jobs:
         return 0, 0
@@ -651,31 +706,39 @@ def _pregenerate_loop_webp_for_run(
 
     ok = 0
     fail = 0
+    mode_counts: dict[tuple[str, str], int] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futures = [
-            pool.submit(
+        future_to_var: dict[concurrent.futures.Future[tuple[bool, str]], str] = {}
+        for variable, cog_path, value_cog_path, out_path, quality, max_dim, _tier in jobs:
+            future = pool.submit(
                 _convert_rgba_cog_to_loop_webp,
                 model_id=model,
                 var_key=variable,
                 cog_path=cog_path,
+                value_cog_path=value_cog_path,
                 out_path=out_path,
                 quality=quality,
                 max_dim=max_dim,
             )
-            for variable, cog_path, out_path, quality, max_dim, _tier in jobs
-        ]
-        for future in concurrent.futures.as_completed(futures):
-            if future.result():
+            future_to_var[future] = variable
+
+        for future in concurrent.futures.as_completed(future_to_var):
+            variable = future_to_var[future]
+            success, mode_used = future.result()
+            if success:
                 ok += 1
+                key = (mode_used, variable)
+                mode_counts[key] = mode_counts.get(key, 0) + 1
             else:
                 fail += 1
 
     logger.info(
-        "Loop pre-generate done: model=%s run=%s success=%d failed=%d",
+        "Loop pre-generate done: model=%s run=%s success=%d failed=%d mode_counts=%s",
         model,
         run_id,
         ok,
         fail,
+        mode_counts,
     )
     return ok, fail
 
