@@ -9,10 +9,10 @@ const CARTO_TILE_SUFFIX = IS_HIDPI ? "@2x" : "";
 const CARTO_TILE_SIZE = IS_HIDPI ? 512 : 256;
 
 const CARTO_LIGHT_BASE_TILES = [
-  `https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
+  `https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
+  `https://b.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
+  `https://c.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
+  `https://d.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
 ];
 
 const CARTO_LIGHT_LABEL_TILES = [
@@ -23,10 +23,10 @@ const CARTO_LIGHT_LABEL_TILES = [
 ];
 
 const CARTO_DARK_BASE_TILES = [
-  `https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
+  `https://a.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
+  `https://b.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
+  `https://c.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
+  `https://d.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
 ];
 
 const CARTO_DARK_LABEL_TILES = [
@@ -219,19 +219,30 @@ function getMapBackgroundColor(basemapMode: BasemapMode): string {
   return basemapMode === "dark" ? "#1f2a33" : "#e8edf1";
 }
 
+type LabelOpacityExpression = readonly [
+  "interpolate",
+  readonly ["linear"],
+  readonly ["zoom"],
+  number,
+  number,
+  number,
+  number,
+];
+
 function getLabelPaintSettings(basemapMode: BasemapMode): {
   "raster-resampling": "nearest" | "linear";
-  "raster-opacity": number;
+  "raster-opacity": number | LabelOpacityExpression;
   "raster-contrast": number;
   "raster-saturation": number;
   "raster-brightness-min": number;
   "raster-brightness-max": number;
 } {
+  const labelOpacityByZoom = ["interpolate", ["linear"], ["zoom"], 4.3, 0, 5.1, 1] as const;
   if (basemapMode === "dark") {
     return {
       // Use linear filtering to avoid blocky/pixelated labels on zoom.
       "raster-resampling": "linear",
-      "raster-opacity": 1,
+      "raster-opacity": labelOpacityByZoom,
       "raster-contrast": 0.1,
       "raster-saturation": -0.06,
       "raster-brightness-min": 0.05,
@@ -241,7 +252,7 @@ function getLabelPaintSettings(basemapMode: BasemapMode): {
   return {
     // Use linear filtering to avoid blocky/pixelated labels on zoom.
     "raster-resampling": "linear",
-    "raster-opacity": 1,
+    "raster-opacity": labelOpacityByZoom,
     "raster-contrast": 0.08,
     "raster-saturation": -0.06,
     "raster-brightness-min": 0,
