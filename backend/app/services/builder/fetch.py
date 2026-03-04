@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,10 @@ DEFAULT_HERBIE_PRIORITY = ["aws", "nomads", "google", "azure", "pando", "pando2"
 ENV_HERBIE_PRIORITY = "TWF_HERBIE_PRIORITY"
 ENV_HERBIE_RETRIES = "TWF_HERBIE_SUBSET_RETRIES"
 ENV_HERBIE_RETRY_SLEEP = "TWF_HERBIE_RETRY_SLEEP_SECONDS"
+ENV_GRIB_DISK_CACHE_LOCK = "TWF_V3_GRIB_DISK_CACHE_LOCK"
+DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS = 8.0
+DEFAULT_GRIB_DISK_LOCK_POLL_SECONDS = 0.1
+_GRIB_DISK_CACHE_LOCK_WAITS = 0
 
 _MISSING_VALUE_TAG_KEYS = (
     "missing_value",
@@ -107,6 +112,79 @@ def _parse_float_tag(value: Any) -> float | None:
     if not np.isfinite(parsed):
         return None
     return parsed
+
+
+def _bool_from_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _grib_disk_cache_lock_enabled() -> bool:
+    return _bool_from_env(ENV_GRIB_DISK_CACHE_LOCK, False)
+
+
+def _log_disk_lock_wait_event() -> None:
+    global _GRIB_DISK_CACHE_LOCK_WAITS
+    _GRIB_DISK_CACHE_LOCK_WAITS += 1
+    waits = _GRIB_DISK_CACHE_LOCK_WAITS
+    if waits <= 5 or waits % 25 == 0:
+        logger.info("grib_disk_cache lock_waits=%d", waits)
+
+
+def _subset_file_status(path: Path) -> tuple[bool, int]:
+    size = 0
+    try:
+        if path.is_file():
+            size = int(path.stat().st_size)
+            return size > 0, size
+    except OSError:
+        pass
+    return False, size
+
+
+@contextmanager
+def _subset_download_lock(path: Path):
+    if not _grib_disk_cache_lock_enabled():
+        yield
+        return
+
+    try:
+        import fcntl
+    except ImportError:
+        logger.warning("GRIB disk-cache lock requested but fcntl is unavailable; proceeding unlocked")
+        yield
+        return
+
+    lock_path = Path(f"{path}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = open(lock_path, "a+")
+    waited = False
+    deadline = time.monotonic() + DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS
+    try:
+        while True:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if waited:
+                    _log_disk_lock_wait_event()
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Timed out waiting for GRIB subset lock: {lock_path}")
+                waited = True
+                time.sleep(DEFAULT_GRIB_DISK_LOCK_POLL_SECONDS)
+        yield
+    finally:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        lock_file.close()
 
 
 def _precheck_subset_available(
@@ -422,6 +500,7 @@ def fetch_variable(
     priority_list = _priority_candidates(herbie_kwargs)
     retries = _retry_count()
     sleep_s = _retry_sleep_seconds()
+    lock_enabled = _grib_disk_cache_lock_enabled()
 
     last_exc: Exception | None = None
     saw_missing_index = False
@@ -447,76 +526,157 @@ def fetch_variable(
                     if sleep_s > 0 and attempt_idx < retries:
                         time.sleep(sleep_s)
                     continue
-                subset_path = H.download(search_pattern, errors="raise", overwrite=True)
-                if subset_path is None:
-                    saw_missing_subset_file = True
-                    logger.warning(
-                        "Herbie subset unavailable: download returned None (%s fh%03d %s; priority=%s; attempt=%d/%d)",
-                        model_id,
-                        fh,
-                        search_pattern,
-                        priority,
-                        attempt_idx,
-                        retries,
-                    )
-                    if sleep_s > 0 and attempt_idx < retries:
-                        time.sleep(sleep_s)
-                    continue
-                subset_candidate = Path(subset_path)
-                subset_ok = False
-                subset_size = 0
-                try:
-                    if subset_candidate.is_file():
-                        subset_size = int(subset_candidate.stat().st_size)
-                        subset_ok = subset_size > 0
-                except OSError:
-                    subset_ok = False
-
-                if not subset_ok:
-                    saw_missing_subset_file = True
-                    logger.warning(
-                        "Herbie subset file missing/empty after download (%s fh%03d %s; priority=%s; attempt=%d/%d): %s (size=%d)",
-                        model_id,
-                        fh,
-                        search_pattern,
-                        priority,
-                        attempt_idx,
-                        retries,
-                        subset_candidate,
-                        subset_size,
-                    )
-                    manual_subset = _manual_subset_download_with_corrected_range(
-                        H,
-                        search_pattern=search_pattern,
-                        out_path=subset_candidate,
-                        model_id=model_id,
-                        fh=fh,
-                        priority=priority,
-                    )
-                    if manual_subset is not None:
-                        grib_path = manual_subset
-                        break
+                subset_hint: Path | None = None
+                if lock_enabled:
                     try:
-                        if subset_candidate.exists():
-                            subset_candidate.unlink()
-                    except OSError:
-                        pass
-                    if sleep_s > 0 and attempt_idx < retries:
-                        time.sleep(sleep_s)
-                    continue
+                        subset_hint = Path(H.get_localFilePath(search_pattern))
+                    except Exception:
+                        subset_hint = None
 
-                grib_path = subset_candidate
-                logger.info(
-                    "Downloaded GRIB: %s (%s fh%03d %s; priority=%s; attempt=%d/%d)",
-                    grib_path.name,
-                    model_id,
-                    fh,
-                    search_pattern,
-                    priority,
-                    attempt_idx,
-                    retries,
-                )
-                break
+                if lock_enabled and subset_hint is not None:
+                    with _subset_download_lock(subset_hint):
+                        cached_ok, cached_size = _subset_file_status(subset_hint)
+                        if cached_ok:
+                            grib_path = subset_hint
+                            logger.info(
+                                "Reusing cached GRIB: %s (%s fh%03d %s; priority=%s; attempt=%d/%d; size=%d)",
+                                grib_path.name,
+                                model_id,
+                                fh,
+                                search_pattern,
+                                priority,
+                                attempt_idx,
+                                retries,
+                                cached_size,
+                            )
+                            break
+
+                        subset_path = H.download(search_pattern, errors="raise", overwrite=False)
+                        if subset_path is None:
+                            saw_missing_subset_file = True
+                            logger.warning(
+                                "Herbie subset unavailable: download returned None (%s fh%03d %s; priority=%s; attempt=%d/%d)",
+                                model_id,
+                                fh,
+                                search_pattern,
+                                priority,
+                                attempt_idx,
+                                retries,
+                            )
+                            if sleep_s > 0 and attempt_idx < retries:
+                                time.sleep(sleep_s)
+                            continue
+                        subset_candidate = Path(subset_path)
+                        subset_ok, subset_size = _subset_file_status(subset_candidate)
+                        if not subset_ok:
+                            saw_missing_subset_file = True
+                            logger.warning(
+                                "Herbie subset file missing/empty after download (%s fh%03d %s; priority=%s; attempt=%d/%d): %s (size=%d)",
+                                model_id,
+                                fh,
+                                search_pattern,
+                                priority,
+                                attempt_idx,
+                                retries,
+                                subset_candidate,
+                                subset_size,
+                            )
+                            manual_subset = _manual_subset_download_with_corrected_range(
+                                H,
+                                search_pattern=search_pattern,
+                                out_path=subset_candidate,
+                                model_id=model_id,
+                                fh=fh,
+                                priority=priority,
+                            )
+                            if manual_subset is not None:
+                                grib_path = manual_subset
+                                break
+                            try:
+                                if subset_candidate.exists():
+                                    subset_candidate.unlink()
+                            except OSError:
+                                pass
+                            if sleep_s > 0 and attempt_idx < retries:
+                                time.sleep(sleep_s)
+                            continue
+
+                        grib_path = subset_candidate
+                        logger.info(
+                            "Downloaded GRIB: %s (%s fh%03d %s; priority=%s; attempt=%d/%d)",
+                            grib_path.name,
+                            model_id,
+                            fh,
+                            search_pattern,
+                            priority,
+                            attempt_idx,
+                            retries,
+                        )
+                        break
+                else:
+                    subset_path = H.download(search_pattern, errors="raise", overwrite=True)
+                    if subset_path is None:
+                        saw_missing_subset_file = True
+                        logger.warning(
+                            "Herbie subset unavailable: download returned None (%s fh%03d %s; priority=%s; attempt=%d/%d)",
+                            model_id,
+                            fh,
+                            search_pattern,
+                            priority,
+                            attempt_idx,
+                            retries,
+                        )
+                        if sleep_s > 0 and attempt_idx < retries:
+                            time.sleep(sleep_s)
+                        continue
+                    subset_candidate = Path(subset_path)
+                    subset_ok, subset_size = _subset_file_status(subset_candidate)
+
+                    if not subset_ok:
+                        saw_missing_subset_file = True
+                        logger.warning(
+                            "Herbie subset file missing/empty after download (%s fh%03d %s; priority=%s; attempt=%d/%d): %s (size=%d)",
+                            model_id,
+                            fh,
+                            search_pattern,
+                            priority,
+                            attempt_idx,
+                            retries,
+                            subset_candidate,
+                            subset_size,
+                        )
+                        manual_subset = _manual_subset_download_with_corrected_range(
+                            H,
+                            search_pattern=search_pattern,
+                            out_path=subset_candidate,
+                            model_id=model_id,
+                            fh=fh,
+                            priority=priority,
+                        )
+                        if manual_subset is not None:
+                            grib_path = manual_subset
+                            break
+                        try:
+                            if subset_candidate.exists():
+                                subset_candidate.unlink()
+                        except OSError:
+                            pass
+                        if sleep_s > 0 and attempt_idx < retries:
+                            time.sleep(sleep_s)
+                        continue
+
+                    grib_path = subset_candidate
+                    logger.info(
+                        "Downloaded GRIB: %s (%s fh%03d %s; priority=%s; attempt=%d/%d)",
+                        grib_path.name,
+                        model_id,
+                        fh,
+                        search_pattern,
+                        priority,
+                        attempt_idx,
+                        retries,
+                    )
+                    break
             except Exception as exc:
                 last_exc = exc
                 if _is_missing_index_error(exc):

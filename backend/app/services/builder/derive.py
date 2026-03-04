@@ -8,8 +8,8 @@ Builds derived fields directly from model component VarSpecs:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import logging
 from typing import Any, Callable
 
@@ -32,6 +32,16 @@ logger = logging.getLogger(__name__)
 _MISSING_CSNOW_SAMPLE_LOG_COUNT = 0
 
 
+@dataclass
+class FetchContext:
+    fetch_cache: dict[
+        tuple[str, str, str, int, str, str, str, str],
+        tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine],
+    ] = field(default_factory=dict)
+    stats: dict[str, int] = field(default_factory=lambda: {"hits": 0, "misses": 0})
+    coverage: str | None = None
+
+
 @dataclass(frozen=True)
 class DeriveStrategy:
     id: str
@@ -50,6 +60,7 @@ def derive_variable(
     var_spec_model: Any,
     var_capability: Any | None = None,
     model_plugin: Any,
+    fetch_ctx: FetchContext | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     """Compute a derived variable field and return source grid metadata."""
     derive_kind = (
@@ -68,6 +79,7 @@ def derive_variable(
         var_spec_model=var_spec_model,
         var_capability=var_capability,
         model_plugin=model_plugin,
+        ctx=fetch_ctx,
     )
 
 
@@ -90,6 +102,33 @@ def _resolve_component_var(model_plugin: Any, var_key: str) -> tuple[str, Any]:
     return normalized_key, selectors
 
 
+def _selector_fingerprint(selectors: Any) -> str:
+    search = tuple(
+        " ".join(str(pattern).split())
+        for pattern in getattr(selectors, "search", [])
+        if str(pattern).strip()
+    )
+    filter_by_keys = tuple(
+        sorted(
+            (str(key), str(value))
+            for key, value in dict(getattr(selectors, "filter_by_keys", {}) or {}).items()
+        )
+    )
+    hints = tuple(
+        sorted(
+            (str(key), str(value))
+            for key, value in dict(getattr(selectors, "hints", {}) or {}).items()
+        )
+    )
+    return repr((search, filter_by_keys, hints))
+
+
+def _record_fetch_stat(ctx: FetchContext | None, metric: str) -> None:
+    if ctx is None:
+        return
+    ctx.stats[metric] = int(ctx.stats.get(metric, 0)) + 1
+
+
 def _fetch_component(
     *,
     model_id: str,
@@ -98,8 +137,24 @@ def _fetch_component(
     fh: int,
     model_plugin: Any,
     var_key: str,
+    ctx: FetchContext | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     normalized_var_key, selectors = _resolve_component_var(model_plugin, var_key)
+    run_date_utc = run_date.astimezone(timezone.utc) if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
+    cache_key = (
+        str(model_id),
+        str(product),
+        run_date_utc.isoformat(),
+        int(fh),
+        str(normalized_var_key),
+        _selector_fingerprint(selectors),
+        str(getattr(ctx, "coverage", "") if ctx is not None else ""),
+        str(getattr(model_plugin, "coverage", "")),
+    )
+    if ctx is not None and cache_key in ctx.fetch_cache:
+        _record_fetch_stat(ctx, "hits")
+        return ctx.fetch_cache[cache_key]
+
     last_exc: Exception | None = None
     for search_pattern in selectors.search:
         try:
@@ -110,7 +165,11 @@ def _fetch_component(
                 run_date=run_date,
                 fh=fh,
             )
-            return data.astype(np.float32, copy=False), crs, transform
+            resolved = data.astype(np.float32, copy=False), crs, transform
+            if ctx is not None:
+                ctx.fetch_cache[cache_key] = resolved
+                _record_fetch_stat(ctx, "misses")
+            return resolved
         except (HerbieTransientUnavailableError, RuntimeError) as exc:
             last_exc = exc
             continue
@@ -227,6 +286,7 @@ def _derive_wspd10m(
     var_spec_model: Any,
     var_capability: Any | None,
     model_plugin: Any,
+    ctx: FetchContext | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     u_component = hints.get("u_component", "10u")
@@ -248,6 +308,7 @@ def _derive_wspd10m(
                 fh=fh,
                 model_plugin=model_plugin,
                 var_key=str(speed_component),
+                ctx=ctx,
             )
             wspd = convert_units(
                 speed_data.astype(np.float32, copy=False),
@@ -268,6 +329,7 @@ def _derive_wspd10m(
             fh=fh,
             model_plugin=model_plugin,
             var_key=u_component,
+            ctx=ctx,
         )
         v_data, _, _ = _fetch_component(
             model_id=model_id,
@@ -276,6 +338,7 @@ def _derive_wspd10m(
             fh=fh,
             model_plugin=model_plugin,
             var_key=v_component,
+            ctx=ctx,
         )
     except (HerbieTransientUnavailableError, RuntimeError, ValueError):
         if not speed_component:
@@ -302,6 +365,7 @@ def _derive_radar_ptype_combo(
     var_spec_model: Any,
     var_capability: Any | None,
     model_plugin: Any,
+    ctx: FetchContext | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     del var_key, var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
@@ -332,11 +396,12 @@ def _derive_radar_ptype_combo(
         fh=fh,
         model_plugin=model_plugin,
         var_key=refl_id,
+        ctx=ctx,
     )
-    rain, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id)
-    snow, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id)
-    sleet, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id)
-    frzr, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id)
+    rain, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id, ctx=ctx)
+    snow, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
+    sleet, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
+    frzr, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
 
     mask_stack = np.stack([rain, snow, sleet, frzr], axis=0).astype(np.float32, copy=False)
     mask_max = np.nanmax(mask_stack, axis=0)
@@ -389,6 +454,7 @@ def _derive_precip_ptype_blend(
     var_spec_model: Any,
     var_capability: Any | None,
     model_plugin: Any,
+    ctx: FetchContext | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     del var_key, var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
@@ -405,11 +471,12 @@ def _derive_precip_ptype_blend(
         fh=fh,
         model_plugin=model_plugin,
         var_key=prate_id,
+        ctx=ctx,
     )
-    rain, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id)
-    snow, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id)
-    sleet, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id)
-    frzr, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id)
+    rain, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id, ctx=ctx)
+    snow, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
+    sleet, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
+    frzr, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
 
     # GFS PRATE is typically kg m^-2 s^-1 (equivalent to mm/s) → in/hr.
     prate_inhr = np.where(
@@ -459,6 +526,7 @@ def _derive_precip_total_cumulative(
     var_spec_model: Any,
     var_capability: Any | None,
     model_plugin: Any,
+    ctx: FetchContext | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     apcp_component = hints.get("apcp_component", "apcp_step")
@@ -477,6 +545,7 @@ def _derive_precip_total_cumulative(
             fh=step_fh,
             model_plugin=model_plugin,
             var_key=apcp_component,
+            ctx=ctx,
         )
         step_clean = np.where(np.isfinite(step_data), np.maximum(step_data, 0.0), 0.0).astype(np.float32)
         step_valid = np.isfinite(step_data)
@@ -522,6 +591,7 @@ def _derive_snowfall_total_10to1_cumulative(
     var_spec_model: Any,
     var_capability: Any | None,
     model_plugin: Any,
+    ctx: FetchContext | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     del var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
@@ -566,6 +636,7 @@ def _derive_snowfall_total_10to1_cumulative(
             fh=step_fh,
             model_plugin=model_plugin,
             var_key=apcp_component,
+            ctx=ctx,
         )
         apcp_valid = np.isfinite(apcp_step) & (apcp_step >= 0.0)
         step_apcp_clean = np.where(apcp_valid, apcp_step, 0.0).astype(np.float32, copy=False)
@@ -588,6 +659,7 @@ def _derive_snowfall_total_10to1_cumulative(
                     fh=sample_fh,
                     model_plugin=model_plugin,
                     var_key=snow_component,
+                    ctx=ctx,
                 )
             except (HerbieTransientUnavailableError, RuntimeError, ValueError) as exc:
                 _log_missing_csnow_sample(

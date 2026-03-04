@@ -42,7 +42,7 @@ from app.services.builder.cog_writer import (
     warp_to_target_grid,
 )
 from app.services.builder.colorize import float_to_rgba
-from app.services.builder.derive import derive_variable
+from app.services.builder.derive import FetchContext, derive_variable
 from app.services.builder.fetch import (
     HerbieTransientUnavailableError,
     convert_units,
@@ -741,9 +741,21 @@ def build_frame(
     """
     run_id = _run_id_from_date(run_date)
     fh_str = f"fh{fh:03d}"
+    fetch_ctx = FetchContext(coverage=region)
+    fetch_stats_logged = False
+
+    def _log_fetch_cache_stats_once() -> None:
+        nonlocal fetch_stats_logged
+        if fetch_stats_logged:
+            return
+        fetch_stats_logged = True
+        hits = int(fetch_ctx.stats.get("hits", 0))
+        misses = int(fetch_ctx.stats.get("misses", 0))
+        logger.info("fetch_cache hits=%d misses=%d", hits, misses)
 
     if region != CANONICAL_COVERAGE:
         logger.error("Rejected non-canonical coverage for build_frame: %s (expected %s)", region, CANONICAL_COVERAGE)
+        _log_fetch_cache_stats_once()
         return None
 
     logger.info("Building frame: %s/%s/%s/%s (coverage=%s)", model, run_id, var_id, fh_str, region)
@@ -760,12 +772,14 @@ def build_frame(
             model,
             var_key,
         )
+        _log_fetch_cache_stats_once()
         return None
     color_map_id = color_map_id.strip()
     try:
         var_spec_colormap = get_color_map_spec(color_map_id)
     except KeyError:
         logger.error("No colormap spec for model=%s var_key=%s color_map_id=%s", model, var_key, color_map_id)
+        _log_fetch_cache_stats_once()
         return None
 
     kind = (
@@ -800,6 +814,7 @@ def build_frame(
                 var_spec_model=var_spec_model,
                 var_capability=var_capability,
                 model_plugin=resolved_plugin,
+                fetch_ctx=fetch_ctx,
             )
         else:
             # --- Step 1: Fetch GRIB data ---
@@ -1028,6 +1043,8 @@ def build_frame(
         )
         _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path)
         return None
+    finally:
+        _log_fetch_cache_stats_once()
 
 
 # ---------------------------------------------------------------------------
