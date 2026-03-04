@@ -2980,23 +2980,6 @@ export default function App() {
     mapViewTick,
   ]);
 
-  const handleCopyLink = useCallback(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const href = window.location.href;
-    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(href)
-        .then(() => {
-          showTransientFrameStatus("Link copied");
-        })
-        .catch(() => {
-          // Ignore clipboard errors.
-        });
-      return;
-    }
-  }, [showTransientFrameStatus]);
-
   const handleOpenShareModal = useCallback(() => {
     setIsShareModalOpen(true);
   }, []);
@@ -3064,7 +3047,6 @@ export default function App() {
         runs={runOptions}
         variables={variables}
         disabled={loading || models.length === 0}
-        onCopyLink={handleCopyLink}
         onPostToTwf={handleOpenShareModal}
       />
 

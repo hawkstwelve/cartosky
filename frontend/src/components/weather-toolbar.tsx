@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { MapPin, Layers, CalendarClock, Boxes, Link as LinkIcon, Send } from "lucide-react";
+import { MapPin, Layers, CalendarClock, Boxes, Send } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -26,7 +26,6 @@ type WeatherToolbarProps = {
   runs: Option[];
   variables: Option[];
   disabled?: boolean;
-  onCopyLink?: () => void;
   onPostToTwf?: () => void;
 };
 
@@ -79,7 +78,6 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     runs,
     variables,
     disabled = false,
-    onCopyLink,
     onPostToTwf,
   } = props;
 
@@ -130,37 +128,18 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
           placeholder="Variable"
         />
 
-        {onCopyLink || onPostToTwf ? (
-          <div className="ml-auto flex flex-col gap-1">
-            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/80">
+        {onPostToTwf ? (
+          <div className="ml-auto">
+            <button
+              type="button"
+              onClick={onPostToTwf}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-emerald-300/25 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] px-2.5 text-xs font-semibold text-emerald-50 shadow-sm transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-300/45"
+              title="Share"
+              aria-label="Share"
+            >
+              <Send className="h-3.5 w-3.5" />
               Share
-            </span>
-            <div className="flex items-center gap-2">
-              {onPostToTwf ? (
-                <button
-                  type="button"
-                  onClick={onPostToTwf}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-emerald-300/25 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] px-2.5 text-xs font-semibold text-emerald-50 shadow-sm transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-300/45"
-                  title="Post to The Weather Forums"
-                  aria-label="Post to The Weather Forums"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  Post to TWF
-                </button>
-              ) : null}
-              {onCopyLink ? (
-                <button
-                  type="button"
-                  onClick={onCopyLink}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border/50 bg-secondary/45 px-2.5 text-xs font-medium text-foreground shadow-sm transition-all duration-150 hover:border-border hover:bg-secondary/65 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/35"
-                  title="Copy link"
-                  aria-label="Copy link"
-                >
-                  <LinkIcon className="h-3.5 w-3.5" />
-                  Copy link
-                </button>
-              ) : null}
-            </div>
+            </button>
           </div>
         ) : null}
       </div>
