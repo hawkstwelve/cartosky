@@ -20,7 +20,7 @@ from rasterio.enums import Resampling
 
 from app.models.registry import MODEL_REGISTRY
 from app.services.builder.colorize import float_to_rgba
-from app.services.builder.pipeline import build_frame
+from app.services.builder.pipeline import build_frame, build_frame_bundle
 from app.services.render_resampling import (
     compute_loop_output_shape,
     high_quality_loop_resampling,
@@ -61,6 +61,9 @@ ENV_LOOP_SHARPEN_ENABLE = "TWF_V3_LOOP_SHARPEN_ENABLE"
 ENV_LOOP_SHARPEN_RADIUS = "TWF_V3_LOOP_SHARPEN_RADIUS"
 ENV_LOOP_SHARPEN_PERCENT = "TWF_V3_LOOP_SHARPEN_PERCENT"
 ENV_LOOP_SHARPEN_THRESHOLD = "TWF_V3_LOOP_SHARPEN_THRESHOLD"
+# Optional derived bundle mode. Enable when multiple derived snowfall/liquid
+# products (for example Kuchera + 10:1 + precip total) should share caches.
+ENV_DERIVE_BUNDLE = "TWF_V3_DERIVE_BUNDLE"
 
 DEFAULT_LOOP_PREGENERATE_ENABLED = True
 DEFAULT_LOOP_CACHE_ROOT = Path("/tmp/twf_v3_loop_webp_cache")
@@ -75,6 +78,7 @@ DEFAULT_LOOP_SHARPEN_ENABLE = True
 DEFAULT_LOOP_SHARPEN_RADIUS = 1.2
 DEFAULT_LOOP_SHARPEN_PERCENT = 35
 DEFAULT_LOOP_SHARPEN_THRESHOLD = 3
+DEFAULT_DERIVE_BUNDLE = False
 
 
 class SchedulerConfigError(RuntimeError):
@@ -445,6 +449,64 @@ def _build_one(
         model_plugin=plugin,
     )
     return var_id, fh, result is not None
+
+
+def _is_derive_bundle_candidate(plugin: Any, var_id: str) -> bool:
+    normalize = getattr(plugin, "normalize_var_id", None)
+    normalized = normalize(var_id) if callable(normalize) else str(var_id)
+    if normalized == "precip_total":
+        return True
+    if normalized == "snowfall_total" or normalized.startswith("snowfall_"):
+        return True
+
+    capability = plugin.get_var_capability(normalized) if hasattr(plugin, "get_var_capability") else None
+    var_spec = plugin.get_var(normalized) if hasattr(plugin, "get_var") else None
+    derive_kind = (
+        getattr(capability, "derive_strategy_id", None)
+        or getattr(var_spec, "derive", None)
+    )
+    derive_kind_str = str(derive_kind or "").strip().lower()
+    if derive_kind_str == "precip_total_cumulative":
+        return True
+    return "snowfall" in derive_kind_str
+
+
+def _build_bundle(
+    *,
+    model_id: str,
+    var_ids: list[str],
+    fh: int,
+    run_dt: datetime,
+    data_root: Path,
+    plugin: Any,
+) -> list[tuple[str, int, bool]]:
+    normalize = getattr(plugin, "normalize_var_id", None)
+    normalized_vars: list[str] = []
+    seen: set[str] = set()
+    for var_id in var_ids:
+        normalized = normalize(var_id) if callable(normalize) else str(var_id)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_vars.append(normalized)
+
+    if not normalized_vars:
+        return []
+
+    results = build_frame_bundle(
+        model=model_id,
+        region=CANONICAL_COVERAGE,
+        var_keys=normalized_vars,
+        fh=fh,
+        run_date=run_dt,
+        data_root=data_root,
+        product=getattr(plugin, "product", "sfc"),
+        model_plugin=plugin,
+    )
+    return [
+        (var_key, fh, results.get(var_key) is not None)
+        for var_key in normalized_vars
+    ]
 
 
 def _write_json_atomic(path: Path, payload: dict) -> None:
@@ -904,6 +966,7 @@ def _process_run(
     total = len(targets)
     built_ok = 0
     blocked_vars: set[str] = set()
+    derive_bundle_enabled = _bool_from_env(ENV_DERIVE_BUNDLE, DEFAULT_DERIVE_BUNDLE)
     rounds = 0
     while True:
         next_missing: list[tuple[str, int]] = []
@@ -933,27 +996,70 @@ def _process_run(
 
         round_successes = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [
-                pool.submit(
-                    _build_one,
-                    model_id=model_id,
-                    var_id=var_id,
-                    fh=fh,
-                    run_dt=run_dt,
-                    data_root=data_root,
-                    plugin=plugin,
-                )
-                for var_id, fh in next_missing
-            ]
+            futures: list[concurrent.futures.Future] = []
+            if derive_bundle_enabled:
+                bundle_by_fh: dict[int, list[str]] = {}
+                single_jobs: list[tuple[str, int]] = []
+                for var_id, fh in next_missing:
+                    if _is_derive_bundle_candidate(plugin, var_id):
+                        bundle_by_fh.setdefault(int(fh), []).append(var_id)
+                        continue
+                    single_jobs.append((var_id, int(fh)))
+
+                for fh, var_ids in sorted(bundle_by_fh.items(), key=lambda item: item[0]):
+                    futures.append(
+                        pool.submit(
+                            _build_bundle,
+                            model_id=model_id,
+                            var_ids=var_ids,
+                            fh=fh,
+                            run_dt=run_dt,
+                            data_root=data_root,
+                            plugin=plugin,
+                        )
+                    )
+
+                for var_id, fh in single_jobs:
+                    futures.append(
+                        pool.submit(
+                            _build_one,
+                            model_id=model_id,
+                            var_id=var_id,
+                            fh=fh,
+                            run_dt=run_dt,
+                            data_root=data_root,
+                            plugin=plugin,
+                        )
+                    )
+            else:
+                futures = [
+                    pool.submit(
+                        _build_one,
+                        model_id=model_id,
+                        var_id=var_id,
+                        fh=fh,
+                        run_dt=run_dt,
+                        data_root=data_root,
+                        plugin=plugin,
+                    )
+                    for var_id, fh in next_missing
+                ]
+
             for future in concurrent.futures.as_completed(futures):
-                var_id, fh, ok = future.result()
-                if ok:
-                    built_ok += 1
-                    round_successes += 1
-                    logger.info("Build success: %s %s fh%03d", run_id, var_id, fh)
+                future_result = future.result()
+                if isinstance(future_result, tuple):
+                    round_results = [future_result]
                 else:
-                    blocked_vars.add(var_id)
-                    logger.warning("Build skipped/failed: %s %s fh%03d", run_id, var_id, fh)
+                    round_results = list(future_result)
+
+                for var_id, fh, ok in round_results:
+                    if ok:
+                        built_ok += 1
+                        round_successes += 1
+                        logger.info("Build success: %s %s fh%03d", run_id, var_id, fh)
+                    else:
+                        blocked_vars.add(var_id)
+                        logger.warning("Build skipped/failed: %s %s fh%03d", run_id, var_id, fh)
 
         if round_successes == 0:
             logger.info(

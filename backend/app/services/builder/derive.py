@@ -17,6 +17,7 @@ import numpy as np
 import rasterio
 import rasterio.transform
 
+from app.services.builder.cog_writer import warp_to_target_grid
 from app.services.builder.fetch import convert_units, fetch_variable
 from app.services.builder.fetch import HerbieTransientUnavailableError
 from app.services.colormaps import (
@@ -38,7 +39,12 @@ class FetchContext:
         tuple[str, str, str, int, str, str, str, str],
         tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine],
     ] = field(default_factory=dict)
+    warp_cache: dict[
+        tuple[str, str, str, int, str, str, str, str],
+        tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine],
+    ] = field(default_factory=dict)
     stats: dict[str, int] = field(default_factory=lambda: {"hits": 0, "misses": 0})
+    warp_stats: dict[str, int] = field(default_factory=lambda: {"hits": 0, "misses": 0})
     coverage: str | None = None
 
 
@@ -61,6 +67,8 @@ def derive_variable(
     var_capability: Any | None = None,
     model_plugin: Any,
     fetch_ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     """Compute a derived variable field and return source grid metadata."""
     derive_kind = (
@@ -80,6 +88,8 @@ def derive_variable(
         var_capability=var_capability,
         model_plugin=model_plugin,
         ctx=fetch_ctx,
+        derive_component_target_grid=derive_component_target_grid,
+        derive_component_resampling=derive_component_resampling,
     )
 
 
@@ -129,6 +139,17 @@ def _record_fetch_stat(ctx: FetchContext | None, metric: str) -> None:
     ctx.stats[metric] = int(ctx.stats.get(metric, 0)) + 1
 
 
+def _record_warp_stat(ctx: FetchContext | None, metric: str) -> None:
+    if ctx is None:
+        return
+    ctx.warp_stats[metric] = int(ctx.warp_stats.get(metric, 0)) + 1
+
+
+def _resolve_component_cache_identity(model_plugin: Any, var_key: str) -> tuple[str, str]:
+    normalized_var_key, selectors = _resolve_component_var(model_plugin, var_key)
+    return normalized_var_key, _selector_fingerprint(selectors)
+
+
 def _fetch_component(
     *,
     model_id: str,
@@ -176,6 +197,91 @@ def _fetch_component(
     if last_exc is not None:
         raise last_exc
     raise ValueError(f"Component var {normalized_var_key!r} has no usable search patterns")
+
+
+def _fetch_component_warped(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    model_plugin: Any,
+    var_key: str,
+    target_region: str,
+    target_grid_id: str,
+    resampling: str,
+    ctx: FetchContext | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    normalized_var_key, selector_fingerprint = _resolve_component_cache_identity(model_plugin, var_key)
+    run_date_utc = run_date.astimezone(timezone.utc) if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
+    cache_key = (
+        str(model_id),
+        str(product),
+        run_date_utc.isoformat(),
+        int(fh),
+        str(normalized_var_key),
+        str(selector_fingerprint),
+        str(target_grid_id),
+        str(resampling),
+    )
+    if ctx is not None and cache_key in ctx.warp_cache:
+        _record_warp_stat(ctx, "hits")
+        return ctx.warp_cache[cache_key]
+
+    raw_data, raw_crs, raw_transform = _fetch_component(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        var_key=normalized_var_key,
+        ctx=ctx,
+    )
+    warped_data, dst_transform = warp_to_target_grid(
+        raw_data,
+        raw_crs,
+        raw_transform,
+        model=model_id,
+        region=target_region,
+        resampling=resampling,
+        src_nodata=None,
+        dst_nodata=float("nan"),
+    )
+    resolved = (
+        warped_data.astype(np.float32, copy=False),
+        rasterio.crs.CRS.from_epsg(3857),
+        dst_transform,
+    )
+    if ctx is not None:
+        ctx.warp_cache[cache_key] = resolved
+        _record_warp_stat(ctx, "misses")
+    return resolved
+
+
+def _cadence_hint_suffix(hints: dict[str, Any]) -> str:
+    parts: list[str] = []
+    step_hours = hints.get("step_hours")
+    transition = hints.get("step_transition_fh")
+    after = hints.get("step_hours_after_fh")
+    if step_hours is not None and str(step_hours).strip():
+        parts.append(f"step_hours={step_hours}")
+    if transition is not None and str(transition).strip():
+        parts.append(f"transition={transition}")
+    if after is not None and str(after).strip():
+        parts.append(f"after={after}")
+    return f" {' '.join(parts)}" if parts else ""
+
+
+def _derive_uses_warped_components(
+    derive_component_target_grid: dict[str, str] | None,
+    derive_component_resampling: str | None,
+) -> bool:
+    if derive_component_target_grid is None:
+        return False
+    region = str(derive_component_target_grid.get("region", "")).strip()
+    if not region:
+        return False
+    return isinstance(derive_component_resampling, str) and bool(derive_component_resampling.strip())
 
 
 def _resolve_cumulative_step_fhs(
@@ -287,7 +393,10 @@ def _derive_wspd10m(
     var_capability: Any | None,
     model_plugin: Any,
     ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del derive_component_target_grid, derive_component_resampling
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     u_component = hints.get("u_component", "10u")
     v_component = hints.get("v_component", "10v")
@@ -366,8 +475,10 @@ def _derive_radar_ptype_combo(
     var_capability: Any | None,
     model_plugin: Any,
     ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del var_key, var_capability
+    del var_key, var_capability, derive_component_target_grid, derive_component_resampling
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     try:
         min_visible_dbz = float(hints.get("min_visible_dbz", "10.0"))
@@ -455,8 +566,10 @@ def _derive_precip_ptype_blend(
     var_capability: Any | None,
     model_plugin: Any,
     ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del var_key, var_capability
+    del var_key, var_capability, derive_component_target_grid, derive_component_resampling
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     prate_id = hints.get("prate_component", "prate")
     rain_id = hints.get("rain_component", "crain")
@@ -527,6 +640,8 @@ def _derive_precip_total_cumulative(
     var_capability: Any | None,
     model_plugin: Any,
     ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     apcp_component = hints.get("apcp_component", "apcp_step")
@@ -536,17 +651,57 @@ def _derive_precip_total_cumulative(
     src_transform: rasterio.transform.Affine | None = None
 
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, default_step_hours=6)
+    cadence_hint = _cadence_hint_suffix(hints)
+    logger.info(
+        "derive %s fh%03d apcp_steps=%d%s",
+        var_key,
+        fh,
+        len(step_fhs),
+        cadence_hint,
+    )
+    logger.debug("derive %s fh%03d apcp_steps=%s", var_key, fh, step_fhs)
+
+    use_warped_components = _derive_uses_warped_components(
+        derive_component_target_grid=derive_component_target_grid,
+        derive_component_resampling=derive_component_resampling,
+    )
+    target_region = (
+        str((derive_component_target_grid or {}).get("region", "")).strip()
+        if use_warped_components
+        else ""
+    )
+    target_grid_id = (
+        str((derive_component_target_grid or {}).get("id", "")).strip()
+        if use_warped_components
+        else ""
+    )
+    if use_warped_components and not target_grid_id:
+        target_grid_id = f"{model_id}:{target_region}"
 
     for step_fh in step_fhs:
-        step_data, step_crs, step_transform = _fetch_component(
-            model_id=model_id,
-            product=product,
-            run_date=run_date,
-            fh=step_fh,
-            model_plugin=model_plugin,
-            var_key=apcp_component,
-            ctx=ctx,
-        )
+        if use_warped_components:
+            step_data, step_crs, step_transform = _fetch_component_warped(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                fh=step_fh,
+                model_plugin=model_plugin,
+                var_key=apcp_component,
+                target_region=target_region,
+                target_grid_id=target_grid_id,
+                resampling=str(derive_component_resampling).strip(),
+                ctx=ctx,
+            )
+        else:
+            step_data, step_crs, step_transform = _fetch_component(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                fh=step_fh,
+                model_plugin=model_plugin,
+                var_key=apcp_component,
+                ctx=ctx,
+            )
         step_clean = np.where(np.isfinite(step_data), np.maximum(step_data, 0.0), 0.0).astype(np.float32)
         step_valid = np.isfinite(step_data)
 
@@ -592,6 +747,8 @@ def _derive_snowfall_total_10to1_cumulative(
     var_capability: Any | None,
     model_plugin: Any,
     ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     del var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
@@ -619,6 +776,8 @@ def _derive_snowfall_total_10to1_cumulative(
     src_transform: rasterio.transform.Affine | None = None
 
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, default_step_hours=6)
+    interval_plan: list[tuple[int, int, list[int]]] = []
+    snow_step_fhs: list[int] = []
     prev_step_fh = 0
     for step_fh in step_fhs:
         step_len = step_fh - prev_step_fh
@@ -628,16 +787,71 @@ def _derive_snowfall_total_10to1_cumulative(
                 f"Non-increasing cumulative snowfall step sequence for {model_id}/{var_key}: "
                 f"step_len={step_len} at fh{step_fh:03d}"
             )
+        sample_fhs = [sample_fh for sample_fh in _interval_sample_fhs(step_fh, step_len) if sample_fh >= 0]
+        interval_plan.append((step_fh, step_len, sample_fhs))
+        for sample_fh in sample_fhs:
+            if sample_fh in snow_step_fhs:
+                continue
+            snow_step_fhs.append(sample_fh)
 
-        apcp_step, step_crs, step_transform = _fetch_component(
-            model_id=model_id,
-            product=product,
-            run_date=run_date,
-            fh=step_fh,
-            model_plugin=model_plugin,
-            var_key=apcp_component,
-            ctx=ctx,
-        )
+    logger.info("snow_ratio method=10to1 fh=%d", fh)
+    logger.info(
+        "derive %s fh%03d apcp_steps=%d snow_steps=%d%s",
+        var_key,
+        fh,
+        len(step_fhs),
+        len(snow_step_fhs),
+        _cadence_hint_suffix(hints),
+    )
+    logger.debug(
+        "derive %s fh%03d apcp_steps=%s snow_steps=%s",
+        var_key,
+        fh,
+        step_fhs,
+        snow_step_fhs,
+    )
+
+    use_warped_components = _derive_uses_warped_components(
+        derive_component_target_grid=derive_component_target_grid,
+        derive_component_resampling=derive_component_resampling,
+    )
+    target_region = (
+        str((derive_component_target_grid or {}).get("region", "")).strip()
+        if use_warped_components
+        else ""
+    )
+    target_grid_id = (
+        str((derive_component_target_grid or {}).get("id", "")).strip()
+        if use_warped_components
+        else ""
+    )
+    if use_warped_components and not target_grid_id:
+        target_grid_id = f"{model_id}:{target_region}"
+
+    for step_fh, _step_len, sample_fhs in interval_plan:
+        if use_warped_components:
+            apcp_step, step_crs, step_transform = _fetch_component_warped(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                fh=step_fh,
+                model_plugin=model_plugin,
+                var_key=apcp_component,
+                target_region=target_region,
+                target_grid_id=target_grid_id,
+                resampling=str(derive_component_resampling).strip(),
+                ctx=ctx,
+            )
+        else:
+            apcp_step, step_crs, step_transform = _fetch_component(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                fh=step_fh,
+                model_plugin=model_plugin,
+                var_key=apcp_component,
+                ctx=ctx,
+            )
         apcp_valid = np.isfinite(apcp_step) & (apcp_step >= 0.0)
         step_apcp_clean = np.where(apcp_valid, apcp_step, 0.0).astype(np.float32, copy=False)
         if min_step_lwe > 0.0:
@@ -648,19 +862,31 @@ def _derive_snowfall_total_10to1_cumulative(
             ).astype(np.float32, copy=False)
 
         sample_masks: list[np.ndarray] = []
-        for sample_fh in _interval_sample_fhs(step_fh, step_len):
-            if sample_fh < 0:
-                continue
+        for sample_fh in sample_fhs:
             try:
-                snow_mask, _, _ = _fetch_component(
-                    model_id=model_id,
-                    product=product,
-                    run_date=run_date,
-                    fh=sample_fh,
-                    model_plugin=model_plugin,
-                    var_key=snow_component,
-                    ctx=ctx,
-                )
+                if use_warped_components:
+                    snow_mask, _, _ = _fetch_component_warped(
+                        model_id=model_id,
+                        product=product,
+                        run_date=run_date,
+                        fh=sample_fh,
+                        model_plugin=model_plugin,
+                        var_key=snow_component,
+                        target_region=target_region,
+                        target_grid_id=target_grid_id,
+                        resampling=str(derive_component_resampling).strip(),
+                        ctx=ctx,
+                    )
+                else:
+                    snow_mask, _, _ = _fetch_component(
+                        model_id=model_id,
+                        product=product,
+                        run_date=run_date,
+                        fh=sample_fh,
+                        model_plugin=model_plugin,
+                        var_key=snow_component,
+                        ctx=ctx,
+                    )
             except (HerbieTransientUnavailableError, RuntimeError, ValueError) as exc:
                 _log_missing_csnow_sample(
                     model_id=model_id,

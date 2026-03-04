@@ -708,6 +708,9 @@ def build_frame(
     data_root: Path,
     product: str = "sfc",
     model_plugin: Any = None,
+    fetch_ctx: FetchContext | None = None,
+    log_fetch_cache_stats: bool = True,
+    derive_component_warp_cache: bool = False,
 ) -> Path | None:
     """Build one frame's artifacts: RGBA COG + value COG + sidecar JSON.
 
@@ -741,16 +744,18 @@ def build_frame(
     """
     run_id = _run_id_from_date(run_date)
     fh_str = f"fh{fh:03d}"
-    fetch_ctx = FetchContext(coverage=region)
+    local_fetch_ctx = fetch_ctx or FetchContext(coverage=region)
     fetch_stats_logged = False
 
     def _log_fetch_cache_stats_once() -> None:
         nonlocal fetch_stats_logged
+        if not log_fetch_cache_stats:
+            return
         if fetch_stats_logged:
             return
         fetch_stats_logged = True
-        hits = int(fetch_ctx.stats.get("hits", 0))
-        misses = int(fetch_ctx.stats.get("misses", 0))
+        hits = int(local_fetch_ctx.stats.get("hits", 0))
+        misses = int(local_fetch_ctx.stats.get("misses", 0))
         logger.info("fetch_cache hits=%d misses=%d", hits, misses)
 
     if region != CANONICAL_COVERAGE:
@@ -814,7 +819,16 @@ def build_frame(
                 var_spec_model=var_spec_model,
                 var_capability=var_capability,
                 model_plugin=resolved_plugin,
-                fetch_ctx=fetch_ctx,
+                fetch_ctx=local_fetch_ctx,
+                derive_component_target_grid=(
+                    {
+                        "region": region,
+                        "id": f"{model}:{region}:{get_grid_params(model, region)[1]:.1f}m",
+                    }
+                    if derive_component_warp_cache
+                    else None
+                ),
+                derive_component_resampling=warp_resampling if derive_component_warp_cache else None,
             )
         else:
             # --- Step 1: Fetch GRIB data ---
@@ -875,17 +889,22 @@ def build_frame(
             )
 
         # --- Step 3: Warp to target grid ---
-        logger.info("Step 3/6: Warping to target grid (resampling=%s)", warp_resampling)
-        warped_data, dst_transform = warp_to_target_grid(
-            converted_data,
-            src_crs,
-            src_transform,
-            model=model,
-            region=region,
-            resampling=warp_resampling,
-            src_nodata=None,
-            dst_nodata=float("nan"),
-        )
+        if getattr(var_spec_model, "derived", False) and derive_component_warp_cache:
+            logger.info("Step 3/6: Warping to target grid (reused cached component warps)")
+            warped_data = converted_data.astype(np.float32, copy=False)
+            dst_transform = src_transform
+        else:
+            logger.info("Step 3/6: Warping to target grid (resampling=%s)", warp_resampling)
+            warped_data, dst_transform = warp_to_target_grid(
+                converted_data,
+                src_crs,
+                src_transform,
+                model=model,
+                region=region,
+                resampling=warp_resampling,
+                src_nodata=None,
+                dst_nodata=float("nan"),
+            )
 
         # --- Step 4: Colorize ---
         logger.info("Step 4/6: Colorizing")
@@ -1045,6 +1064,62 @@ def build_frame(
         return None
     finally:
         _log_fetch_cache_stats_once()
+
+
+def build_frame_bundle(
+    *,
+    model: str,
+    region: str,
+    var_keys: list[str],
+    fh: int,
+    run_date: datetime,
+    data_root: Path,
+    product: str = "sfc",
+    model_plugin: Any = None,
+) -> dict[str, Path | None]:
+    """Build multiple variables for one fh with shared fetch/warp caches."""
+    resolved_plugin = model_plugin or _resolve_model_plugin(model)
+    shared_ctx = FetchContext(coverage=region)
+
+    ordered_vars: list[str] = []
+    seen: set[str] = set()
+    for raw_var in var_keys:
+        normalized = resolved_plugin.normalize_var_id(raw_var)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered_vars.append(normalized)
+
+    results: dict[str, Path | None] = {}
+    for var_key in ordered_vars:
+        results[var_key] = build_frame(
+            model=model,
+            region=region,
+            var_id=var_key,
+            fh=fh,
+            run_date=run_date,
+            data_root=data_root,
+            product=product,
+            model_plugin=resolved_plugin,
+            fetch_ctx=shared_ctx,
+            log_fetch_cache_stats=False,
+            derive_component_warp_cache=True,
+        )
+
+    fetch_hits = int(shared_ctx.stats.get("hits", 0))
+    fetch_misses = int(shared_ctx.stats.get("misses", 0))
+    warp_hits = int(shared_ctx.warp_stats.get("hits", 0))
+    warp_misses = int(shared_ctx.warp_stats.get("misses", 0))
+    logger.info(
+        "derive_bundle fh%03d vars=%s fetch_cache hits=%d misses=%d warp_cache hits=%d misses=%d",
+        fh,
+        ordered_vars,
+        fetch_hits,
+        fetch_misses,
+        warp_hits,
+        warp_misses,
+    )
+    return results
 
 
 # ---------------------------------------------------------------------------
