@@ -27,6 +27,7 @@ from .base import (
     VarSpec,
     VariableCapability,
 )
+from .kuchera import kuchera_hint_overrides
 
 
 class NAMPlugin(BaseModelPlugin):
@@ -62,6 +63,7 @@ class NAMPlugin(BaseModelPlugin):
             "qpf": "precip_total",
             "total_qpf": "precip_total",
             "snowfall_total": "snowfall_total",
+            "snowfall_kuchera_total": "snowfall_kuchera_total",
             "asnow": "snowfall_total",
             "snow10": "snowfall_total",
             "snow_10to1": "snowfall_total",
@@ -108,6 +110,48 @@ NAM_REGIONS: dict[str, RegionSpec] = {
 
 # NAM CONUS Nest: hourly forecast hours through fh060.
 NAM_INITIAL_FHS: tuple[int, ...] = tuple(range(0, 61))
+
+
+def _nam_tmp_level_component(level_hpa: int) -> VarSpec:
+    level = int(level_hpa)
+    return VarSpec(
+        id=f"tmp{level}",
+        name=f"{level}mb Temp",
+        selectors=VarSelectors(
+            search=[f":TMP:{level} mb:"],
+            filter_by_keys={
+                "shortName": "t",
+                "typeOfLevel": "isobaricInhPa",
+                "level": str(level),
+            },
+            hints={
+                "upstream_var": f"t{level}",
+                "cf_var": "t",
+                "short_name": "t",
+            },
+        ),
+    )
+
+
+def _nam_rh_level_component(level_hpa: int) -> VarSpec:
+    level = int(level_hpa)
+    return VarSpec(
+        id=f"rh{level}",
+        name=f"{level}mb RH",
+        selectors=VarSelectors(
+            search=[f":RH:{level} mb:"],
+            filter_by_keys={
+                "shortName": "r",
+                "typeOfLevel": "isobaricInhPa",
+                "level": str(level),
+            },
+            hints={
+                "upstream_var": f"r{level}",
+                "cf_var": "r",
+                "short_name": "r",
+            },
+        ),
+    )
 
 
 NAM_VARS: dict[str, VarSpec] = {
@@ -169,6 +213,14 @@ NAM_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="C",
     ),
+    **{
+        f"tmp{level}": _nam_tmp_level_component(level)
+        for level in (925, 700, 600, 500)
+    },
+    **{
+        f"rh{level}": _nam_rh_level_component(level)
+        for level in (925, 850, 700, 600, 500)
+    },
     "10u": VarSpec(
         id="10u",
         name="10m U Wind",
@@ -366,6 +418,21 @@ NAM_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="in",
     ),
+    "snowfall_kuchera_total": VarSpec(
+        id="snowfall_kuchera_total",
+        name="Total Snowfall (Kuchera)",
+        selectors=VarSelectors(
+            hints={
+                "apcp_component": "apcp_step",
+                "step_hours": "1",
+                **kuchera_hint_overrides(),
+            },
+        ),
+        derived=True,
+        derive="snowfall_kuchera_total_cumulative",
+        kind="continuous",
+        units="in",
+    ),
     "wspd10m": VarSpec(
         id="wspd10m",
         name="10m Wind Speed",
@@ -414,6 +481,7 @@ NAM_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "wgst10m": "wgst10m",
     "precip_total": "precip_total",
     "snowfall_total": "snowfall_total",
+    "snowfall_kuchera_total": "snowfall_total",
     "radar_ptype": "radar_ptype",
 }
 
@@ -421,6 +489,7 @@ NAM_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "radar_ptype": 1,
     "precip_total": 1,
     "snowfall_total": 1,
+    "snowfall_kuchera_total": 1,
 }
 
 NAM_ORDER_BY_VAR_KEY: dict[str, int] = {
@@ -432,6 +501,7 @@ NAM_ORDER_BY_VAR_KEY: dict[str, int] = {
     "snowfall_total": 5,
     "wspd10m": 6,
     "wgst10m": 7,
+    "snowfall_kuchera_total": 8,
 }
 
 NAM_CONVERSION_BY_VAR_KEY: dict[str, str] = {
@@ -447,6 +517,9 @@ NAM_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
         "min_fh": 1,
     },
     "snowfall_total": {
+        "min_fh": 1,
+    },
+    "snowfall_kuchera_total": {
         "min_fh": 1,
     },
 }

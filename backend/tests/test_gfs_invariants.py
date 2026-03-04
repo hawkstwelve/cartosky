@@ -38,6 +38,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "precip_ptype",
         "precip_total",
         "snowfall_total",
+        "snowfall_kuchera_total",
     }
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
@@ -115,6 +116,16 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
     assert snowfall_total["order"] == 5
 
+    snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
+    assert snowfall_kuchera_total["buildable"] is True
+    assert snowfall_kuchera_total["derived"] is True
+    assert snowfall_kuchera_total["derive_strategy_id"] == "snowfall_kuchera_total_cumulative"
+    assert snowfall_kuchera_total["units"] == "in"
+    assert snowfall_kuchera_total["constraints"]["min_fh"] == 3
+    assert snowfall_kuchera_total["default_fh"] == 6
+    assert snowfall_kuchera_total["display_name"] == "Total Snowfall (Kuchera)"
+    assert snowfall_kuchera_total["order"] == 11
+
     qpf6h = payload["variables"]["qpf6h"]
     assert qpf6h["buildable"] is False
 
@@ -141,6 +152,7 @@ def test_gfs_dewpoint_and_snow_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("dpt2m") == "dp2m"
 
     assert GFS_MODEL.normalize_var_id("snowfall_total") == "snowfall_total"
+    assert GFS_MODEL.normalize_var_id("snowfall_kuchera_total") == "snowfall_kuchera_total"
     assert GFS_MODEL.normalize_var_id("asnow") == "snowfall_total"
     assert GFS_MODEL.normalize_var_id("snow10") == "snowfall_total"
 

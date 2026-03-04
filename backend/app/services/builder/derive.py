@@ -31,6 +31,9 @@ from app.services.colormaps import (
 
 logger = logging.getLogger(__name__)
 _MISSING_CSNOW_SAMPLE_LOG_COUNT = 0
+_KUCHERA_DEFAULT_LEVELS_HPA: tuple[int, ...] = (925, 850, 700, 600, 500)
+_KUCHERA_DEFAULT_REQUIRE_RH = True
+_KUCHERA_DEFAULT_MIN_LEVELS = 4
 
 
 @dataclass
@@ -54,6 +57,172 @@ class DeriveStrategy:
     required_inputs: tuple[str, ...]
     output_var_key: str | None
     execute: Callable[..., tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]]
+
+
+def _parse_hint_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _parse_hint_int(value: Any, *, default: int, minimum: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    return parsed
+
+
+def _parse_kuchera_levels_hpa(value: Any) -> list[int]:
+    if isinstance(value, (list, tuple, set)):
+        tokens = list(value)
+    elif value is None:
+        tokens = list(_KUCHERA_DEFAULT_LEVELS_HPA)
+    else:
+        raw = str(value).replace(";", ",")
+        tokens = [token.strip() for token in raw.split(",") if token.strip()]
+
+    levels: list[int] = []
+    for token in tokens:
+        try:
+            parsed = int(token)
+        except (TypeError, ValueError):
+            continue
+        if parsed <= 0 or parsed in levels:
+            continue
+        levels.append(parsed)
+
+    if not levels:
+        levels = list(_KUCHERA_DEFAULT_LEVELS_HPA)
+    return levels
+
+
+def _pressure_layer_weights(levels_hpa: list[int]) -> np.ndarray:
+    count = len(levels_hpa)
+    if count <= 0:
+        return np.zeros((0,), dtype=np.float32)
+    if count == 1:
+        return np.ones((1,), dtype=np.float32)
+
+    levels = np.asarray(levels_hpa, dtype=np.float32)
+    sort_idx = np.argsort(levels)[::-1]
+    sorted_levels = levels[sort_idx]
+
+    sorted_weights = np.empty_like(sorted_levels)
+    sorted_weights[0] = abs(sorted_levels[0] - sorted_levels[1]) * 0.5
+    sorted_weights[-1] = abs(sorted_levels[-2] - sorted_levels[-1]) * 0.5
+    if count > 2:
+        sorted_weights[1:-1] = np.abs(sorted_levels[:-2] - sorted_levels[2:]) * 0.5
+    sorted_weights = np.where(sorted_weights > 0.0, sorted_weights, 1.0).astype(np.float32, copy=False)
+
+    weights = np.empty_like(sorted_weights)
+    weights[sort_idx] = sorted_weights
+    total = float(np.sum(weights))
+    if total <= 0.0:
+        return np.full((count,), 1.0 / count, dtype=np.float32)
+    return (weights / total).astype(np.float32, copy=False)
+
+
+def _kuchera_slr_from_temp_proxy(temp_proxy_c: np.ndarray) -> np.ndarray:
+    slr = np.full(temp_proxy_c.shape, np.nan, dtype=np.float32)
+    finite = np.isfinite(temp_proxy_c)
+    if not np.any(finite):
+        return slr
+
+    warm = finite & (temp_proxy_c >= -5.0)
+    if np.any(warm):
+        warm_t = np.clip((temp_proxy_c[warm] + 5.0) / 5.0, 0.0, 1.0)
+        slr[warm] = 10.0 - (warm_t * 2.0)
+
+    cool = finite & (temp_proxy_c < -5.0) & (temp_proxy_c >= -12.0)
+    if np.any(cool):
+        cool_t = np.clip((-5.0 - temp_proxy_c[cool]) / 7.0, 0.0, 1.0)
+        slr[cool] = 10.0 + (cool_t * 5.0)
+
+    cold = finite & (temp_proxy_c < -12.0) & (temp_proxy_c >= -18.0)
+    if np.any(cold):
+        cold_t = np.clip((-12.0 - temp_proxy_c[cold]) / 6.0, 0.0, 1.0)
+        slr[cold] = 15.0 + (cold_t * 5.0)
+
+    very_cold = finite & (temp_proxy_c < -18.0)
+    if np.any(very_cold):
+        very_cold_t = np.clip((-18.0 - temp_proxy_c[very_cold]) / 12.0, 0.0, 1.0)
+        slr[very_cold] = 20.0 + (very_cold_t * 5.0)
+
+    return np.clip(slr, 5.0, 30.0).astype(np.float32, copy=False)
+
+
+def _compute_kuchera_slr(
+    *,
+    levels_hpa: list[int],
+    temp_stack_c: list[np.ndarray],
+    rh_stack_pct: list[np.ndarray | None],
+    require_rh: bool,
+) -> np.ndarray:
+    if not temp_stack_c:
+        raise ValueError("kuchera requires at least one temperature level")
+
+    if len(temp_stack_c) != len(levels_hpa):
+        raise ValueError("kuchera temperature level count mismatch")
+
+    if len(rh_stack_pct) != len(levels_hpa):
+        raise ValueError("kuchera RH level count mismatch")
+
+    shape = temp_stack_c[0].shape
+    for layer in temp_stack_c[1:]:
+        if layer.shape != shape:
+            raise ValueError(f"kuchera temperature shape mismatch: {layer.shape} != {shape}")
+    for rh_layer in rh_stack_pct:
+        if rh_layer is not None and rh_layer.shape != shape:
+            raise ValueError(f"kuchera RH shape mismatch: {rh_layer.shape} != {shape}")
+
+    base_weights = _pressure_layer_weights(levels_hpa)
+    weighted_temp_sum = np.zeros(shape, dtype=np.float32)
+    total_weight = np.zeros(shape, dtype=np.float32)
+
+    for idx, temp_layer in enumerate(temp_stack_c):
+        layer_weight = float(base_weights[idx]) if idx < len(base_weights) else 0.0
+        if layer_weight <= 0.0:
+            continue
+
+        rh_layer = rh_stack_pct[idx]
+        temp_valid = np.isfinite(temp_layer)
+        layer_weight_grid = np.full(shape, layer_weight, dtype=np.float32)
+
+        if rh_layer is not None:
+            rh_valid = np.isfinite(rh_layer)
+            rh_factor = np.clip(rh_layer / 80.0, 0.0, 1.0).astype(np.float32, copy=False)
+            rh_factor = np.where(rh_valid, rh_factor, 0.0).astype(np.float32, copy=False)
+            layer_weight_grid = (layer_weight_grid * rh_factor).astype(np.float32, copy=False)
+            if require_rh:
+                temp_valid = temp_valid & rh_valid
+        elif require_rh:
+            temp_valid = np.zeros(shape, dtype=bool)
+
+        layer_weight_grid = np.where(temp_valid, layer_weight_grid, 0.0).astype(np.float32, copy=False)
+        weighted_temp_sum = weighted_temp_sum + (
+            np.where(temp_valid, temp_layer, 0.0).astype(np.float32, copy=False) * layer_weight_grid
+        )
+        total_weight = total_weight + layer_weight_grid
+
+    temp_proxy_c = np.full(shape, np.nan, dtype=np.float32)
+    np.divide(
+        weighted_temp_sum,
+        total_weight,
+        out=temp_proxy_c,
+        where=total_weight > 0.0,
+    )
+    slr = _kuchera_slr_from_temp_proxy(temp_proxy_c)
+    return np.where(np.isfinite(slr), slr, 10.0).astype(np.float32, copy=False)
 
 
 def derive_variable(
@@ -955,6 +1124,208 @@ def _derive_snowfall_total_10to1_cumulative(
     return cumulative_snow_inches.astype(np.float32, copy=False), src_crs, src_transform
 
 
+def _derive_snowfall_kuchera_total_cumulative(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del var_capability
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    apcp_component = str(hints.get("apcp_component", "apcp_step"))
+    levels_hpa = _parse_kuchera_levels_hpa(hints.get("kuchera_levels_hpa"))
+    require_rh = _parse_hint_bool(
+        hints.get("kuchera_require_rh"),
+        default=_KUCHERA_DEFAULT_REQUIRE_RH,
+    )
+    min_levels = _parse_hint_int(
+        hints.get("kuchera_min_levels"),
+        default=_KUCHERA_DEFAULT_MIN_LEVELS,
+        minimum=1,
+    )
+    min_step_lwe_raw = hints.get("min_step_lwe_kgm2", "0.01")
+    try:
+        min_step_lwe = float(min_step_lwe_raw)
+    except (TypeError, ValueError):
+        min_step_lwe = 0.01
+    min_step_lwe = max(min_step_lwe, 0.0)
+
+    step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, default_step_hours=6)
+    logger.info(
+        "derive %s fh%03d apcp_steps=%d profile_levels=%s%s",
+        var_key,
+        fh,
+        len(step_fhs),
+        levels_hpa,
+        _cadence_hint_suffix(hints),
+    )
+    logger.debug("derive %s fh%03d apcp_steps=%s", var_key, fh, step_fhs)
+
+    use_warped_components = _derive_uses_warped_components(
+        derive_component_target_grid=derive_component_target_grid,
+        derive_component_resampling=derive_component_resampling,
+    )
+    target_region = (
+        str((derive_component_target_grid or {}).get("region", "")).strip()
+        if use_warped_components
+        else ""
+    )
+    target_grid_id = (
+        str((derive_component_target_grid or {}).get("id", "")).strip()
+        if use_warped_components
+        else ""
+    )
+    if use_warped_components and not target_grid_id:
+        target_grid_id = f"{model_id}:{target_region}"
+
+    def _fetch_for_step(step_fh: int, component_var: str) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+        if use_warped_components:
+            return _fetch_component_warped(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                fh=step_fh,
+                model_plugin=model_plugin,
+                var_key=component_var,
+                target_region=target_region,
+                target_grid_id=target_grid_id,
+                resampling=str(derive_component_resampling).strip(),
+                ctx=ctx,
+            )
+        return _fetch_component(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=step_fh,
+            model_plugin=model_plugin,
+            var_key=component_var,
+            ctx=ctx,
+        )
+
+    cumulative_kgm2: np.ndarray | None = None
+    valid_mask: np.ndarray | None = None
+    src_crs: rasterio.crs.CRS | None = None
+    src_transform: rasterio.transform.Affine | None = None
+
+    fallback_used = False
+    fallback_profile_logged = False
+    unavailable_temp_levels: set[int] = set()
+    unavailable_rh_levels: set[int] = set()
+
+    for step_fh in step_fhs:
+        apcp_step, step_crs, step_transform = _fetch_for_step(step_fh, apcp_component)
+        apcp_valid = np.isfinite(apcp_step) & (apcp_step >= 0.0)
+        step_apcp_clean = np.where(apcp_valid, apcp_step, 0.0).astype(np.float32, copy=False)
+        if min_step_lwe > 0.0:
+            step_apcp_clean = np.where(step_apcp_clean >= min_step_lwe, step_apcp_clean, 0.0).astype(np.float32, copy=False)
+
+        step_levels: list[int] = []
+        step_temps: list[np.ndarray] = []
+        step_rhs: list[np.ndarray | None] = []
+        for level_hpa in levels_hpa:
+            if level_hpa in unavailable_temp_levels:
+                continue
+
+            temp_component = f"tmp{level_hpa}"
+            try:
+                temp_data, _, _ = _fetch_for_step(step_fh, temp_component)
+            except (HerbieTransientUnavailableError, RuntimeError, ValueError) as exc:
+                if isinstance(exc, ValueError):
+                    unavailable_temp_levels.add(level_hpa)
+                continue
+
+            if temp_data.shape != step_apcp_clean.shape:
+                raise ValueError(
+                    f"Kuchera temp shape mismatch for {model_id}/{var_key} at fh{step_fh:03d} level={level_hpa}: "
+                    f"{temp_data.shape} != {step_apcp_clean.shape}"
+                )
+
+            rh_data_for_level: np.ndarray | None = None
+            rh_component = f"rh{level_hpa}"
+            if require_rh and level_hpa in unavailable_rh_levels:
+                continue
+
+            if require_rh or level_hpa not in unavailable_rh_levels:
+                try:
+                    rh_data, _, _ = _fetch_for_step(step_fh, rh_component)
+                    if rh_data.shape != step_apcp_clean.shape:
+                        raise ValueError(
+                            f"Kuchera RH shape mismatch for {model_id}/{var_key} at fh{step_fh:03d} level={level_hpa}: "
+                            f"{rh_data.shape} != {step_apcp_clean.shape}"
+                        )
+                    rh_data_for_level = rh_data.astype(np.float32, copy=False)
+                except (HerbieTransientUnavailableError, RuntimeError, ValueError) as exc:
+                    if isinstance(exc, ValueError):
+                        unavailable_rh_levels.add(level_hpa)
+                    if require_rh:
+                        continue
+                    rh_data_for_level = None
+
+            step_levels.append(level_hpa)
+            step_temps.append(temp_data.astype(np.float32, copy=False))
+            step_rhs.append(rh_data_for_level)
+
+        if len(step_levels) < min_levels:
+            if not fallback_profile_logged:
+                logger.info(
+                    "kuchera_profile insufficient_levels=%d/%d fallback=10to1",
+                    len(step_levels),
+                    min_levels,
+                )
+                fallback_profile_logged = True
+            fallback_used = True
+            step_slr = np.full(step_apcp_clean.shape, 10.0, dtype=np.float32)
+        else:
+            step_slr = _compute_kuchera_slr(
+                levels_hpa=step_levels,
+                temp_stack_c=step_temps,
+                rh_stack_pct=step_rhs,
+                require_rh=require_rh,
+            )
+
+        step_snow_kgm2 = (step_apcp_clean * step_slr).astype(np.float32, copy=False)
+        step_valid = apcp_valid & np.isfinite(step_slr)
+
+        if cumulative_kgm2 is None:
+            cumulative_kgm2 = step_snow_kgm2
+            valid_mask = step_valid
+            src_crs = step_crs
+            src_transform = step_transform
+            continue
+
+        if step_snow_kgm2.shape != cumulative_kgm2.shape:
+            raise ValueError(
+                f"Kuchera snowfall shape mismatch for {model_id}/{var_key} at fh{step_fh:03d}: "
+                f"{step_snow_kgm2.shape} != {cumulative_kgm2.shape}"
+            )
+
+        cumulative_kgm2 = cumulative_kgm2 + step_snow_kgm2
+        valid_mask = np.logical_or(valid_mask, step_valid)
+
+    if cumulative_kgm2 is None or valid_mask is None or src_crs is None or src_transform is None:
+        raise ValueError(
+            f"No cumulative Kuchera snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}"
+        )
+
+    cumulative_kgm2 = np.where(valid_mask, cumulative_kgm2, np.nan).astype(np.float32)
+    cumulative_snow_inches = cumulative_kgm2 * 0.03937007874015748
+    logger.info(
+        "snow_ratio method=kuchera fh=%d levels=%s fallback=%s",
+        fh,
+        levels_hpa,
+        "10to1" if fallback_used else "none",
+    )
+    return cumulative_snow_inches.astype(np.float32, copy=False), src_crs, src_transform
+
+
 DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
     "wspd10m": DeriveStrategy(
         id="wspd10m",
@@ -985,5 +1356,11 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         required_inputs=("apcp_step", "csnow"),
         output_var_key="snowfall_total",
         execute=_derive_snowfall_total_10to1_cumulative,
+    ),
+    "snowfall_kuchera_total_cumulative": DeriveStrategy(
+        id="snowfall_kuchera_total_cumulative",
+        required_inputs=("apcp_step", "tmp850", "tmp700", "tmp600", "tmp500"),
+        output_var_key="snowfall_kuchera_total",
+        execute=_derive_snowfall_kuchera_total_cumulative,
     ),
 }

@@ -20,6 +20,7 @@ from .base import (
     VarSpec,
     VariableCapability,
 )
+from .kuchera import kuchera_hint_overrides
 
 
 class GFSPlugin(BaseModelPlugin):
@@ -77,6 +78,7 @@ class GFSPlugin(BaseModelPlugin):
             "total_qpf": "precip_total",
             "qpf6h": "qpf6h",
             "snowfall_total": "snowfall_total",
+            "snowfall_kuchera_total": "snowfall_kuchera_total",
             "asnow": "snowfall_total",
             "snow10": "snowfall_total",
             "total_snow": "snowfall_total",
@@ -125,6 +127,48 @@ GFS_INITIAL_ROLLOUT_REGIONS: tuple[str, ...] = ("pnw",)
 # ---------------------------------------------------------------------------
 # Variable definitions
 # ---------------------------------------------------------------------------
+
+
+def _gfs_tmp_level_component(level_hpa: int) -> VarSpec:
+    level = int(level_hpa)
+    return VarSpec(
+        id=f"tmp{level}",
+        name=f"{level}mb Temp",
+        selectors=VarSelectors(
+            search=[f":TMP:{level} mb:"],
+            filter_by_keys={
+                "shortName": "t",
+                "typeOfLevel": "isobaricInhPa",
+                "level": str(level),
+            },
+            hints={
+                "upstream_var": f"t{level}",
+                "cf_var": "t",
+                "short_name": "t",
+            },
+        ),
+    )
+
+
+def _gfs_rh_level_component(level_hpa: int) -> VarSpec:
+    level = int(level_hpa)
+    return VarSpec(
+        id=f"rh{level}",
+        name=f"{level}mb RH",
+        selectors=VarSelectors(
+            search=[f":RH:{level} mb:"],
+            filter_by_keys={
+                "shortName": "r",
+                "typeOfLevel": "isobaricInhPa",
+                "level": str(level),
+            },
+            hints={
+                "upstream_var": f"r{level}",
+                "short_name": "r",
+            },
+        ),
+    )
+
 
 GFS_VARS: dict[str, VarSpec] = {
     # ── Simple variables (Phase 1+) ─────────────────────────────────────────
@@ -186,6 +230,14 @@ GFS_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="C",
     ),
+    **{
+        f"tmp{level}": _gfs_tmp_level_component(level)
+        for level in (925, 700, 600, 500)
+    },
+    **{
+        f"rh{level}": _gfs_rh_level_component(level)
+        for level in (925, 850, 700, 600, 500)
+    },
     # ── Wind components (fetched separately for wspd10m derivation) ─────────
     "10u": VarSpec(
         id="10u",
@@ -413,6 +465,22 @@ GFS_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="in",
     ),
+    "snowfall_kuchera_total": VarSpec(
+        id="snowfall_kuchera_total",
+        name="Total Snowfall (Kuchera)",
+        selectors=VarSelectors(
+            hints={
+                "apcp_component": "apcp_step",
+                "step_hours": "3",
+                **kuchera_hint_overrides(),
+            },
+        ),
+        primary=True,
+        derived=True,
+        derive="snowfall_kuchera_total_cumulative",
+        kind="continuous",
+        units="in",
+    ),
     "qpf6h": VarSpec(
         id="qpf6h",
         name="6-hr Precip",
@@ -438,6 +506,7 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "precip_ptype": "precip_ptype",
     "precip_total": "precip_total",
     "snowfall_total": "snowfall_total",
+    "snowfall_kuchera_total": "snowfall_total",
     "qpf6h": "qpf6h",
 }
 
@@ -445,6 +514,7 @@ GFS_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "precip_ptype": 6,
     "precip_total": 6,
     "snowfall_total": 6,
+    "snowfall_kuchera_total": 6,
     "qpf6h": 6,
 }
 
@@ -459,6 +529,7 @@ GFS_ORDER_BY_VAR_KEY: dict[str, int] = {
     "precip_ptype": 8,
     "refc": 9,
     "qpf6h": 10,
+    "snowfall_kuchera_total": 11,
 }
 
 GFS_CONVERSION_BY_VAR_KEY: dict[str, str] = {
@@ -475,6 +546,9 @@ GFS_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
         "min_fh": 3,
     },
     "snowfall_total": {
+        "min_fh": 3,
+    },
+    "snowfall_kuchera_total": {
         "min_fh": 3,
     },
     "qpf6h": {

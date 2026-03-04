@@ -35,6 +35,7 @@ def test_nam_buildable_var_set_and_defaults_invariants() -> None:
         "wgst10m",
         "precip_total",
         "snowfall_total",
+        "snowfall_kuchera_total",
         "radar_ptype",
     }
 
@@ -120,6 +121,17 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
     assert snowfall_total["order"] == 5
 
+    snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
+    assert snowfall_kuchera_total["buildable"] is True
+    assert snowfall_kuchera_total["derived"] is True
+    assert snowfall_kuchera_total["derive_strategy_id"] == "snowfall_kuchera_total_cumulative"
+    assert snowfall_kuchera_total["kind"] == "continuous"
+    assert snowfall_kuchera_total["units"] == "in"
+    assert snowfall_kuchera_total["default_fh"] == 1
+    assert snowfall_kuchera_total["constraints"] == {"min_fh": 1}
+    assert snowfall_kuchera_total["display_name"] == "Total Snowfall (Kuchera)"
+    assert snowfall_kuchera_total["order"] == 8
+
     radar_ptype = payload["variables"]["radar_ptype"]
     assert radar_ptype["buildable"] is True
     assert radar_ptype["derived"] is True
@@ -180,6 +192,7 @@ def test_nam_aliases_normalize() -> None:
     assert NAM_MODEL.normalize_var_id("apcp") == "precip_total"
     assert NAM_MODEL.normalize_var_id("qpf") == "precip_total"
     assert NAM_MODEL.normalize_var_id("snowfall_total") == "snowfall_total"
+    assert NAM_MODEL.normalize_var_id("snowfall_kuchera_total") == "snowfall_kuchera_total"
     assert NAM_MODEL.normalize_var_id("asnow") == "snowfall_total"
     assert NAM_MODEL.normalize_var_id("snow10") == "snowfall_total"
     assert NAM_MODEL.normalize_var_id("refc") == "refc"

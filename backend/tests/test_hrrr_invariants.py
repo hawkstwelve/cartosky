@@ -46,6 +46,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "dp2m",
         "tmp850",
         "snowfall_total",
+        "snowfall_kuchera_total",
         "precip_total",
         "wspd10m",
         "wgst10m",
@@ -103,3 +104,8 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert radar_ptype["buildable"] is True
     assert radar_ptype["derived"] is True
     assert radar_ptype["derive_strategy_id"] == "radar_ptype_combo"
+
+    snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
+    assert snowfall_kuchera_total["buildable"] is True
+    assert snowfall_kuchera_total["derived"] is True
+    assert snowfall_kuchera_total["derive_strategy_id"] == "snowfall_kuchera_total_cumulative"

@@ -10,6 +10,7 @@ from .base import (
     VarSpec,
     VariableCapability,
 )
+from .kuchera import kuchera_hint_overrides
 
 
 class HRRRPlugin(BaseModelPlugin):
@@ -28,6 +29,8 @@ class HRRRPlugin(BaseModelPlugin):
             return "precip_total"
         if normalized in {"snowfall_total", "asnow", "snow10", "snow_10to1", "total_snow", "totalsnow"}:
             return "snowfall_total"
+        if normalized == "snowfall_kuchera_total":
+            return "snowfall_kuchera_total"
         if normalized in {"tmp850", "t850", "t850mb", "temp850", "temp850mb"}:
             return "tmp850"
         if normalized in {"10u", "u10"}:
@@ -70,6 +73,45 @@ HRRR_REGIONS: dict[str, RegionSpec] = {
         clip=True,
     ),
 }
+
+
+def _hrrr_tmp_level_component(level_hpa: int) -> VarSpec:
+    level = int(level_hpa)
+    return VarSpec(
+        id=f"tmp{level}",
+        name=f"{level}mb Temp",
+        selectors=VarSelectors(
+            search=[f":TMP:{level} mb:"],
+            filter_by_keys={
+                "shortName": "t",
+                "typeOfLevel": "isobaricInhPa",
+                "level": str(level),
+            },
+            hints={
+                "upstream_var": f"t{level}",
+            },
+        ),
+    )
+
+
+def _hrrr_rh_level_component(level_hpa: int) -> VarSpec:
+    level = int(level_hpa)
+    return VarSpec(
+        id=f"rh{level}",
+        name=f"{level}mb RH",
+        selectors=VarSelectors(
+            search=[f":RH:{level} mb:"],
+            filter_by_keys={
+                "shortName": "r",
+                "typeOfLevel": "isobaricInhPa",
+                "level": str(level),
+            },
+            hints={
+                "upstream_var": f"r{level}",
+            },
+        ),
+    )
+
 
 HRRR_VARS: dict[str, VarSpec] = {
     "tmp2m": VarSpec(
@@ -125,6 +167,28 @@ HRRR_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="C",
     ),
+    **{
+        f"tmp{level}": _hrrr_tmp_level_component(level)
+        for level in (700, 600, 500)
+    },
+    **{
+        f"rh{level}": _hrrr_rh_level_component(level)
+        for level in (850, 700, 600, 500)
+    },
+    "apcp_step": VarSpec(
+        id="apcp_step",
+        name="APCP Step",
+        selectors=VarSelectors(
+            search=[":APCP:surface:"],
+            filter_by_keys={
+                "shortName": "apcp",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "apcp",
+            },
+        ),
+    ),
     "snowfall_total": VarSpec(
         id="snowfall_total",
         name="Total Snowfall (10:1)",
@@ -156,6 +220,21 @@ HRRR_VARS: dict[str, VarSpec] = {
             },
         ),
         primary=True,
+        kind="continuous",
+        units="in",
+    ),
+    "snowfall_kuchera_total": VarSpec(
+        id="snowfall_kuchera_total",
+        name="Total Snowfall (Kuchera)",
+        selectors=VarSelectors(
+            hints={
+                "apcp_component": "apcp_step",
+                "step_hours": "1",
+                **kuchera_hint_overrides(levels_hpa=(850, 700, 600, 500)),
+            }
+        ),
+        derived=True,
+        derive="snowfall_kuchera_total_cumulative",
         kind="continuous",
         units="in",
     ),
@@ -306,6 +385,7 @@ HRRR_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "dp2m",
     "tmp850": "tmp850",
     "snowfall_total": "snowfall_total",
+    "snowfall_kuchera_total": "snowfall_total",
     "precip_total": "precip_total",
     "wspd10m": "wspd10m",
     "wgst10m": "wgst10m",
@@ -317,6 +397,7 @@ HRRR_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "radar_ptype": 1,
     "precip_total": 1,
     "snowfall_total": 1,
+    "snowfall_kuchera_total": 1,
 }
 
 HRRR_ORDER_BY_VAR_KEY: dict[str, int] = {
@@ -328,6 +409,7 @@ HRRR_ORDER_BY_VAR_KEY: dict[str, int] = {
     "snowfall_total": 5,
     "wspd10m": 6,
     "wgst10m": 7,
+    "snowfall_kuchera_total": 8,
 }
 
 HRRR_CONVERSION_BY_VAR_KEY: dict[str, str] = {
@@ -339,7 +421,11 @@ HRRR_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "precip_total": "kgm2_to_in",
 }
 
-HRRR_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {}
+HRRR_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
+    "snowfall_kuchera_total": {
+        "min_fh": 1,
+    },
+}
 
 
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:
