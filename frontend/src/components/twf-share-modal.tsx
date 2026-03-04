@@ -277,7 +277,6 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
   const [submitSuccess, setSubmitSuccess] = useState<SharePostResult | null>(null);
   const [submitTopicTitle, setSubmitTopicTitle] = useState<string | null>(null);
   const [clipboardStatus, setClipboardStatus] = useState<string | null>(null);
-  const [showDetailsSummary, setShowDetailsSummary] = useState(false);
   const [showAdvancedTopic, setShowAdvancedTopic] = useState(false);
   const [isMessageExpanded, setIsMessageExpanded] = useState(false);
   const [hasExpandedMessageEditor, setHasExpandedMessageEditor] = useState(false);
@@ -337,7 +336,6 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
     setSubmitTopicTitle(null);
     setRetryAfterSeconds(null);
     setClipboardStatus(null);
-    setShowDetailsSummary(false);
     setShowAdvancedTopic(false);
     setPastedTopicUrl("");
     setTopicSearch("");
@@ -648,22 +646,8 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
               {clipboardStatus ? <span className="text-xs text-emerald-200/90">{clipboardStatus}</span> : null}
             </div>
             <div className="mt-2 text-xs text-white/65">
-              <div className="truncate">Link to Viewer: {payload.permalink}</div>
-              <div className={showDetailsSummary ? "" : "line-clamp-2"}>Summary: {payload.summary}</div>
-              {payload.detailsSummary ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setShowDetailsSummary((current) => !current)}
-                    className="mt-1 text-[11px] font-medium text-emerald-200/90 hover:text-emerald-100"
-                  >
-                    {showDetailsSummary ? "Hide details" : "Show details"}
-                  </button>
-                  {showDetailsSummary ? (
-                    <div className="mt-1 text-[11px] text-white/60">{payload.detailsSummary}</div>
-                  ) : null}
-                </>
-              ) : null}
+              <div className="line-clamp-2">{payload.summary}</div>
+              <div className="mt-1 truncate text-white/60">{payload.permalink}</div>
             </div>
           </div>
 
@@ -891,7 +875,7 @@ export function TwfShareModal({ open, onClose, payload }: TwfShareModalProps) {
                       void handleSubmitPost();
                     }}
                     disabled={submitBusy}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-md border border-emerald-200/35 bg-[linear-gradient(to_top_right,#244238_0%,#5f7f6f_100%)] px-3 text-sm font-semibold text-emerald-50 shadow-[0_0_18px_rgba(94,164,135,0.22)] hover:brightness-110 disabled:opacity-60 disabled:hover:brightness-100"
+                    className="inline-flex h-9 items-center gap-1.5 rounded-md border border-emerald-200/35 bg-[linear-gradient(to_top_right,#244238_0%,#5f7f6f_100%)] px-3 text-sm font-semibold text-emerald-50 shadow-[0_0_12px_rgba(94,164,135,0.16)] hover:brightness-110 disabled:opacity-60 disabled:hover:brightness-100"
                   >
                     {submitBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                     {submitBusy ? "Posting..." : "Post to TWF"}
