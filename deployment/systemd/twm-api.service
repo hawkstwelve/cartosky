@@ -4,6 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
+User=twf
+Group=twf
+UMask=0027
 WorkingDirectory=/opt/twf_v3
 EnvironmentFile=-/etc/twf-v3/api.env
 Environment=PATH=/opt/twf_v3/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin

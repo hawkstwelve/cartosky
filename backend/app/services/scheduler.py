@@ -124,6 +124,19 @@ def _dedupe_preserve_order(items: Iterable[str]) -> list[str]:
     return out
 
 
+def _path_permission_debug(path: Path) -> str:
+    try:
+        st = path.stat()
+        mode = oct(st.st_mode & 0o777)
+        return f"exists uid={st.st_uid} gid={st.st_gid} mode={mode}"
+    except FileNotFoundError:
+        return "missing"
+    except PermissionError:
+        return "unstatable(permission denied)"
+    except OSError as exc:
+        return f"unstatable({exc.__class__.__name__}: {exc})"
+
+
 def _data_root(cli_data_root: str | None) -> Path:
     if cli_data_root:
         return Path(cli_data_root).resolve()
@@ -818,6 +831,8 @@ def _convert_rgba_cog_to_loop_webp(
                         image = Image.fromarray(rgba_hwc, mode="RGBA")
                         image.save(out_path, format="WEBP", quality=quality, method=6)
                         return True, "value"
+                    except PermissionError:
+                        raise
                     except Exception:
                         logger.exception(
                             "Loop value-render failed; falling back to RGBA path: model=%s var=%s src=%s val=%s out=%s",
@@ -864,6 +879,17 @@ def _convert_rgba_cog_to_loop_webp(
         image = Image.fromarray(rgba, mode="RGBA")
         image.save(out_path, format="WEBP", quality=quality, method=6)
         return True, mode_used
+    except PermissionError as exc:
+        logger.error(
+            "Loop WebP permission denied: src=%s out=%s parent=%s parent_stat=%s out_stat=%s err=%s",
+            cog_path,
+            out_path,
+            out_path.parent,
+            _path_permission_debug(out_path.parent),
+            _path_permission_debug(out_path),
+            exc,
+        )
+        return False, mode_used
     except Exception:
         logger.exception("Loop WebP conversion failed: %s -> %s", cog_path, out_path)
         return False, mode_used
