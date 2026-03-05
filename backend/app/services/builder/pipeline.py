@@ -48,6 +48,7 @@ from app.services.builder.fetch import (
     HerbieTransientUnavailableError,
     convert_units,
     fetch_variable,
+    product_hour_has_any_idx,
 )
 from app.services.colormaps import get_color_map_spec
 
@@ -673,6 +674,79 @@ def _get_search_patterns(var_spec_model: Any) -> list[str]:
     return [str(pattern) for pattern in search_list if str(pattern).strip()]
 
 
+def _derive_strategy_id(var_spec_model: Any, var_capability: Any | None) -> str:
+    derive_kind = (
+        getattr(var_capability, "derive_strategy_id", None)
+        or getattr(var_spec_model, "derive", None)
+        or ""
+    )
+    return str(derive_kind).strip()
+
+
+def _required_products_for_var(
+    *,
+    default_product: str,
+    var_spec_model: Any,
+    var_capability: Any | None,
+) -> list[str]:
+    default_norm = str(default_product).strip() or "sfc"
+    required: list[str] = []
+
+    def _push(product_name: str) -> None:
+        normalized = str(product_name).strip()
+        if normalized and normalized not in required:
+            required.append(normalized)
+
+    derive_kind = _derive_strategy_id(var_spec_model, var_capability)
+    if not derive_kind:
+        _push(default_norm)
+        return required
+
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {}) or {}
+    if derive_kind == "snowfall_kuchera_total_cumulative":
+        apcp_product = str(hints.get("kuchera_apcp_product", "")).strip() or default_norm
+        profile_product = str(hints.get("kuchera_profile_product", "")).strip() or default_norm
+        _push(apcp_product)
+        _push(profile_product)
+        return required
+
+    _push(default_norm)
+    return required
+
+
+def _ensure_products_ready(
+    *,
+    model: str,
+    run_date: datetime,
+    fh: int,
+    var_key: str,
+    required_products: list[str],
+    readiness_cache: dict[str, bool] | None = None,
+) -> None:
+    missing_products: list[str] = []
+    for product_name in required_products:
+        if readiness_cache is not None and product_name in readiness_cache:
+            ready = bool(readiness_cache[product_name])
+        else:
+            ready = product_hour_has_any_idx(
+                model_id=model,
+                product=product_name,
+                run_date=run_date,
+                fh=fh,
+            )
+            if readiness_cache is not None:
+                readiness_cache[product_name] = bool(ready)
+        if not ready:
+            missing_products.append(product_name)
+
+    if missing_products:
+        run_id = _run_id_from_date(run_date)
+        raise HerbieTransientUnavailableError(
+            f"Herbie hour not ready for {model}/{run_id}/{var_key}/fh{fh:03d}; "
+            f"missing_idx_products={missing_products}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Frame builder — the main orchestration function
 # ---------------------------------------------------------------------------
@@ -689,6 +763,7 @@ def build_frame(
     product: str = "sfc",
     model_plugin: Any = None,
     fetch_ctx: FetchContext | None = None,
+    readiness_cache: dict[str, bool] | None = None,
     log_fetch_cache_stats: bool = True,
     derive_component_warp_cache: bool = False,
 ) -> Path | None:
@@ -775,6 +850,11 @@ def build_frame(
     kind_normalized = str(kind).strip().lower() or "continuous"
     warp_resampling = _warp_resampling_for_kind(kind_normalized)
     search_patterns = None if getattr(var_spec_model, "derived", False) else _get_search_patterns(var_spec_model)
+    required_products = _required_products_for_var(
+        default_product=product,
+        var_spec_model=var_spec_model,
+        var_capability=var_capability,
+    )
 
     # --- Staging directory ---
     staging_dir = data_root / "staging" / model / run_id / var_key
@@ -789,6 +869,14 @@ def build_frame(
     frame_quality_flags: list[str] = []
 
     try:
+        _ensure_products_ready(
+            model=model,
+            run_date=run_date,
+            fh=fh,
+            var_key=var_key,
+            required_products=required_products,
+            readiness_cache=readiness_cache,
+        )
         if getattr(var_spec_model, "derived", False):
             # --- Step 1/2: Derive from component GRIB fields ---
             logger.info("Step 1/6: Deriving variable components")
@@ -1076,6 +1164,7 @@ def build_frame_bundle(
     """Build multiple variables for one fh with shared fetch/warp caches."""
     resolved_plugin = model_plugin or _resolve_model_plugin(model)
     shared_ctx = FetchContext(coverage=region)
+    readiness_cache: dict[str, bool] = {}
 
     ordered_vars: list[str] = []
     seen: set[str] = set()
@@ -1098,6 +1187,7 @@ def build_frame_bundle(
             product=product,
             model_plugin=resolved_plugin,
             fetch_ctx=shared_ctx,
+            readiness_cache=readiness_cache,
             log_fetch_cache_stats=False,
             derive_component_warp_cache=True,
         )

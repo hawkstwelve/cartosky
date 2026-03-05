@@ -23,7 +23,7 @@ import rasterio
 import rasterio.transform
 
 from app.services.builder.cog_writer import warp_to_target_grid
-from app.services.builder.fetch import convert_units, fetch_variable
+from app.services.builder.fetch import convert_units, fetch_variable, inventory_lines_for_pattern
 from app.services.builder.fetch import HerbieTransientUnavailableError
 from app.services.colormaps import (
     PRECIP_PTYPE_BINS_PER_TYPE,
@@ -610,50 +610,17 @@ def _kuchera_inventory_lines(
     search_pattern: str,
 ) -> list[str]:
     priority = _kuchera_primary_herbie_priority()
-    herbie_date = run_date.replace(tzinfo=None) if run_date.tzinfo else run_date
     try:
-        from herbie.core import Herbie  # lazy import
-        H = Herbie(
-            herbie_date,
-            model=model_id,
+        return inventory_lines_for_pattern(
+            model_id=model_id,
             product=product,
-            fxx=int(fh),
-            priority=priority,
+            run_date=run_date,
+            fh=int(fh),
+            search_pattern=search_pattern,
+            herbie_kwargs={"priority": priority},
         )
-        inventory = H.inventory(search_pattern)
     except Exception:
         return []
-
-    if inventory is None or len(inventory) == 0:
-        return []
-
-    lines: list[str] = []
-    preferred_keys = ("search_this", "line", "inventory_line", "grib_message", "message")
-    for row_index in range(len(inventory)):
-        try:
-            row = inventory.iloc[row_index]
-        except Exception:
-            continue
-
-        line = ""
-        for key in preferred_keys:
-            try:
-                value = row.get(key)
-            except Exception:
-                value = None
-            if value is None:
-                continue
-            text = " ".join(str(value).split()).strip()
-            if text:
-                line = text
-                break
-        if not line:
-            text = " ".join(str(row).split()).strip()
-            if text:
-                line = text
-        if line:
-            lines.append(line)
-    return lines
 
 
 def _kuchera_inventory_contains_exact_guess(
