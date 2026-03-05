@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
+import os
 import re
 from typing import Any, Callable
 
@@ -366,6 +367,113 @@ def _classify_apcp_mode_for_kuchera(
 
 def _apcp_exact_window_pattern(start_fh: int, end_fh: int) -> str:
     return f":APCP:surface:{int(start_fh)}-{int(end_fh)} hour acc fcst:"
+
+
+def _kuchera_primary_herbie_priority() -> str:
+    raw = os.getenv("TWF_HERBIE_PRIORITY", "aws")
+    for token in str(raw).split(","):
+        candidate = token.strip()
+        if candidate:
+            return candidate
+    return "aws"
+
+
+def _kuchera_inventory_lines(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    search_pattern: str,
+) -> list[str]:
+    priority = _kuchera_primary_herbie_priority()
+    herbie_date = run_date.replace(tzinfo=None) if run_date.tzinfo else run_date
+    try:
+        from herbie.core import Herbie  # lazy import
+        H = Herbie(
+            herbie_date,
+            model=model_id,
+            product=product,
+            fxx=int(fh),
+            priority=priority,
+        )
+        inventory = H.inventory(search_pattern)
+    except Exception:
+        return []
+
+    if inventory is None or len(inventory) == 0:
+        return []
+
+    lines: list[str] = []
+    preferred_keys = ("search_this", "line", "inventory_line", "grib_message", "message")
+    for row_index in range(len(inventory)):
+        try:
+            row = inventory.iloc[row_index]
+        except Exception:
+            continue
+
+        line = ""
+        for key in preferred_keys:
+            try:
+                value = row.get(key)
+            except Exception:
+                value = None
+            if value is None:
+                continue
+            text = " ".join(str(value).split()).strip()
+            if text:
+                line = text
+                break
+        if not line:
+            text = " ".join(str(row).split()).strip()
+            if text:
+                line = text
+        if line:
+            lines.append(line)
+    return lines
+
+
+def _kuchera_inventory_contains_exact_guess(
+    *,
+    inventory_lines: list[str],
+    exact_guess: str,
+) -> bool:
+    needle = " ".join(str(exact_guess).split()).strip()
+    if not needle:
+        return False
+    for line in inventory_lines:
+        if needle in str(line):
+            return True
+    return False
+
+
+def _kuchera_select_apcp_window_from_inventory(
+    *,
+    inventory_lines: list[str],
+    step_fh: int,
+) -> dict[str, Any] | None:
+    best: tuple[int, int, str] | None = None
+    for line in inventory_lines:
+        window = _parse_apcp_accum_window_hours(line)
+        if window is None:
+            continue
+        start_hour, end_hour = window
+        if end_hour != int(step_fh):
+            continue
+        if best is None or start_hour > best[0]:
+            best = (start_hour, end_hour, line)
+
+    if best is None:
+        return None
+
+    start_hour, end_hour, inventory_line = best
+    return {
+        "start_hour": int(start_hour),
+        "end_hour": int(end_hour),
+        "selected_window": f"{int(start_hour)}-{int(end_hour)}",
+        "inventory_line": str(inventory_line),
+        "search_pattern": _apcp_exact_window_pattern(start_hour, end_hour),
+    }
 
 
 def _fetch_component(
@@ -1332,8 +1440,11 @@ def _derive_snowfall_kuchera_total_cumulative(
     for step_index, step_fh in enumerate(step_fhs):
         expected_start_fh = 0 if step_index == 0 else int(step_fhs[step_index - 1])
         apcp_meta: dict[str, Any] = {}
-        apcp_exact_used = False
+        exact_guess_used = False
+        inventory_selected = False
+        selected_window = "none"
         selector_fallback_used = False
+        selector_reason = "none"
         apcp_search_pattern = _apcp_exact_window_pattern(expected_start_fh, step_fh)
         resolved_apcp_product = str(apcp_product or product)
         apcp_fetch_resolved = False
@@ -1370,6 +1481,7 @@ def _derive_snowfall_kuchera_total_cumulative(
                         apcp_meta = dict(ctx.warp_meta_cache.get(warped_cache_key, {}))
                         apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
                         selector_fallback_used = True
+                        selector_reason = "cache_hit"
                         apcp_fetch_resolved = True
                 else:
                     fetch_cache_key = (
@@ -1389,49 +1501,85 @@ def _derive_snowfall_kuchera_total_cumulative(
                         apcp_meta = dict(ctx.fetch_meta_cache.get(fetch_cache_key, {}))
                         apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
                         selector_fallback_used = True
+                        selector_reason = "cache_hit"
                         apcp_fetch_resolved = True
 
-        # Use a deterministic APCP window for Kuchera first. Broad regex selector
-        # matches can return unstable inventory row ordering across sources.
+        # Inventory-driven APCP selection for all models:
+        # 1) exact guessed window if present in inventory
+        # 2) otherwise best window for this end-hour (max start)
+        # 3) otherwise selector fallback
         if not apcp_fetch_resolved:
-            try:
-                exact_data, exact_crs, exact_transform, exact_meta = fetch_variable(
-                    model_id=model_id,
-                    product=resolved_apcp_product,
-                    search_pattern=apcp_search_pattern,
-                    run_date=run_date,
-                    fh=step_fh,
-                    return_meta=True,
+            inventory_lines = _kuchera_inventory_lines(
+                model_id=model_id,
+                product=resolved_apcp_product,
+                run_date=run_date,
+                fh=step_fh,
+                search_pattern=":APCP:surface:",
+            )
+            if not inventory_lines:
+                selector_fallback_used = True
+                selector_reason = "inventory_empty"
+            elif _kuchera_inventory_contains_exact_guess(
+                inventory_lines=inventory_lines,
+                exact_guess=apcp_search_pattern,
+            ):
+                exact_guess_used = True
+                selected_window = f"{int(expected_start_fh)}-{int(step_fh)}"
+                selector_reason = "inventory_exact_match"
+            else:
+                inventory_choice = _kuchera_select_apcp_window_from_inventory(
+                    inventory_lines=inventory_lines,
+                    step_fh=step_fh,
                 )
-                exact_data = exact_data.astype(np.float32, copy=False)
-                exact_meta = dict(exact_meta)
-
-                if use_warped_components:
-                    warped_data, warped_transform = warp_to_target_grid(
-                        exact_data,
-                        exact_crs,
-                        exact_transform,
-                        model=model_id,
-                        region=target_region,
-                        resampling=str(derive_component_resampling).strip(),
-                        src_nodata=None,
-                        dst_nodata=float("nan"),
-                    )
-                    exact_data = warped_data.astype(np.float32, copy=False)
-                    exact_crs = rasterio.crs.CRS.from_epsg(3857)
-                    exact_transform = warped_transform
-
-                if _is_valid_apcp_exact_result(exact_data, exact_meta):
-                    apcp_step = exact_data
-                    step_crs = exact_crs
-                    step_transform = exact_transform
-                    apcp_meta = exact_meta
-                    apcp_exact_used = True
-                    apcp_fetch_resolved = True
+                if inventory_choice is not None:
+                    apcp_search_pattern = str(inventory_choice.get("search_pattern") or apcp_search_pattern)
+                    selected_window = str(inventory_choice.get("selected_window") or selected_window)
+                    inventory_selected = True
+                    selector_reason = "inventory_best_window"
                 else:
                     selector_fallback_used = True
-            except Exception:
-                selector_fallback_used = True
+                    selector_reason = "inventory_no_matching_window"
+
+            if not apcp_fetch_resolved and (exact_guess_used or inventory_selected):
+                try:
+                    selected_data, selected_crs, selected_transform, selected_meta = fetch_variable(
+                        model_id=model_id,
+                        product=resolved_apcp_product,
+                        search_pattern=apcp_search_pattern,
+                        run_date=run_date,
+                        fh=step_fh,
+                        return_meta=True,
+                    )
+                    selected_data = selected_data.astype(np.float32, copy=False)
+                    selected_meta = dict(selected_meta)
+
+                    if use_warped_components:
+                        warped_data, warped_transform = warp_to_target_grid(
+                            selected_data,
+                            selected_crs,
+                            selected_transform,
+                            model=model_id,
+                            region=target_region,
+                            resampling=str(derive_component_resampling).strip(),
+                            src_nodata=None,
+                            dst_nodata=float("nan"),
+                        )
+                        selected_data = warped_data.astype(np.float32, copy=False)
+                        selected_crs = rasterio.crs.CRS.from_epsg(3857)
+                        selected_transform = warped_transform
+
+                    if _is_valid_apcp_exact_result(selected_data, selected_meta):
+                        apcp_step = selected_data
+                        step_crs = selected_crs
+                        step_transform = selected_transform
+                        apcp_meta = selected_meta
+                        apcp_fetch_resolved = True
+                    else:
+                        selector_fallback_used = True
+                        selector_reason = f"{selector_reason}_invalid_result"
+                except Exception as exc:
+                    selector_fallback_used = True
+                    selector_reason = f"{selector_reason}_error:{exc.__class__.__name__}"
 
         if not apcp_fetch_resolved:
             apcp_step, step_crs, step_transform, apcp_meta = _fetch_for_step(
@@ -1442,6 +1590,8 @@ def _derive_snowfall_kuchera_total_cumulative(
             )
             apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
             selector_fallback_used = True
+            if selector_reason == "none":
+                selector_reason = "selector_regex_fallback"
 
         apcp_valid_raw = np.isfinite(apcp_step) & (apcp_step >= 0.0)
         apcp_cum_clean = np.where(apcp_valid_raw, apcp_step, 0.0).astype(np.float32, copy=False)
@@ -1452,7 +1602,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             step_fh=step_fh,
             expected_start_fh=expected_start_fh,
         )
-        if apcp_exact_used and apcp_mode == "unknown":
+        if exact_guess_used and apcp_mode == "unknown":
             logger.warning(
                 'KUCHERA_APCP exact pattern yielded unknown mode; forcing step step_fh=%d expected_start_fh=%d pattern="%s" inv="%s"',
                 step_fh,
@@ -1489,15 +1639,18 @@ def _derive_snowfall_kuchera_total_cumulative(
                 )
 
         logger.info(
-            'KUCHERA_APCP step_fh=%d product=%s inv="%s" mode=%s fallback=%s exact=%s pattern="%s" selector_fallback=%s',
+            'KUCHERA_APCP step_fh=%d product=%s inv="%s" mode=%s fallback=%s exact_guess_used=%s inventory_selected=%s selected_window="%s" selector_fallback=%s reason="%s" pattern="%s"',
             step_fh,
             apcp_product or product,
             apcp_inventory_line.replace('"', "'"),
             apcp_mode,
             "true" if fallback_differencing_applied else "false",
-            "true" if apcp_exact_used else "false",
-            apcp_search_pattern.replace('"', "'"),
+            "true" if exact_guess_used else "false",
+            "true" if inventory_selected else "false",
+            selected_window,
             "true" if selector_fallback_used else "false",
+            selector_reason.replace('"', "'"),
+            apcp_search_pattern.replace('"', "'"),
         )
 
         window = _parse_apcp_accum_window_hours(apcp_inventory_line)

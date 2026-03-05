@@ -96,6 +96,11 @@ def test_kuchera_apcp_tries_exact_pattern_first(monkeypatch) -> None:
         raise AssertionError(f"unexpected search_pattern: {pattern}")
 
     monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(
+        derive_module,
+        "_kuchera_inventory_lines",
+        lambda *, model_id, product, run_date, fh, search_pattern: [exact_pattern],
+    )
 
     data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
         model_id="gfs",
@@ -154,6 +159,11 @@ def test_kuchera_apcp_falls_back_once_when_exact_has_no_inventory(monkeypatch, c
         raise AssertionError(f"unexpected search_pattern: {pattern}")
 
     monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(
+        derive_module,
+        "_kuchera_inventory_lines",
+        lambda *, model_id, product, run_date, fh, search_pattern: [exact_pattern],
+    )
 
     with caplog.at_level("INFO"):
         data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
@@ -170,5 +180,6 @@ def test_kuchera_apcp_falls_back_once_when_exact_has_no_inventory(monkeypatch, c
     assert calls[0] == exact_pattern
     assert calls.count(_APCP_SELECTOR_REGEX) == 1
     assert "selector_fallback=true" in caplog.text
-    assert "exact=false" in caplog.text
+    assert "exact_guess_used=true" in caplog.text
+    assert 'reason="inventory_exact_match_invalid_result"' in caplog.text
     assert np.isfinite(data).all()
