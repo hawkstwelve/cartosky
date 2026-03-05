@@ -16,7 +16,14 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.builder import derive as derive_module
 
 _APCP_SELECTOR_REGEX = r":APCP:surface:[0-9]+-[0-9]+ hour acc[^:]*:$"
-_TO_INCHES = np.float32(10.0 * 0.03937007874015748)
+
+
+def _kuchera_ratio_for_temp_c(temp_c: float) -> float:
+    ratio = derive_module._compute_kuchera_slr(
+        levels_hpa=[850],
+        temp_stack_c=[np.full((1, 1), temp_c, dtype=np.float32)],
+    )
+    return float(ratio[0, 0])
 
 
 class _Plugin:
@@ -52,7 +59,6 @@ def _var_spec() -> SimpleNamespace:
                 "step_hours": "1",
                 "kuchera_levels_hpa": "850",
                 "kuchera_require_rh": "false",
-                # Force deterministic 10:1 SLR fallback.
                 "kuchera_min_levels": "99",
             }
         )
@@ -139,7 +145,8 @@ def test_acceptance_1_mixed_step_then_cumulative(monkeypatch) -> None:
     )
 
     expected_lwe = np.array([[8.0, 4.0], [2.5, 0.0]], dtype=np.float32)
-    np.testing.assert_allclose(data, expected_lwe * _TO_INCHES, rtol=1e-6, atol=1e-6)
+    expected_inches = expected_lwe * np.float32(0.03937007874015748 * _kuchera_ratio_for_temp_c(-12.0))
+    np.testing.assert_allclose(data, expected_inches, rtol=1e-6, atol=1e-6)
 
 
 def test_acceptance_2_all_cumulative(monkeypatch) -> None:
@@ -159,7 +166,8 @@ def test_acceptance_2_all_cumulative(monkeypatch) -> None:
     )
 
     expected_lwe = np.full((2, 2), 6.0, dtype=np.float32)
-    np.testing.assert_allclose(data, expected_lwe * _TO_INCHES, rtol=1e-6, atol=1e-6)
+    expected_inches = expected_lwe * np.float32(0.03937007874015748 * _kuchera_ratio_for_temp_c(-12.0))
+    np.testing.assert_allclose(data, expected_inches, rtol=1e-6, atol=1e-6)
 
 
 def test_acceptance_3_cumulative_then_step_resumes(monkeypatch) -> None:
@@ -181,7 +189,8 @@ def test_acceptance_3_cumulative_then_step_resumes(monkeypatch) -> None:
     )
 
     expected_lwe = np.full((2, 2), 6.5, dtype=np.float32)
-    np.testing.assert_allclose(data, expected_lwe * _TO_INCHES, rtol=1e-6, atol=1e-6)
+    expected_inches = expected_lwe * np.float32(0.03937007874015748 * _kuchera_ratio_for_temp_c(-12.0))
+    np.testing.assert_allclose(data, expected_inches, rtol=1e-6, atol=1e-6)
 
 
 def test_acceptance_4_negative_diff_clipped_to_zero(monkeypatch) -> None:
@@ -199,7 +208,8 @@ def test_acceptance_4_negative_diff_clipped_to_zero(monkeypatch) -> None:
     )
 
     expected_lwe = np.full((2, 2), 5.0, dtype=np.float32)
-    np.testing.assert_allclose(data, expected_lwe * _TO_INCHES, rtol=1e-6, atol=1e-6)
+    expected_inches = expected_lwe * np.float32(0.03937007874015748 * _kuchera_ratio_for_temp_c(-12.0))
+    np.testing.assert_allclose(data, expected_inches, rtol=1e-6, atol=1e-6)
 
 
 def test_acceptance_5_nan_mask_any_step_contributed_semantics(monkeypatch) -> None:
@@ -226,7 +236,8 @@ def test_acceptance_5_nan_mask_any_step_contributed_semantics(monkeypatch) -> No
         [[2.0, 1.0], [2.0, 4.0]],
         dtype=np.float32,
     )
-    np.testing.assert_allclose(data, expected_lwe * _TO_INCHES, rtol=1e-6, atol=1e-6)
+    expected_inches = expected_lwe * np.float32(0.03937007874015748 * _kuchera_ratio_for_temp_c(-12.0))
+    np.testing.assert_allclose(data, expected_inches, rtol=1e-6, atol=1e-6)
 
 
 def test_acceptance_6_single_forecast_hour(monkeypatch) -> None:
@@ -248,4 +259,5 @@ def test_acceptance_6_single_forecast_hour(monkeypatch) -> None:
         [[4.5, 2.0], [0.0, 1.0]],
         dtype=np.float32,
     )
-    np.testing.assert_allclose(data, expected_lwe * _TO_INCHES, rtol=1e-6, atol=1e-6)
+    expected_inches = expected_lwe * np.float32(0.03937007874015748 * _kuchera_ratio_for_temp_c(-12.0))
+    np.testing.assert_allclose(data, expected_inches, rtol=1e-6, atol=1e-6)

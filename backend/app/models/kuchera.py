@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Sequence
 
 KUCHERA_DEFAULT_LEVELS_HPA: tuple[int, ...] = (925, 850, 700, 600, 500)
-KUCHERA_DEFAULT_REQUIRE_RH = True
+KUCHERA_DEFAULT_REQUIRE_RH = False
 KUCHERA_DEFAULT_MIN_LEVELS = 4
 
 

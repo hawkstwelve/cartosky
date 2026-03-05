@@ -19,6 +19,14 @@ from app.services.builder import derive as derive_module
 _APCP_SELECTOR_REGEX = r":APCP:surface:[0-9]+-[0-9]+ hour acc[^:]*:$"
 
 
+def _kuchera_ratio_for_temp_c(temp_c: float) -> float:
+    ratio = derive_module._compute_kuchera_slr(
+        levels_hpa=[850],
+        temp_stack_c=[np.full((1, 1), temp_c, dtype=np.float32)],
+    )
+    return float(ratio[0, 0])
+
+
 def _kuchera_test_var_spec() -> SimpleNamespace:
     return SimpleNamespace(
         selectors=SimpleNamespace(
@@ -142,7 +150,7 @@ def test_kuchera_apcp_cumulative_fallback_differences_to_step(monkeypatch, caplo
 
     expected_step_12 = np.array([[2.0, 0.0], [0.0, 0.1]], dtype=np.float32)
     expected_total = apcp_by_fh[6] + expected_step_12
-    expected_inches = expected_total * 0.03937007874015748 * 10.0
+    expected_inches = expected_total * 0.03937007874015748 * _kuchera_ratio_for_temp_c(-12.0)
     np.testing.assert_allclose(data, expected_inches, rtol=1e-6, atol=1e-6, equal_nan=True)
     assert "KUCHERA_APCP step_fh=6" in caplog.text
     assert "KUCHERA_APCP step_fh=12" in caplog.text
@@ -181,7 +189,7 @@ def test_kuchera_apcp_interval_step_is_used_directly(monkeypatch) -> None:
     assert out_crs == crs
     assert out_transform == transform
     expected_total = apcp_by_fh[6] + apcp_by_fh[12]
-    expected_inches = expected_total * 0.03937007874015748 * 10.0
+    expected_inches = expected_total * 0.03937007874015748 * _kuchera_ratio_for_temp_c(-12.0)
     np.testing.assert_allclose(data, expected_inches, rtol=1e-6, atol=1e-6, equal_nan=True)
 
 

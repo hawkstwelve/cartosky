@@ -169,7 +169,7 @@ HRRR_VARS: dict[str, VarSpec] = {
     ),
     **{
         f"tmp{level}": _hrrr_tmp_level_component(level)
-        for level in (700, 600, 500)
+        for level in (925, 700, 600, 500)
     },
     **{
         f"rh{level}": _hrrr_rh_level_component(level)
@@ -234,7 +234,10 @@ HRRR_VARS: dict[str, VarSpec] = {
                 "step_hours": "1",
                 "kuchera_profile_product": "prs",
                 "kuchera_use_ptype_gate": "true",
-                **kuchera_hint_overrides(levels_hpa=(850, 700, 600, 500)),
+                **kuchera_hint_overrides(
+                    levels_hpa=(925, 850, 700, 600, 500),
+                    require_rh=False,
+                ),
             }
         ),
         derived=True,

@@ -40,8 +40,9 @@ _KUCHERA_PTYPE_GATE_WARN_INTERVAL_SECONDS = 60.0
 _KUCHERA_PTYPE_GATE_LAST_WARN_TS = 0.0
 _KUCHERA_PTYPE_GATE_WARN_LOCK = threading.Lock()
 _KUCHERA_DEFAULT_LEVELS_HPA: tuple[int, ...] = (925, 850, 700, 600, 500)
-_KUCHERA_DEFAULT_REQUIRE_RH = True
-_KUCHERA_DEFAULT_MIN_LEVELS = 4
+_KUCHERA_VENDOR_T0_K = np.float32(271.16)
+_KUCHERA_RATIO_CLAMP_MIN = np.float32(5.0)
+_KUCHERA_RATIO_CLAMP_MAX = np.float32(30.0)
 _APCP_ACCUM_WINDOW_RE = re.compile(r":APCP:surface:(\d+)-(\d+)\s*hour acc(?:\s*fcst|@\([^)]*\))", re.IGNORECASE)
 
 
@@ -92,16 +93,6 @@ def _parse_hint_bool(value: Any, *, default: bool) -> bool:
     return default
 
 
-def _parse_hint_int(value: Any, *, default: int, minimum: int | None = None) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    if minimum is not None:
-        parsed = max(minimum, parsed)
-    return parsed
-
-
 def _parse_kuchera_levels_hpa(value: Any) -> list[int]:
     if isinstance(value, (list, tuple, set)):
         tokens = list(value)
@@ -126,123 +117,56 @@ def _parse_kuchera_levels_hpa(value: Any) -> list[int]:
     return levels
 
 
-def _pressure_layer_weights(levels_hpa: list[int]) -> np.ndarray:
-    count = len(levels_hpa)
-    if count <= 0:
-        return np.zeros((0,), dtype=np.float32)
-    if count == 1:
-        return np.ones((1,), dtype=np.float32)
+def _kuchera_maxt_low500_from_temp_stack_k(temp_stack_c: list[np.ndarray]) -> np.ndarray:
+    if not temp_stack_c:
+        raise ValueError("kuchera requires at least one temperature level")
 
-    levels = np.asarray(levels_hpa, dtype=np.float32)
-    sort_idx = np.argsort(levels)[::-1]
-    sorted_levels = levels[sort_idx]
+    shape = temp_stack_c[0].shape
+    for layer in temp_stack_c[1:]:
+        if layer.shape != shape:
+            raise ValueError(f"kuchera temperature shape mismatch: {layer.shape} != {shape}")
 
-    sorted_weights = np.empty_like(sorted_levels)
-    sorted_weights[0] = abs(sorted_levels[0] - sorted_levels[1]) * 0.5
-    sorted_weights[-1] = abs(sorted_levels[-2] - sorted_levels[-1]) * 0.5
-    if count > 2:
-        sorted_weights[1:-1] = np.abs(sorted_levels[:-2] - sorted_levels[2:]) * 0.5
-    sorted_weights = np.where(sorted_weights > 0.0, sorted_weights, 1.0).astype(np.float32, copy=False)
+    max_temp_k = np.full(shape, -np.inf, dtype=np.float32)
+    any_valid = np.zeros(shape, dtype=bool)
+    for temp_layer_c in temp_stack_c:
+        temp_layer_k = (temp_layer_c.astype(np.float32, copy=False) + np.float32(273.15)).astype(np.float32, copy=False)
+        finite = np.isfinite(temp_layer_k)
+        any_valid = any_valid | finite
+        max_temp_k = np.maximum(
+            max_temp_k,
+            np.where(finite, temp_layer_k, -np.inf).astype(np.float32, copy=False),
+        )
 
-    weights = np.empty_like(sorted_weights)
-    weights[sort_idx] = sorted_weights
-    total = float(np.sum(weights))
-    if total <= 0.0:
-        return np.full((count,), 1.0 / count, dtype=np.float32)
-    return (weights / total).astype(np.float32, copy=False)
+    return np.where(any_valid, max_temp_k, np.nan).astype(np.float32, copy=False)
 
 
-def _kuchera_slr_from_temp_proxy(temp_proxy_c: np.ndarray) -> np.ndarray:
-    slr = np.full(temp_proxy_c.shape, np.nan, dtype=np.float32)
-    finite = np.isfinite(temp_proxy_c)
+def _kuchera_ratio_from_maxt_low500_k(max_temp_k: np.ndarray) -> np.ndarray:
+    ratio = np.full(max_temp_k.shape, np.nan, dtype=np.float32)
+    finite = np.isfinite(max_temp_k)
     if not np.any(finite):
-        return slr
+        return ratio
 
-    warm = finite & (temp_proxy_c >= -5.0)
-    if np.any(warm):
-        warm_t = np.clip((temp_proxy_c[warm] + 5.0) / 5.0, 0.0, 1.0)
-        slr[warm] = 10.0 - (warm_t * 2.0)
+    warm_branch = finite & (max_temp_k > _KUCHERA_VENDOR_T0_K)
+    if np.any(warm_branch):
+        ratio[warm_branch] = 12.0 + 2.0 * (_KUCHERA_VENDOR_T0_K - max_temp_k[warm_branch])
 
-    cool = finite & (temp_proxy_c < -5.0) & (temp_proxy_c >= -12.0)
-    if np.any(cool):
-        cool_t = np.clip((-5.0 - temp_proxy_c[cool]) / 7.0, 0.0, 1.0)
-        slr[cool] = 10.0 + (cool_t * 5.0)
+    cold_branch = finite & ~warm_branch
+    if np.any(cold_branch):
+        ratio[cold_branch] = 12.0 + 1.0 * (_KUCHERA_VENDOR_T0_K - max_temp_k[cold_branch])
 
-    cold = finite & (temp_proxy_c < -12.0) & (temp_proxy_c >= -18.0)
-    if np.any(cold):
-        cold_t = np.clip((-12.0 - temp_proxy_c[cold]) / 6.0, 0.0, 1.0)
-        slr[cold] = 15.0 + (cold_t * 5.0)
-
-    very_cold = finite & (temp_proxy_c < -18.0)
-    if np.any(very_cold):
-        very_cold_t = np.clip((-18.0 - temp_proxy_c[very_cold]) / 12.0, 0.0, 1.0)
-        slr[very_cold] = 20.0 + (very_cold_t * 5.0)
-
-    return np.clip(slr, 5.0, 30.0).astype(np.float32, copy=False)
+    return np.clip(ratio, _KUCHERA_RATIO_CLAMP_MIN, _KUCHERA_RATIO_CLAMP_MAX).astype(np.float32, copy=False)
 
 
 def _compute_kuchera_slr(
     *,
     levels_hpa: list[int],
     temp_stack_c: list[np.ndarray],
-    rh_stack_pct: list[np.ndarray | None],
-    require_rh: bool,
 ) -> np.ndarray:
-    if not temp_stack_c:
-        raise ValueError("kuchera requires at least one temperature level")
-
     if len(temp_stack_c) != len(levels_hpa):
         raise ValueError("kuchera temperature level count mismatch")
-
-    if len(rh_stack_pct) != len(levels_hpa):
-        raise ValueError("kuchera RH level count mismatch")
-
-    shape = temp_stack_c[0].shape
-    for layer in temp_stack_c[1:]:
-        if layer.shape != shape:
-            raise ValueError(f"kuchera temperature shape mismatch: {layer.shape} != {shape}")
-    for rh_layer in rh_stack_pct:
-        if rh_layer is not None and rh_layer.shape != shape:
-            raise ValueError(f"kuchera RH shape mismatch: {rh_layer.shape} != {shape}")
-
-    base_weights = _pressure_layer_weights(levels_hpa)
-    weighted_temp_sum = np.zeros(shape, dtype=np.float32)
-    total_weight = np.zeros(shape, dtype=np.float32)
-
-    for idx, temp_layer in enumerate(temp_stack_c):
-        layer_weight = float(base_weights[idx]) if idx < len(base_weights) else 0.0
-        if layer_weight <= 0.0:
-            continue
-
-        rh_layer = rh_stack_pct[idx]
-        temp_valid = np.isfinite(temp_layer)
-        layer_weight_grid = np.full(shape, layer_weight, dtype=np.float32)
-
-        if rh_layer is not None:
-            rh_valid = np.isfinite(rh_layer)
-            rh_factor = np.clip(rh_layer / 80.0, 0.0, 1.0).astype(np.float32, copy=False)
-            rh_factor = np.where(rh_valid, rh_factor, 0.0).astype(np.float32, copy=False)
-            layer_weight_grid = (layer_weight_grid * rh_factor).astype(np.float32, copy=False)
-            if require_rh:
-                temp_valid = temp_valid & rh_valid
-        elif require_rh:
-            temp_valid = np.zeros(shape, dtype=bool)
-
-        layer_weight_grid = np.where(temp_valid, layer_weight_grid, 0.0).astype(np.float32, copy=False)
-        weighted_temp_sum = weighted_temp_sum + (
-            np.where(temp_valid, temp_layer, 0.0).astype(np.float32, copy=False) * layer_weight_grid
-        )
-        total_weight = total_weight + layer_weight_grid
-
-    temp_proxy_c = np.full(shape, np.nan, dtype=np.float32)
-    np.divide(
-        weighted_temp_sum,
-        total_weight,
-        out=temp_proxy_c,
-        where=total_weight > 0.0,
-    )
-    slr = _kuchera_slr_from_temp_proxy(temp_proxy_c)
-    return np.where(np.isfinite(slr), slr, 10.0).astype(np.float32, copy=False)
+    max_temp_k = _kuchera_maxt_low500_from_temp_stack_k(temp_stack_c)
+    ratio = _kuchera_ratio_from_maxt_low500_k(max_temp_k)
+    return np.where(np.isfinite(ratio), ratio, 10.0).astype(np.float32, copy=False)
 
 
 def derive_variable(
@@ -2042,18 +1966,9 @@ def _derive_snowfall_kuchera_total_cumulative(
     ptype_product_raw = str(hints.get("kuchera_ptype_product", "")).strip()
     ptype_product = ptype_product_raw or apcp_product or product
     levels_hpa = _parse_kuchera_levels_hpa(hints.get("kuchera_levels_hpa"))
-    require_rh = _parse_hint_bool(
-        hints.get("kuchera_require_rh"),
-        default=_KUCHERA_DEFAULT_REQUIRE_RH,
-    )
     use_ptype_gate = _parse_hint_bool(
         hints.get("kuchera_use_ptype_gate"),
         default=False,
-    )
-    min_levels = _parse_hint_int(
-        hints.get("kuchera_min_levels"),
-        default=_KUCHERA_DEFAULT_MIN_LEVELS,
-        minimum=1,
     )
     min_step_lwe_raw = hints.get("min_step_lwe_kgm2", "0.01")
     try:
@@ -2076,7 +1991,7 @@ def _derive_snowfall_kuchera_total_cumulative(
         derive_component_target_grid, derive_component_resampling, model_id,
     )
 
-    # -- Prefetch temperature + RH profile components in parallel. --
+    # -- Prefetch temperature profile components in parallel. --
     # APCP is NOT prefetched here because the inventory-driven resolution
     # state machine can't be replicated by a simple cache warm.
     resolved_profile_product = str(profile_product or product)
@@ -2090,25 +2005,16 @@ def _derive_snowfall_kuchera_total_cumulative(
                 warped=use_warped, target_region=target_region,
                 target_grid_id=target_grid_id, resampling=resampling,
             ))
-            if require_rh:
-                _prefetch_tasks.append(_PrefetchTask(
-                    model_id=model_id, product=resolved_profile_product,
-                    run_date=run_date, fh=_pf_step_fh, model_plugin=model_plugin,
-                    var_key=f"rh{_pf_level}",
-                    warped=use_warped, target_region=target_region,
-                    target_grid_id=target_grid_id, resampling=resampling,
-                ))
     _prefetch_components_parallel(_prefetch_tasks, ctx, label=f"kuchera_profile fh{fh:03d}")
     del _prefetch_tasks
 
-    # -- Build in-memory profile dict: (step_fh, level_hpa) → (temp, rh). --
+    # -- Build in-memory profile dict: (step_fh, level_hpa) → temp. --
     unavailable_temp_levels: set[int] = set()
-    unavailable_rh_levels: set[int] = set()
-    _profile: dict[tuple[int, int], tuple[np.ndarray | None, np.ndarray | None]] = {}
+    _profile: dict[tuple[int, int], np.ndarray | None] = {}
     for _blevel in levels_hpa:
         if _blevel in unavailable_temp_levels:
             for _bsfh in step_fhs:
-                _profile[(_bsfh, _blevel)] = (None, None)
+                _profile[(_bsfh, _blevel)] = None
             continue
         for _bsfh in step_fhs:
             _btmp: np.ndarray | None = None
@@ -2124,42 +2030,25 @@ def _derive_snowfall_kuchera_total_cumulative(
                 _btmp = _bt.astype(np.float32, copy=False)
             except ValueError:
                 unavailable_temp_levels.add(_blevel)
-                _profile[(_bsfh, _blevel)] = (None, None)
+                _profile[(_bsfh, _blevel)] = None
                 for _brem in step_fhs[step_fhs.index(_bsfh) + 1:]:
-                    _profile[(_brem, _blevel)] = (None, None)
+                    _profile[(_brem, _blevel)] = None
                 break
             except (HerbieTransientUnavailableError, RuntimeError):
-                _profile[(_bsfh, _blevel)] = (None, None)
+                _profile[(_bsfh, _blevel)] = None
                 continue
-
-            _brh: np.ndarray | None = None
-            if _blevel not in unavailable_rh_levels:
-                try:
-                    _br, _, _ = _fetch_step_component(
-                        model_id=model_id, product=resolved_profile_product,
-                        run_date=run_date, step_fh=_bsfh, model_plugin=model_plugin,
-                        var_key=f"rh{_blevel}",
-                        use_warped=use_warped, target_region=target_region,
-                        target_grid_id=target_grid_id, resampling=resampling,
-                        ctx=ctx,
-                    )
-                    _brh = _br.astype(np.float32, copy=False)
-                except ValueError:
-                    unavailable_rh_levels.add(_blevel)
-                except (HerbieTransientUnavailableError, RuntimeError):
-                    pass
-
-            _profile[(_bsfh, _blevel)] = (_btmp, _brh)
+            _profile[(_bsfh, _blevel)] = _btmp
 
     logger.debug(
-        "kuchera profile_dict entries=%d unavail_temp=%s unavail_rh=%s",
+        "kuchera profile_dict entries=%d unavail_temp=%s",
         len(_profile),
         unavailable_temp_levels or "none",
-        unavailable_rh_levels or "none",
     )
 
     fallback_used = False
     fallback_profile_logged = False
+    missing_level_warning_logged = False
+    sparse_level_warning_logged = False
     ptype_stats: dict[str, float] = {
         "frozen_min": float("inf"),
         "frozen_max": float("-inf"),
@@ -2172,6 +2061,17 @@ def _derive_snowfall_kuchera_total_cumulative(
     }
     ptype_any_precip_pixels = False
     ptype_any_reduced_pixels = False
+    kuchera_maxt_stats: dict[str, float] = {
+        "max_t_min": float("inf"),
+        "max_t_max": float("-inf"),
+        "max_t_sum": 0.0,
+        "max_t_count": 0.0,
+        "ratio_min": float("inf"),
+        "ratio_max": float("-inf"),
+        "ratio_sum": 0.0,
+        "ratio_count": 0.0,
+        "ratio_clamp_max_count": 0.0,
+    }
 
     def _process_step(
         step_fh: int,
@@ -2182,6 +2082,8 @@ def _derive_snowfall_kuchera_total_cumulative(
     ) -> tuple[np.ndarray, np.ndarray]:
         nonlocal fallback_used
         nonlocal fallback_profile_logged
+        nonlocal missing_level_warning_logged
+        nonlocal sparse_level_warning_logged
         nonlocal ptype_any_precip_pixels
         nonlocal ptype_any_reduced_pixels
         # apcp_valid is provided by _resolve_apcp_step_data (pre-cleaned,
@@ -2236,46 +2138,74 @@ def _derive_snowfall_kuchera_total_cumulative(
 
         step_levels: list[int] = []
         step_temps: list[np.ndarray] = []
-        step_rhs: list[np.ndarray | None] = []
         for level_hpa in levels_hpa:
-            _entry = _profile.get((step_fh, level_hpa))
-            if _entry is None:
-                continue
-            _p_temp, _p_rh = _entry
+            _p_temp = _profile.get((step_fh, level_hpa))
             if _p_temp is None:
-                continue
-            if require_rh and _p_rh is None:
                 continue
             if _p_temp.shape != step_apcp_clean.shape:
                 raise ValueError(
                     f"Kuchera temp shape mismatch for {model_id}/{var_key} at fh{step_fh:03d} level={level_hpa}: "
                     f"{_p_temp.shape} != {step_apcp_clean.shape}"
                 )
-            if _p_rh is not None and _p_rh.shape != step_apcp_clean.shape:
-                raise ValueError(
-                    f"Kuchera RH shape mismatch for {model_id}/{var_key} at fh{step_fh:03d} level={level_hpa}: "
-                    f"{_p_rh.shape} != {step_apcp_clean.shape}"
-                )
             step_levels.append(level_hpa)
             step_temps.append(_p_temp)
-            step_rhs.append(_p_rh)
 
-        if len(step_levels) < min_levels:
+        step_max_t_k = np.full(step_apcp_clean.shape, np.nan, dtype=np.float32)
+        if not step_levels:
             if not fallback_profile_logged:
                 logger.info(
-                    "kuchera_profile insufficient_levels=%d/%d fallback=10to1",
-                    len(step_levels), min_levels,
+                    "kuchera_profile insufficient_levels=0/%d fallback=10to1",
+                    len(levels_hpa),
                 )
                 fallback_profile_logged = True
             fallback_used = True
             step_slr = np.full(step_apcp_clean.shape, 10.0, dtype=np.float32)
         else:
-            step_slr = _compute_kuchera_slr(
-                levels_hpa=step_levels,
-                temp_stack_c=step_temps,
-                rh_stack_pct=step_rhs,
-                require_rh=require_rh,
+            if len(step_levels) < len(levels_hpa) and not missing_level_warning_logged:
+                missing_levels = sorted(level for level in levels_hpa if level not in set(step_levels))
+                logger.warning(
+                    "kuchera_maxt_low500 missing_levels available=%d/%d step_fh=%03d missing=%s",
+                    len(step_levels),
+                    len(levels_hpa),
+                    step_fh,
+                    missing_levels,
+                )
+                missing_level_warning_logged = True
+            if len(step_levels) < 3 and not sparse_level_warning_logged:
+                logger.warning(
+                    "kuchera_maxt_low500 sparse_levels available=%d/%d step_fh=%03d using_warmest_available=true",
+                    len(step_levels),
+                    len(levels_hpa),
+                    step_fh,
+                )
+                sparse_level_warning_logged = True
+            step_max_t_k = _kuchera_maxt_low500_from_temp_stack_k(step_temps)
+            step_slr = _kuchera_ratio_from_maxt_low500_k(step_max_t_k)
+            step_slr = np.where(np.isfinite(step_slr), step_slr, 10.0).astype(np.float32, copy=False)
+
+        valid_precip_ratio = (
+            apcp_valid
+            & np.isfinite(step_apcp_for_snow)
+            & (step_apcp_for_snow > 0.0)
+            & np.isfinite(step_slr)
+        )
+        if np.any(valid_precip_ratio):
+            ratio_values = step_slr[valid_precip_ratio]
+            kuchera_maxt_stats["ratio_min"] = min(kuchera_maxt_stats["ratio_min"], float(np.min(ratio_values)))
+            kuchera_maxt_stats["ratio_max"] = max(kuchera_maxt_stats["ratio_max"], float(np.max(ratio_values)))
+            kuchera_maxt_stats["ratio_sum"] += float(np.sum(ratio_values, dtype=np.float64))
+            kuchera_maxt_stats["ratio_count"] += float(ratio_values.size)
+            kuchera_maxt_stats["ratio_clamp_max_count"] += float(
+                np.count_nonzero(ratio_values >= (_KUCHERA_RATIO_CLAMP_MAX - np.float32(1e-6)))
             )
+
+            valid_max_t = valid_precip_ratio & np.isfinite(step_max_t_k)
+            if np.any(valid_max_t):
+                max_t_values = step_max_t_k[valid_max_t]
+                kuchera_maxt_stats["max_t_min"] = min(kuchera_maxt_stats["max_t_min"], float(np.min(max_t_values)))
+                kuchera_maxt_stats["max_t_max"] = max(kuchera_maxt_stats["max_t_max"], float(np.max(max_t_values)))
+                kuchera_maxt_stats["max_t_sum"] += float(np.sum(max_t_values, dtype=np.float64))
+                kuchera_maxt_stats["max_t_count"] += float(max_t_values.size)
 
         step_snow_kgm2 = (step_apcp_for_snow * step_slr).astype(np.float32, copy=False)
         step_valid = apcp_valid & np.isfinite(step_slr)
@@ -2319,6 +2249,32 @@ def _derive_snowfall_kuchera_total_cumulative(
         )
         if ptype_any_precip_pixels and not ptype_any_reduced_pixels:
             logger.warning("ptype gate ineffective")
+
+    ratio_count = kuchera_maxt_stats["ratio_count"]
+    ratio_mean = kuchera_maxt_stats["ratio_sum"] / ratio_count if ratio_count > 0 else float("nan")
+    max_t_count = kuchera_maxt_stats["max_t_count"]
+    max_t_mean = kuchera_maxt_stats["max_t_sum"] / max_t_count if max_t_count > 0 else float("nan")
+    logger.info(
+        "kuchera_maxt_low500 fh=%03d maxT_k_min=%.2f maxT_k_max=%.2f maxT_k_mean=%.2f "
+        "ratio_min=%.2f ratio_max=%.2f ratio_mean=%.2f valid_precip_px=%d",
+        fh,
+        kuchera_maxt_stats["max_t_min"] if max_t_count > 0 else float("nan"),
+        kuchera_maxt_stats["max_t_max"] if max_t_count > 0 else float("nan"),
+        max_t_mean,
+        kuchera_maxt_stats["ratio_min"] if ratio_count > 0 else float("nan"),
+        kuchera_maxt_stats["ratio_max"] if ratio_count > 0 else float("nan"),
+        ratio_mean,
+        int(ratio_count),
+    )
+    if ratio_count > 0:
+        clamp_max_fraction = kuchera_maxt_stats["ratio_clamp_max_count"] / ratio_count
+        if clamp_max_fraction > 0.2:
+            logger.warning(
+                "kuchera_maxt_low500 high_clamp_max_fraction=%.3f threshold=0.200 valid_precip_px=%d",
+                clamp_max_fraction,
+                int(ratio_count),
+            )
+
     quality_flags: list[str] = []
     if fallback_used:
         quality_flags.append("slr_fallback_10to1")
@@ -2370,7 +2326,7 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
     ),
     "snowfall_kuchera_total_cumulative": DeriveStrategy(
         id="snowfall_kuchera_total_cumulative",
-        required_inputs=("apcp_step", "tmp850", "tmp700", "tmp600", "tmp500"),
+        required_inputs=("apcp_step", "tmp925", "tmp850", "tmp700", "tmp600", "tmp500"),
         output_var_key="snowfall_kuchera_total",
         execute=_derive_snowfall_kuchera_total_cumulative,
     ),
