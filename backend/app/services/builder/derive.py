@@ -877,6 +877,482 @@ def _resolve_cumulative_step_fhs(
     return list(range(step_hours, fh + 1, step_hours))
 
 
+# ---------------------------------------------------------------------------
+# Shared infrastructure for cumulative APCP strategies
+# ---------------------------------------------------------------------------
+
+
+def _resolve_warped_state(
+    derive_component_target_grid: dict[str, str] | None,
+    derive_component_resampling: str | None,
+    model_id: str,
+) -> tuple[bool, str, str, str]:
+    """Resolve warped component state.
+
+    Returns ``(use_warped, target_region, target_grid_id, resampling)``.
+    """
+    use_warped = _derive_uses_warped_components(
+        derive_component_target_grid, derive_component_resampling,
+    )
+    target_region = (
+        str((derive_component_target_grid or {}).get("region", "")).strip()
+        if use_warped else ""
+    )
+    target_grid_id = (
+        str((derive_component_target_grid or {}).get("id", "")).strip()
+        if use_warped else ""
+    )
+    if use_warped and not target_grid_id:
+        target_grid_id = f"{model_id}:{target_region}"
+    resampling = str(derive_component_resampling).strip() if use_warped else ""
+    return use_warped, target_region, target_grid_id, resampling
+
+
+def _fetch_step_component(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    step_fh: int,
+    model_plugin: Any,
+    var_key: str,
+    use_warped: bool,
+    target_region: str,
+    target_grid_id: str,
+    resampling: str,
+    ctx: FetchContext | None,
+    return_meta: bool = False,
+) -> (
+    tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]
+    | tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]
+):
+    """Fetch a component for a step, branching warped vs raw."""
+    if use_warped:
+        return _fetch_component_warped(
+            model_id=model_id, product=product, run_date=run_date, fh=step_fh,
+            model_plugin=model_plugin, var_key=var_key,
+            target_region=target_region, target_grid_id=target_grid_id,
+            resampling=resampling, ctx=ctx, return_meta=return_meta,
+        )
+    return _fetch_component(
+        model_id=model_id, product=product, run_date=run_date, fh=step_fh,
+        model_plugin=model_plugin, var_key=var_key, ctx=ctx,
+        return_meta=return_meta,
+    )
+
+
+def _is_valid_apcp_exact_result(data: Any, meta: dict[str, Any] | None) -> bool:
+    """Check whether an inventory-selected APCP fetch returned usable data."""
+    if not isinstance(data, np.ndarray):
+        return False
+    if data.size <= 0:
+        return False
+    if not np.isfinite(data).any():
+        return False
+    inventory_line = str((meta or {}).get("inventory_line", "")).strip()
+    if not inventory_line:
+        return False
+    return True
+
+
+@dataclass
+class _ApcpCumDiffState:
+    """Mutable state for cumulative-to-step APCP differencing across the loop."""
+    prev_cum: np.ndarray | None = None
+    prev_cum_valid: np.ndarray | None = None
+    prev_cum_crs: rasterio.crs.CRS | None = None
+    prev_cum_transform: rasterio.transform.Affine | None = None
+    prev_cum_fh: int | None = None
+
+
+def _resolve_apcp_step_data(
+    *,
+    step_fh: int,
+    step_index: int,
+    step_fhs: list[int],
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    model_plugin: Any,
+    ctx: FetchContext | None,
+    apcp_component: str,
+    apcp_product: str | None,
+    use_warped: bool,
+    target_region: str,
+    target_grid_id: str,
+    resampling: str,
+    cum_diff_state: _ApcpCumDiffState,
+) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    """Resolve per-step APCP data with inventory-driven window selection.
+
+    Tries, in order:
+      1. FetchContext cache hit
+      2. Exact-guess window in Herbie inventory
+      3. Best available window ending at step_fh
+      4. Component selector regex fallback
+
+    Detects cumulative (0-N hour) windows and differences against the
+    previous step's cumulative value (tracked in *cum_diff_state*).
+
+    Returns ``(step_clean, apcp_valid, crs, transform)`` where
+    *step_clean* is the cleaned per-step increment (>= 0, invalid → 0)
+    and *apcp_valid* is the boolean validity mask.
+    """
+    expected_start_fh = 0 if step_index == 0 else int(step_fhs[step_index - 1])
+    resolved_apcp_product = str(apcp_product or product)
+    apcp_search_pattern = _apcp_exact_window_pattern(expected_start_fh, step_fh)
+    apcp_step: np.ndarray | None = None
+    step_crs: rasterio.crs.CRS | None = None
+    step_transform: rasterio.transform.Affine | None = None
+    apcp_meta: dict[str, Any] = {}
+    exact_guess_used = False
+    inventory_selected = False
+    selected_window = "none"
+    selector_fallback_used = False
+    selector_reason = "none"
+    apcp_fetch_resolved = False
+
+    # 1. Check FetchContext cache.
+    if ctx is not None:
+        run_date_utc = (
+            run_date.astimezone(timezone.utc)
+            if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
+        )
+        try:
+            apcp_cache_var_key, apcp_selector_fingerprint = _resolve_component_cache_identity(
+                model_plugin, apcp_component,
+            )
+        except Exception:
+            apcp_cache_var_key = None
+            apcp_selector_fingerprint = None
+
+        if apcp_cache_var_key is not None and apcp_selector_fingerprint is not None:
+            if use_warped:
+                warped_cache_key = (
+                    str(model_id),
+                    str(resolved_apcp_product),
+                    run_date_utc.isoformat(),
+                    int(step_fh),
+                    str(apcp_cache_var_key),
+                    str(apcp_selector_fingerprint),
+                    str(target_grid_id),
+                    str(resampling),
+                )
+                cached = ctx.warp_cache.get(warped_cache_key)
+                if cached is not None:
+                    _record_warp_stat(ctx, "hits")
+                    apcp_step, step_crs, step_transform = cached
+                    apcp_meta = dict(ctx.warp_meta_cache.get(warped_cache_key, {}))
+                    apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
+                    selector_fallback_used = True
+                    selector_reason = "cache_hit"
+                    apcp_fetch_resolved = True
+            else:
+                fetch_cache_key = (
+                    str(model_id),
+                    str(resolved_apcp_product),
+                    run_date_utc.isoformat(),
+                    int(step_fh),
+                    str(apcp_cache_var_key),
+                    str(apcp_selector_fingerprint),
+                    str(getattr(ctx, "coverage", "")),
+                    str(getattr(model_plugin, "coverage", "")),
+                )
+                cached = ctx.fetch_cache.get(fetch_cache_key)
+                if cached is not None:
+                    _record_fetch_stat(ctx, "hits")
+                    apcp_step, step_crs, step_transform = cached
+                    apcp_meta = dict(ctx.fetch_meta_cache.get(fetch_cache_key, {}))
+                    apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
+                    selector_fallback_used = True
+                    selector_reason = "cache_hit"
+                    apcp_fetch_resolved = True
+
+    # 2. Inventory-driven APCP selection.
+    if not apcp_fetch_resolved:
+        inventory_lines = _kuchera_inventory_lines(
+            model_id=model_id,
+            product=resolved_apcp_product,
+            run_date=run_date,
+            fh=step_fh,
+            search_pattern=":APCP:surface:",
+        )
+        if not inventory_lines:
+            selector_fallback_used = True
+            selector_reason = "inventory_empty"
+        elif _kuchera_inventory_contains_exact_guess(
+            inventory_lines=inventory_lines,
+            exact_guess=apcp_search_pattern,
+        ):
+            exact_guess_used = True
+            selected_window = f"{int(expected_start_fh)}-{int(step_fh)}"
+            selector_reason = "inventory_exact_match"
+        else:
+            inventory_choice = _kuchera_select_apcp_window_from_inventory(
+                inventory_lines=inventory_lines,
+                step_fh=step_fh,
+            )
+            if inventory_choice is not None:
+                apcp_search_pattern = str(inventory_choice.get("search_pattern") or apcp_search_pattern)
+                selected_window = str(inventory_choice.get("selected_window") or selected_window)
+                inventory_selected = True
+                selector_reason = "inventory_best_window"
+            else:
+                selector_fallback_used = True
+                selector_reason = "inventory_no_matching_window"
+
+        if not apcp_fetch_resolved and (exact_guess_used or inventory_selected):
+            try:
+                selected_data, selected_crs, selected_transform, selected_meta = fetch_variable(
+                    model_id=model_id,
+                    product=resolved_apcp_product,
+                    search_pattern=apcp_search_pattern,
+                    run_date=run_date,
+                    fh=step_fh,
+                    return_meta=True,
+                )
+                selected_data = selected_data.astype(np.float32, copy=False)
+                selected_meta = dict(selected_meta)
+
+                if use_warped:
+                    warped_data, warped_transform = warp_to_target_grid(
+                        selected_data,
+                        selected_crs,
+                        selected_transform,
+                        model=model_id,
+                        region=target_region,
+                        resampling=resampling,
+                        src_nodata=None,
+                        dst_nodata=float("nan"),
+                    )
+                    selected_data = warped_data.astype(np.float32, copy=False)
+                    selected_crs = rasterio.crs.CRS.from_epsg(3857)
+                    selected_transform = warped_transform
+
+                if _is_valid_apcp_exact_result(selected_data, selected_meta):
+                    apcp_step = selected_data
+                    step_crs = selected_crs
+                    step_transform = selected_transform
+                    apcp_meta = selected_meta
+                    apcp_fetch_resolved = True
+                else:
+                    selector_fallback_used = True
+                    selector_reason = f"{selector_reason}_invalid_result"
+            except Exception as exc:
+                selector_fallback_used = True
+                selector_reason = f"{selector_reason}_error:{exc.__class__.__name__}"
+
+    # 3. Fallback to component selector regex.
+    if not apcp_fetch_resolved:
+        apcp_step, step_crs, step_transform, apcp_meta = _fetch_step_component(
+            model_id=model_id,
+            product=resolved_apcp_product,
+            run_date=run_date,
+            step_fh=step_fh,
+            model_plugin=model_plugin,
+            var_key=apcp_component,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            ctx=ctx,
+            return_meta=True,
+        )
+        apcp_meta = dict(apcp_meta)
+        apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
+        selector_fallback_used = True
+        if selector_reason == "none":
+            selector_reason = "selector_regex_fallback"
+
+    # 4. Classify mode and apply cumulative differencing.
+    apcp_valid_raw = np.isfinite(apcp_step) & (apcp_step >= 0.0)
+    apcp_cum_clean = np.where(apcp_valid_raw, apcp_step, 0.0).astype(np.float32, copy=False)
+
+    apcp_inventory_line = str((apcp_meta or {}).get("inventory_line", "")).strip()
+    apcp_mode = _classify_apcp_mode_for_kuchera(
+        inventory_line=apcp_inventory_line,
+        step_fh=step_fh,
+        expected_start_fh=expected_start_fh,
+    )
+    if exact_guess_used and apcp_mode == "unknown":
+        logger.warning(
+            'KUCHERA_APCP exact pattern yielded unknown mode; forcing step '
+            'step_fh=%d expected_start_fh=%d pattern="%s" inv="%s"',
+            step_fh,
+            expected_start_fh,
+            apcp_search_pattern.replace('"', "'"),
+            apcp_inventory_line.replace('"', "'"),
+        )
+        apcp_mode = "step"
+
+    step_apcp_data = apcp_cum_clean
+    apcp_valid = apcp_valid_raw
+    fallback_differencing_applied = False
+
+    if (
+        apcp_mode == "cumulative"
+        and cum_diff_state.prev_cum is not None
+        and cum_diff_state.prev_cum_fh is not None
+    ):
+        same_shape = apcp_cum_clean.shape == cum_diff_state.prev_cum.shape
+        same_crs = step_crs == cum_diff_state.prev_cum_crs
+        same_transform = step_transform == cum_diff_state.prev_cum_transform
+        if same_shape and same_crs and same_transform:
+            step_apcp_data = np.clip(
+                apcp_cum_clean - cum_diff_state.prev_cum, 0.0, None,
+            ).astype(np.float32, copy=False)
+            if cum_diff_state.prev_cum_valid is not None:
+                apcp_valid = apcp_valid_raw & cum_diff_state.prev_cum_valid
+            fallback_differencing_applied = True
+            logger.info(
+                'KUCHERA_APCP_FALLBACK step_fh=%d prev_fh=%d reason="cumulative 0-%d"',
+                step_fh,
+                cum_diff_state.prev_cum_fh,
+                step_fh,
+            )
+        else:
+            logger.info(
+                'KUCHERA_APCP_FALLBACK step_fh=%d prev_fh=%d reason="cumulative 0-%d grid_mismatch"',
+                step_fh,
+                cum_diff_state.prev_cum_fh,
+                step_fh,
+            )
+
+    logger.info(
+        'KUCHERA_APCP step_fh=%d product=%s inv="%s" mode=%s fallback=%s '
+        'exact_guess_used=%s inventory_selected=%s selected_window="%s" selector_fallback=%s '
+        'reason="%s" pattern="%s"',
+        step_fh,
+        apcp_product or product,
+        apcp_inventory_line.replace('"', "'"),
+        apcp_mode,
+        "true" if fallback_differencing_applied else "false",
+        "true" if exact_guess_used else "false",
+        "true" if inventory_selected else "false",
+        selected_window,
+        "true" if selector_fallback_used else "false",
+        selector_reason.replace('"', "'"),
+        apcp_search_pattern.replace('"', "'"),
+    )
+
+    # 5. Update cumulative tracking state.
+    window = _parse_apcp_accum_window_hours(apcp_inventory_line)
+    if window is not None and window[0] == 0 and window[1] == int(step_fh):
+        cum_diff_state.prev_cum = apcp_cum_clean
+        cum_diff_state.prev_cum_valid = apcp_valid_raw
+        cum_diff_state.prev_cum_crs = step_crs
+        cum_diff_state.prev_cum_transform = step_transform
+        cum_diff_state.prev_cum_fh = int(step_fh)
+
+    return step_apcp_data, apcp_valid, step_crs, step_transform
+
+
+def _cumulative_apcp_loop(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    step_fhs: list[int],
+    model_plugin: Any,
+    ctx: FetchContext | None,
+    apcp_component: str,
+    apcp_product: str | None,
+    use_warped: bool,
+    target_region: str,
+    target_grid_id: str,
+    resampling: str,
+    use_inventory_resolution: bool,
+    process_step: Callable[
+        [int, np.ndarray, "np.ndarray | None", rasterio.crs.CRS, rasterio.transform.Affine],
+        tuple[np.ndarray, np.ndarray],
+    ],
+    error_label: str,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    """Shared cumulative APCP accumulation loop.
+
+    For each forecast step:
+      1. Fetch APCP via simple fetch or inventory-driven resolution.
+      2. Call *process_step(step_fh, step_data, apcp_valid, crs, transform)*
+         which returns ``(contribution, step_valid)``.
+      3. Accumulate *contribution*, merge *step_valid*.
+
+    *process_step* receives ``apcp_valid=None`` for the simple fetch path
+    (the callback determines validity from raw data) and a boolean mask for
+    the inventory path (pre-cleaned, post-differencing).
+
+    Returns ``(cumulative, crs, transform)`` with NaN at invalid pixels.
+    """
+    cum_diff_state = _ApcpCumDiffState() if use_inventory_resolution else None
+
+    cumulative: np.ndarray | None = None
+    valid_mask: np.ndarray | None = None
+    src_crs: rasterio.crs.CRS | None = None
+    src_transform: rasterio.transform.Affine | None = None
+
+    for step_index, step_fh in enumerate(step_fhs):
+        if use_inventory_resolution and cum_diff_state is not None:
+            step_data, apcp_valid, step_crs, step_transform = _resolve_apcp_step_data(
+                step_fh=step_fh,
+                step_index=step_index,
+                step_fhs=step_fhs,
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                model_plugin=model_plugin,
+                ctx=ctx,
+                apcp_component=apcp_component,
+                apcp_product=apcp_product,
+                use_warped=use_warped,
+                target_region=target_region,
+                target_grid_id=target_grid_id,
+                resampling=resampling,
+                cum_diff_state=cum_diff_state,
+            )
+        else:
+            step_data, step_crs, step_transform = _fetch_step_component(
+                model_id=model_id,
+                product=str(apcp_product or product),
+                run_date=run_date,
+                step_fh=step_fh,
+                model_plugin=model_plugin,
+                var_key=apcp_component,
+                use_warped=use_warped,
+                target_region=target_region,
+                target_grid_id=target_grid_id,
+                resampling=resampling,
+                ctx=ctx,
+            )
+            apcp_valid = None
+
+        contribution, step_valid = process_step(
+            step_fh, step_data, apcp_valid, step_crs, step_transform,
+        )
+
+        if cumulative is None:
+            cumulative = contribution
+            valid_mask = step_valid
+            src_crs = step_crs
+            src_transform = step_transform
+            continue
+
+        if contribution.shape != cumulative.shape:
+            raise ValueError(
+                f"{error_label} shape mismatch at fh{step_fh:03d}: "
+                f"{contribution.shape} != {cumulative.shape}"
+            )
+
+        cumulative = cumulative + contribution
+        valid_mask = np.logical_or(valid_mask, step_valid)
+
+    if cumulative is None or valid_mask is None or src_crs is None or src_transform is None:
+        raise ValueError(error_label)
+
+    cumulative = np.where(valid_mask, cumulative, np.nan).astype(np.float32)
+    return cumulative, src_crs, src_transform
+
+
 def _interval_sample_fhs(step_fh: int, step_len: int) -> list[int]:
     if step_len <= 0:
         raise ValueError(f"Invalid cumulative step length={step_len} for fh={step_fh}")
@@ -1197,53 +1673,23 @@ def _derive_precip_total_cumulative(
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     apcp_component = hints.get("apcp_component", "apcp_step")
-    cumulative_kgm2: np.ndarray | None = None
-    valid_mask: np.ndarray | None = None
-    src_crs: rasterio.crs.CRS | None = None
-    src_transform: rasterio.transform.Affine | None = None
-
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, default_step_hours=6)
     cadence_hint = _cadence_hint_suffix(hints)
-    logger.info(
-        "derive %s fh%03d apcp_steps=%d%s",
-        var_key,
-        fh,
-        len(step_fhs),
-        cadence_hint,
-    )
+    logger.info("derive %s fh%03d apcp_steps=%d%s", var_key, fh, len(step_fhs), cadence_hint)
     logger.debug("derive %s fh%03d apcp_steps=%s", var_key, fh, step_fhs)
 
-    use_warped_components = _derive_uses_warped_components(
-        derive_component_target_grid=derive_component_target_grid,
-        derive_component_resampling=derive_component_resampling,
+    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
+        derive_component_target_grid, derive_component_resampling, model_id,
     )
-    target_region = (
-        str((derive_component_target_grid or {}).get("region", "")).strip()
-        if use_warped_components
-        else ""
-    )
-    target_grid_id = (
-        str((derive_component_target_grid or {}).get("id", "")).strip()
-        if use_warped_components
-        else ""
-    )
-    if use_warped_components and not target_grid_id:
-        target_grid_id = f"{model_id}:{target_region}"
 
-    # -- Prefetch all APCP steps in parallel to warm the cache. --
+    # Prefetch all APCP steps in parallel.
     _prefetch_components_parallel(
         [
             _PrefetchTask(
-                model_id=model_id,
-                product=product,
-                run_date=run_date,
-                fh=sfh,
-                model_plugin=model_plugin,
-                var_key=apcp_component,
-                warped=use_warped_components,
-                target_region=target_region,
-                target_grid_id=target_grid_id,
-                resampling=str(derive_component_resampling).strip() if use_warped_components else "",
+                model_id=model_id, product=product, run_date=run_date,
+                fh=sfh, model_plugin=model_plugin, var_key=apcp_component,
+                warped=use_warped, target_region=target_region,
+                target_grid_id=target_grid_id, resampling=resampling,
             )
             for sfh in step_fhs
         ],
@@ -1251,55 +1697,39 @@ def _derive_precip_total_cumulative(
         label=f"precip_total fh{fh:03d}",
     )
 
-    for step_fh in step_fhs:
-        if use_warped_components:
-            step_data, step_crs, step_transform = _fetch_component_warped(
-                model_id=model_id,
-                product=product,
-                run_date=run_date,
-                fh=step_fh,
-                model_plugin=model_plugin,
-                var_key=apcp_component,
-                target_region=target_region,
-                target_grid_id=target_grid_id,
-                resampling=str(derive_component_resampling).strip(),
-                ctx=ctx,
-            )
-        else:
-            step_data, step_crs, step_transform = _fetch_component(
-                model_id=model_id,
-                product=product,
-                run_date=run_date,
-                fh=step_fh,
-                model_plugin=model_plugin,
-                var_key=apcp_component,
-                ctx=ctx,
-            )
-        step_clean = np.where(np.isfinite(step_data), np.maximum(step_data, 0.0), 0.0).astype(np.float32)
+    def _process_step(
+        step_fh: int,
+        step_data: np.ndarray,
+        apcp_valid_hint: np.ndarray | None,
+        step_crs: rasterio.crs.CRS,
+        step_transform: rasterio.transform.Affine,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        step_clean = np.where(
+            np.isfinite(step_data), np.maximum(step_data, 0.0), 0.0,
+        ).astype(np.float32)
         step_valid = np.isfinite(step_data)
+        return step_clean, step_valid
 
-        if cumulative_kgm2 is None:
-            cumulative_kgm2 = step_clean
-            valid_mask = step_valid
-            src_crs = step_crs
-            src_transform = step_transform
-            continue
+    cumulative_kgm2, src_crs, src_transform = _cumulative_apcp_loop(
+        model_id=model_id,
+        var_key=var_key,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        step_fhs=step_fhs,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        apcp_component=apcp_component,
+        apcp_product=None,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+        use_inventory_resolution=False,
+        process_step=_process_step,
+        error_label=f"No cumulative APCP source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+    )
 
-        if step_clean.shape != cumulative_kgm2.shape:
-            raise ValueError(
-                f"APCP component shape mismatch for {model_id}/{var_key} at fh{step_fh:03d}: "
-                f"{step_clean.shape} != {cumulative_kgm2.shape}"
-            )
-
-        cumulative_kgm2 = cumulative_kgm2 + step_clean
-        valid_mask = np.logical_or(valid_mask, step_valid)
-
-    if cumulative_kgm2 is None or valid_mask is None or src_crs is None or src_transform is None:
-        raise ValueError(
-            f"No cumulative APCP source steps resolved for {model_id}/{var_key} fh{fh:03d}"
-        )
-
-    cumulative_kgm2 = np.where(valid_mask, cumulative_kgm2, np.nan).astype(np.float32)
     cumulative_inches = convert_units(
         cumulative_kgm2,
         var_key=var_key,
@@ -1343,13 +1773,9 @@ def _derive_snowfall_total_10to1_cumulative(
         min_step_lwe = 0.01
     min_step_lwe = max(min_step_lwe, 0.0)
 
-    cumulative_kgm2: np.ndarray | None = None
-    valid_mask: np.ndarray | None = None
-    src_crs: rasterio.crs.CRS | None = None
-    src_transform: rasterio.transform.Affine | None = None
-
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, default_step_hours=6)
-    interval_plan: list[tuple[int, int, list[int]]] = []
+    # Build interval plan: step_fh → (step_len, sample_fhs).
+    interval_plan: dict[int, tuple[int, list[int]]] = {}
     snow_step_fhs: list[int] = []
     prev_step_fh = 0
     for step_fh in step_fhs:
@@ -1360,137 +1786,73 @@ def _derive_snowfall_total_10to1_cumulative(
                 f"Non-increasing cumulative snowfall step sequence for {model_id}/{var_key}: "
                 f"step_len={step_len} at fh{step_fh:03d}"
             )
-        sample_fhs = [sample_fh for sample_fh in _interval_sample_fhs(step_fh, step_len) if sample_fh >= 0]
-        interval_plan.append((step_fh, step_len, sample_fhs))
-        for sample_fh in sample_fhs:
-            if sample_fh in snow_step_fhs:
-                continue
-            snow_step_fhs.append(sample_fh)
+        sample_fhs = [sf for sf in _interval_sample_fhs(step_fh, step_len) if sf >= 0]
+        interval_plan[step_fh] = (step_len, sample_fhs)
+        for sf in sample_fhs:
+            if sf not in snow_step_fhs:
+                snow_step_fhs.append(sf)
 
     logger.info("snow_ratio method=10to1 fh=%d", fh)
     logger.info(
         "derive %s fh%03d apcp_steps=%d snow_steps=%d%s",
-        var_key,
-        fh,
-        len(step_fhs),
-        len(snow_step_fhs),
+        var_key, fh, len(step_fhs), len(snow_step_fhs),
         _cadence_hint_suffix(hints),
     )
-    logger.debug(
-        "derive %s fh%03d apcp_steps=%s snow_steps=%s",
-        var_key,
-        fh,
-        step_fhs,
-        snow_step_fhs,
+    logger.debug("derive %s fh%03d apcp_steps=%s snow_steps=%s", var_key, fh, step_fhs, snow_step_fhs)
+
+    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
+        derive_component_target_grid, derive_component_resampling, model_id,
     )
 
-    use_warped_components = _derive_uses_warped_components(
-        derive_component_target_grid=derive_component_target_grid,
-        derive_component_resampling=derive_component_resampling,
-    )
-    target_region = (
-        str((derive_component_target_grid or {}).get("region", "")).strip()
-        if use_warped_components
-        else ""
-    )
-    target_grid_id = (
-        str((derive_component_target_grid or {}).get("id", "")).strip()
-        if use_warped_components
-        else ""
-    )
-    if use_warped_components and not target_grid_id:
-        target_grid_id = f"{model_id}:{target_region}"
-
-    # -- Prefetch all APCP steps + csnow samples in parallel. --
+    # Prefetch APCP + csnow in parallel.
     _prefetch_tasks: list[_PrefetchTask] = []
-    _warp_kw = dict(
-        warped=use_warped_components,
-        target_region=target_region,
-        target_grid_id=target_grid_id,
-        resampling=str(derive_component_resampling).strip() if use_warped_components else "",
-    )
-    for _pf_step_fh in step_fhs:
+    for _pf_fh in step_fhs:
         _prefetch_tasks.append(_PrefetchTask(
             model_id=model_id, product=product, run_date=run_date,
-            fh=_pf_step_fh, model_plugin=model_plugin, var_key=apcp_component, **_warp_kw,
+            fh=_pf_fh, model_plugin=model_plugin, var_key=apcp_component,
+            warped=use_warped, target_region=target_region,
+            target_grid_id=target_grid_id, resampling=resampling,
         ))
-    for _pf_snow_fh in snow_step_fhs:
+    for _pf_fh in snow_step_fhs:
         _prefetch_tasks.append(_PrefetchTask(
             model_id=model_id, product=product, run_date=run_date,
-            fh=_pf_snow_fh, model_plugin=model_plugin, var_key=snow_component, **_warp_kw,
+            fh=_pf_fh, model_plugin=model_plugin, var_key=snow_component,
+            warped=use_warped, target_region=target_region,
+            target_grid_id=target_grid_id, resampling=resampling,
         ))
-    _prefetch_components_parallel(
-        _prefetch_tasks, ctx,
-        label=f"snow10to1 fh{fh:03d}",
-    )
-    del _prefetch_tasks, _warp_kw
+    _prefetch_components_parallel(_prefetch_tasks, ctx, label=f"snow10to1 fh{fh:03d}")
+    del _prefetch_tasks
 
-    for step_fh, _step_len, sample_fhs in interval_plan:
-        if use_warped_components:
-            apcp_step, step_crs, step_transform = _fetch_component_warped(
-                model_id=model_id,
-                product=product,
-                run_date=run_date,
-                fh=step_fh,
-                model_plugin=model_plugin,
-                var_key=apcp_component,
-                target_region=target_region,
-                target_grid_id=target_grid_id,
-                resampling=str(derive_component_resampling).strip(),
-                ctx=ctx,
-            )
-        else:
-            apcp_step, step_crs, step_transform = _fetch_component(
-                model_id=model_id,
-                product=product,
-                run_date=run_date,
-                fh=step_fh,
-                model_plugin=model_plugin,
-                var_key=apcp_component,
-                ctx=ctx,
-            )
-        apcp_valid = np.isfinite(apcp_step) & (apcp_step >= 0.0)
-        step_apcp_clean = np.where(apcp_valid, apcp_step, 0.0).astype(np.float32, copy=False)
+    def _process_step(
+        step_fh: int,
+        step_data: np.ndarray,
+        apcp_valid_hint: np.ndarray | None,
+        step_crs: rasterio.crs.CRS,
+        step_transform: rasterio.transform.Affine,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        apcp_valid = np.isfinite(step_data) & (step_data >= 0.0)
+        step_apcp_clean = np.where(apcp_valid, step_data, 0.0).astype(np.float32, copy=False)
         if min_step_lwe > 0.0:
             step_apcp_clean = np.where(
-                step_apcp_clean >= min_step_lwe,
-                step_apcp_clean,
-                0.0,
+                step_apcp_clean >= min_step_lwe, step_apcp_clean, 0.0,
             ).astype(np.float32, copy=False)
 
+        _step_len, sample_fhs = interval_plan[step_fh]
         sample_masks: list[np.ndarray] = []
         for sample_fh in sample_fhs:
             try:
-                if use_warped_components:
-                    snow_mask, _, _ = _fetch_component_warped(
-                        model_id=model_id,
-                        product=product,
-                        run_date=run_date,
-                        fh=sample_fh,
-                        model_plugin=model_plugin,
-                        var_key=snow_component,
-                        target_region=target_region,
-                        target_grid_id=target_grid_id,
-                        resampling=str(derive_component_resampling).strip(),
-                        ctx=ctx,
-                    )
-                else:
-                    snow_mask, _, _ = _fetch_component(
-                        model_id=model_id,
-                        product=product,
-                        run_date=run_date,
-                        fh=sample_fh,
-                        model_plugin=model_plugin,
-                        var_key=snow_component,
-                        ctx=ctx,
-                    )
+                snow_mask, _, _ = _fetch_step_component(
+                    model_id=model_id, product=product, run_date=run_date,
+                    step_fh=sample_fh, model_plugin=model_plugin,
+                    var_key=snow_component,
+                    use_warped=use_warped, target_region=target_region,
+                    target_grid_id=target_grid_id, resampling=resampling,
+                    ctx=ctx,
+                )
             except (HerbieTransientUnavailableError, RuntimeError, ValueError) as exc:
                 _log_missing_csnow_sample(
-                    model_id=model_id,
-                    var_key=var_key,
-                    step_fh=step_fh,
-                    sample_fh=sample_fh,
-                    exc=exc,
+                    model_id=model_id, var_key=var_key,
+                    step_fh=step_fh, sample_fh=sample_fh, exc=exc,
                 )
                 continue
 
@@ -1499,7 +1861,6 @@ def _derive_snowfall_total_10to1_cumulative(
                     f"Snowfall mask shape mismatch for {model_id}/{var_key} at fh{sample_fh:03d}: "
                     f"{snow_mask.shape} != {step_apcp_clean.shape}"
                 )
-
             snow_valid = np.isfinite(snow_mask) & (snow_mask >= 0.0) & (snow_mask <= 1.0)
             sample_masks.append(
                 np.where(snow_valid, snow_mask, np.nan).astype(np.float32, copy=False)
@@ -1524,29 +1885,28 @@ def _derive_snowfall_total_10to1_cumulative(
 
         step_snow_kgm2 = (step_apcp_clean * interval_mask).astype(np.float32, copy=False)
         step_valid = apcp_valid & csnow_valid
+        return step_snow_kgm2, step_valid
 
-        if cumulative_kgm2 is None:
-            cumulative_kgm2 = step_snow_kgm2
-            valid_mask = step_valid
-            src_crs = step_crs
-            src_transform = step_transform
-            continue
+    cumulative_kgm2, src_crs, src_transform = _cumulative_apcp_loop(
+        model_id=model_id,
+        var_key=var_key,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        step_fhs=step_fhs,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        apcp_component=apcp_component,
+        apcp_product=None,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+        use_inventory_resolution=False,
+        process_step=_process_step,
+        error_label=f"No cumulative snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+    )
 
-        if step_snow_kgm2.shape != cumulative_kgm2.shape:
-            raise ValueError(
-                f"Snowfall component shape mismatch for {model_id}/{var_key} at fh{step_fh:03d}: "
-                f"{step_snow_kgm2.shape} != {cumulative_kgm2.shape}"
-            )
-
-        cumulative_kgm2 = cumulative_kgm2 + step_snow_kgm2
-        valid_mask = np.logical_or(valid_mask, step_valid)
-
-    if cumulative_kgm2 is None or valid_mask is None or src_crs is None or src_transform is None:
-        raise ValueError(
-            f"No cumulative snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}"
-        )
-
-    cumulative_kgm2 = np.where(valid_mask, cumulative_kgm2, np.nan).astype(np.float32)
     # 1 kg/m^2 == 1 mm LWE. Convert to inches liquid then apply fixed 10:1 SLR.
     cumulative_snow_inches = cumulative_kgm2 * 0.03937007874015748 * slr
     return cumulative_snow_inches.astype(np.float32, copy=False), src_crs, src_transform
@@ -1593,132 +1953,45 @@ def _derive_snowfall_kuchera_total_cumulative(
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, default_step_hours=6)
     logger.info(
         "derive %s fh%03d apcp_steps=%d profile_levels=%s apcp_product=%s profile_product=%s%s",
-        var_key,
-        fh,
-        len(step_fhs),
-        levels_hpa,
+        var_key, fh, len(step_fhs), levels_hpa,
         apcp_product or product,
         profile_product or product,
         _cadence_hint_suffix(hints),
     )
     logger.debug("derive %s fh%03d apcp_steps=%s", var_key, fh, step_fhs)
 
-    use_warped_components = _derive_uses_warped_components(
-        derive_component_target_grid=derive_component_target_grid,
-        derive_component_resampling=derive_component_resampling,
+    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
+        derive_component_target_grid, derive_component_resampling, model_id,
     )
-    target_region = (
-        str((derive_component_target_grid or {}).get("region", "")).strip()
-        if use_warped_components
-        else ""
-    )
-    target_grid_id = (
-        str((derive_component_target_grid or {}).get("id", "")).strip()
-        if use_warped_components
-        else ""
-    )
-    if use_warped_components and not target_grid_id:
-        target_grid_id = f"{model_id}:{target_region}"
-
-    def _fetch_for_step(
-        step_fh: int,
-        component_var: str,
-        *,
-        component_product: str | None = None,
-        return_meta: bool = False,
-    ) -> (
-        tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]
-        | tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]
-    ):
-        resolved_product = str(component_product or product)
-        if use_warped_components:
-            return _fetch_component_warped(
-                model_id=model_id,
-                product=resolved_product,
-                run_date=run_date,
-                fh=step_fh,
-                model_plugin=model_plugin,
-                var_key=component_var,
-                target_region=target_region,
-                target_grid_id=target_grid_id,
-                resampling=str(derive_component_resampling).strip(),
-                ctx=ctx,
-                return_meta=return_meta,
-            )
-        return _fetch_component(
-            model_id=model_id,
-            product=resolved_product,
-            run_date=run_date,
-            fh=step_fh,
-            model_plugin=model_plugin,
-            var_key=component_var,
-            ctx=ctx,
-            return_meta=return_meta,
-        )
-
-    def _is_valid_apcp_exact_result(data: Any, meta: dict[str, Any] | None) -> bool:
-        if not isinstance(data, np.ndarray):
-            return False
-        if data.size <= 0:
-            return False
-        if not np.isfinite(data).any():
-            return False
-        inventory_line = str((meta or {}).get("inventory_line", "")).strip()
-        if not inventory_line:
-            return False
-        return True
-
-    cumulative_kgm2: np.ndarray | None = None
-    valid_mask: np.ndarray | None = None
-    src_crs: rasterio.crs.CRS | None = None
-    src_transform: rasterio.transform.Affine | None = None
-
-    fallback_used = False
-    fallback_profile_logged = False
-    unavailable_temp_levels: set[int] = set()
-    unavailable_rh_levels: set[int] = set()
-    prev_apcp_cum: np.ndarray | None = None
-    prev_apcp_cum_valid: np.ndarray | None = None
-    prev_apcp_cum_crs: rasterio.crs.CRS | None = None
-    prev_apcp_cum_transform: rasterio.transform.Affine | None = None
-    prev_apcp_cum_fh: int | None = None
 
     # -- Prefetch temperature + RH profile components in parallel. --
-    # APCP is NOT prefetched here because Kuchera uses a complex
-    # exact-guess → inventory-select → regex-fallback APCP resolution
-    # state machine that can't be replicated by a simple cache warm.
-    _resolved_profile_product = str(profile_product or product)
+    # APCP is NOT prefetched here because the inventory-driven resolution
+    # state machine can't be replicated by a simple cache warm.
+    resolved_profile_product = str(profile_product or product)
     _prefetch_tasks: list[_PrefetchTask] = []
-    _warp_kw = dict(
-        warped=use_warped_components,
-        target_region=target_region,
-        target_grid_id=target_grid_id,
-        resampling=str(derive_component_resampling).strip() if use_warped_components else "",
-    )
     for _pf_step_fh in step_fhs:
         for _pf_level in levels_hpa:
             _prefetch_tasks.append(_PrefetchTask(
-                model_id=model_id, product=_resolved_profile_product,
+                model_id=model_id, product=resolved_profile_product,
                 run_date=run_date, fh=_pf_step_fh, model_plugin=model_plugin,
-                var_key=f"tmp{_pf_level}", **_warp_kw,
+                var_key=f"tmp{_pf_level}",
+                warped=use_warped, target_region=target_region,
+                target_grid_id=target_grid_id, resampling=resampling,
             ))
             if require_rh:
                 _prefetch_tasks.append(_PrefetchTask(
-                    model_id=model_id, product=_resolved_profile_product,
+                    model_id=model_id, product=resolved_profile_product,
                     run_date=run_date, fh=_pf_step_fh, model_plugin=model_plugin,
-                    var_key=f"rh{_pf_level}", **_warp_kw,
+                    var_key=f"rh{_pf_level}",
+                    warped=use_warped, target_region=target_region,
+                    target_grid_id=target_grid_id, resampling=resampling,
                 ))
-    _prefetch_components_parallel(
-        _prefetch_tasks, ctx,
-        label=f"kuchera_profile fh{fh:03d}",
-    )
-    del _prefetch_tasks, _warp_kw, _resolved_profile_product
+    _prefetch_components_parallel(_prefetch_tasks, ctx, label=f"kuchera_profile fh{fh:03d}")
+    del _prefetch_tasks
 
     # -- Build in-memory profile dict: (step_fh, level_hpa) → (temp, rh). --
-    # The parallel prefetch above warmed the FetchContext cache, so each
-    # _fetch_for_step call here is a fast cache hit.  This eliminates
-    # repeated cache-key construction and var-resolution overhead in the
-    # main accumulation loop.
+    unavailable_temp_levels: set[int] = set()
+    unavailable_rh_levels: set[int] = set()
     _profile: dict[tuple[int, int], tuple[np.ndarray | None, np.ndarray | None]] = {}
     for _blevel in levels_hpa:
         if _blevel in unavailable_temp_levels:
@@ -1728,15 +2001,19 @@ def _derive_snowfall_kuchera_total_cumulative(
         for _bsfh in step_fhs:
             _btmp: np.ndarray | None = None
             try:
-                _bt, _, _ = _fetch_for_step(
-                    _bsfh, f"tmp{_blevel}", component_product=profile_product,
+                _bt, _, _ = _fetch_step_component(
+                    model_id=model_id, product=resolved_profile_product,
+                    run_date=run_date, step_fh=_bsfh, model_plugin=model_plugin,
+                    var_key=f"tmp{_blevel}",
+                    use_warped=use_warped, target_region=target_region,
+                    target_grid_id=target_grid_id, resampling=resampling,
+                    ctx=ctx,
                 )
                 _btmp = _bt.astype(np.float32, copy=False)
             except ValueError:
                 unavailable_temp_levels.add(_blevel)
                 _profile[(_bsfh, _blevel)] = (None, None)
-                # Level doesn't exist in model — mark remaining steps too.
-                for _brem in step_fhs[step_fhs.index(_bsfh) + 1 :]:
+                for _brem in step_fhs[step_fhs.index(_bsfh) + 1:]:
                     _profile[(_brem, _blevel)] = (None, None)
                 break
             except (HerbieTransientUnavailableError, RuntimeError):
@@ -1746,8 +2023,13 @@ def _derive_snowfall_kuchera_total_cumulative(
             _brh: np.ndarray | None = None
             if _blevel not in unavailable_rh_levels:
                 try:
-                    _br, _, _ = _fetch_for_step(
-                        _bsfh, f"rh{_blevel}", component_product=profile_product,
+                    _br, _, _ = _fetch_step_component(
+                        model_id=model_id, product=resolved_profile_product,
+                        run_date=run_date, step_fh=_bsfh, model_plugin=model_plugin,
+                        var_key=f"rh{_blevel}",
+                        use_warped=use_warped, target_region=target_region,
+                        target_grid_id=target_grid_id, resampling=resampling,
+                        ctx=ctx,
                     )
                     _brh = _br.astype(np.float32, copy=False)
                 except ValueError:
@@ -1764,232 +2046,25 @@ def _derive_snowfall_kuchera_total_cumulative(
         unavailable_rh_levels or "none",
     )
 
-    for step_index, step_fh in enumerate(step_fhs):
-        expected_start_fh = 0 if step_index == 0 else int(step_fhs[step_index - 1])
-        apcp_meta: dict[str, Any] = {}
-        exact_guess_used = False
-        inventory_selected = False
-        selected_window = "none"
-        selector_fallback_used = False
-        selector_reason = "none"
-        apcp_search_pattern = _apcp_exact_window_pattern(expected_start_fh, step_fh)
-        resolved_apcp_product = str(apcp_product or product)
-        apcp_fetch_resolved = False
+    fallback_used = False
+    fallback_profile_logged = False
 
-        # Preserve derive-bundle cache reuse: if a prior derive already resolved
-        # APCP for this component/fh in the shared context, reuse it directly.
-        if ctx is not None:
-            run_date_utc = run_date.astimezone(timezone.utc) if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
-            try:
-                apcp_cache_var_key, apcp_selector_fingerprint = _resolve_component_cache_identity(
-                    model_plugin,
-                    apcp_component,
-                )
-            except Exception:
-                apcp_cache_var_key = None
-                apcp_selector_fingerprint = None
-
-            if apcp_cache_var_key is not None and apcp_selector_fingerprint is not None:
-                if use_warped_components:
-                    warped_cache_key = (
-                        str(model_id),
-                        str(resolved_apcp_product),
-                        run_date_utc.isoformat(),
-                        int(step_fh),
-                        str(apcp_cache_var_key),
-                        str(apcp_selector_fingerprint),
-                        str(target_grid_id),
-                        str(derive_component_resampling).strip(),
-                    )
-                    cached = ctx.warp_cache.get(warped_cache_key)
-                    if cached is not None:
-                        _record_warp_stat(ctx, "hits")
-                        apcp_step, step_crs, step_transform = cached
-                        apcp_meta = dict(ctx.warp_meta_cache.get(warped_cache_key, {}))
-                        apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
-                        selector_fallback_used = True
-                        selector_reason = "cache_hit"
-                        apcp_fetch_resolved = True
-                else:
-                    fetch_cache_key = (
-                        str(model_id),
-                        str(resolved_apcp_product),
-                        run_date_utc.isoformat(),
-                        int(step_fh),
-                        str(apcp_cache_var_key),
-                        str(apcp_selector_fingerprint),
-                        str(getattr(ctx, "coverage", "")),
-                        str(getattr(model_plugin, "coverage", "")),
-                    )
-                    cached = ctx.fetch_cache.get(fetch_cache_key)
-                    if cached is not None:
-                        _record_fetch_stat(ctx, "hits")
-                        apcp_step, step_crs, step_transform = cached
-                        apcp_meta = dict(ctx.fetch_meta_cache.get(fetch_cache_key, {}))
-                        apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
-                        selector_fallback_used = True
-                        selector_reason = "cache_hit"
-                        apcp_fetch_resolved = True
-
-        # Inventory-driven APCP selection for all models:
-        # 1) exact guessed window if present in inventory
-        # 2) otherwise best window for this end-hour (max start)
-        # 3) otherwise selector fallback
-        if not apcp_fetch_resolved:
-            inventory_lines = _kuchera_inventory_lines(
-                model_id=model_id,
-                product=resolved_apcp_product,
-                run_date=run_date,
-                fh=step_fh,
-                search_pattern=":APCP:surface:",
-            )
-            if not inventory_lines:
-                selector_fallback_used = True
-                selector_reason = "inventory_empty"
-            elif _kuchera_inventory_contains_exact_guess(
-                inventory_lines=inventory_lines,
-                exact_guess=apcp_search_pattern,
-            ):
-                exact_guess_used = True
-                selected_window = f"{int(expected_start_fh)}-{int(step_fh)}"
-                selector_reason = "inventory_exact_match"
-            else:
-                inventory_choice = _kuchera_select_apcp_window_from_inventory(
-                    inventory_lines=inventory_lines,
-                    step_fh=step_fh,
-                )
-                if inventory_choice is not None:
-                    apcp_search_pattern = str(inventory_choice.get("search_pattern") or apcp_search_pattern)
-                    selected_window = str(inventory_choice.get("selected_window") or selected_window)
-                    inventory_selected = True
-                    selector_reason = "inventory_best_window"
-                else:
-                    selector_fallback_used = True
-                    selector_reason = "inventory_no_matching_window"
-
-            if not apcp_fetch_resolved and (exact_guess_used or inventory_selected):
-                try:
-                    selected_data, selected_crs, selected_transform, selected_meta = fetch_variable(
-                        model_id=model_id,
-                        product=resolved_apcp_product,
-                        search_pattern=apcp_search_pattern,
-                        run_date=run_date,
-                        fh=step_fh,
-                        return_meta=True,
-                    )
-                    selected_data = selected_data.astype(np.float32, copy=False)
-                    selected_meta = dict(selected_meta)
-
-                    if use_warped_components:
-                        warped_data, warped_transform = warp_to_target_grid(
-                            selected_data,
-                            selected_crs,
-                            selected_transform,
-                            model=model_id,
-                            region=target_region,
-                            resampling=str(derive_component_resampling).strip(),
-                            src_nodata=None,
-                            dst_nodata=float("nan"),
-                        )
-                        selected_data = warped_data.astype(np.float32, copy=False)
-                        selected_crs = rasterio.crs.CRS.from_epsg(3857)
-                        selected_transform = warped_transform
-
-                    if _is_valid_apcp_exact_result(selected_data, selected_meta):
-                        apcp_step = selected_data
-                        step_crs = selected_crs
-                        step_transform = selected_transform
-                        apcp_meta = selected_meta
-                        apcp_fetch_resolved = True
-                    else:
-                        selector_fallback_used = True
-                        selector_reason = f"{selector_reason}_invalid_result"
-                except Exception as exc:
-                    selector_fallback_used = True
-                    selector_reason = f"{selector_reason}_error:{exc.__class__.__name__}"
-
-        if not apcp_fetch_resolved:
-            apcp_step, step_crs, step_transform, apcp_meta = _fetch_for_step(
-                step_fh,
-                apcp_component,
-                component_product=apcp_product,
-                return_meta=True,
-            )
-            apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
-            selector_fallback_used = True
-            if selector_reason == "none":
-                selector_reason = "selector_regex_fallback"
-
-        apcp_valid_raw = np.isfinite(apcp_step) & (apcp_step >= 0.0)
-        apcp_cum_clean = np.where(apcp_valid_raw, apcp_step, 0.0).astype(np.float32, copy=False)
-
-        apcp_inventory_line = str((apcp_meta or {}).get("inventory_line", "")).strip()
-        apcp_mode = _classify_apcp_mode_for_kuchera(
-            inventory_line=apcp_inventory_line,
-            step_fh=step_fh,
-            expected_start_fh=expected_start_fh,
-        )
-        if exact_guess_used and apcp_mode == "unknown":
-            logger.warning(
-                'KUCHERA_APCP exact pattern yielded unknown mode; forcing step step_fh=%d expected_start_fh=%d pattern="%s" inv="%s"',
-                step_fh,
-                expected_start_fh,
-                apcp_search_pattern.replace('"', "'"),
-                apcp_inventory_line.replace('"', "'"),
-            )
-            apcp_mode = "step"
-        fallback_differencing_applied = False
-
-        step_apcp_clean = apcp_cum_clean
-        apcp_valid = apcp_valid_raw
-        if apcp_mode == "cumulative" and prev_apcp_cum is not None and prev_apcp_cum_fh is not None:
-            same_shape = apcp_cum_clean.shape == prev_apcp_cum.shape
-            same_crs = step_crs == prev_apcp_cum_crs
-            same_transform = step_transform == prev_apcp_cum_transform
-            if same_shape and same_crs and same_transform:
-                step_apcp_clean = np.clip(apcp_cum_clean - prev_apcp_cum, 0.0, None).astype(np.float32, copy=False)
-                if prev_apcp_cum_valid is not None:
-                    apcp_valid = apcp_valid_raw & prev_apcp_cum_valid
-                fallback_differencing_applied = True
-                logger.info(
-                    'KUCHERA_APCP_FALLBACK step_fh=%d prev_fh=%d reason="cumulative 0-%d"',
-                    step_fh,
-                    prev_apcp_cum_fh,
-                    step_fh,
-                )
-            else:
-                logger.info(
-                    'KUCHERA_APCP_FALLBACK step_fh=%d prev_fh=%d reason="cumulative 0-%d grid_mismatch"',
-                    step_fh,
-                    prev_apcp_cum_fh,
-                    step_fh,
-                )
-
-        logger.info(
-            'KUCHERA_APCP step_fh=%d product=%s inv="%s" mode=%s fallback=%s exact_guess_used=%s inventory_selected=%s selected_window="%s" selector_fallback=%s reason="%s" pattern="%s"',
-            step_fh,
-            apcp_product or product,
-            apcp_inventory_line.replace('"', "'"),
-            apcp_mode,
-            "true" if fallback_differencing_applied else "false",
-            "true" if exact_guess_used else "false",
-            "true" if inventory_selected else "false",
-            selected_window,
-            "true" if selector_fallback_used else "false",
-            selector_reason.replace('"', "'"),
-            apcp_search_pattern.replace('"', "'"),
-        )
-
-        window = _parse_apcp_accum_window_hours(apcp_inventory_line)
-        if window is not None and window[0] == 0 and window[1] == int(step_fh):
-            prev_apcp_cum = apcp_cum_clean
-            prev_apcp_cum_valid = apcp_valid_raw
-            prev_apcp_cum_crs = step_crs
-            prev_apcp_cum_transform = step_transform
-            prev_apcp_cum_fh = int(step_fh)
-
+    def _process_step(
+        step_fh: int,
+        step_data: np.ndarray,
+        apcp_valid: np.ndarray | None,
+        step_crs: rasterio.crs.CRS,
+        step_transform: rasterio.transform.Affine,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        nonlocal fallback_used, fallback_profile_logged
+        # apcp_valid is provided by _resolve_apcp_step_data (pre-cleaned,
+        # post-differencing); step_data is the cleaned step increment.
+        assert apcp_valid is not None
+        step_apcp_clean = step_data
         if min_step_lwe > 0.0:
-            step_apcp_clean = np.where(step_apcp_clean >= min_step_lwe, step_apcp_clean, 0.0).astype(np.float32, copy=False)
+            step_apcp_clean = np.where(
+                step_apcp_clean >= min_step_lwe, step_apcp_clean, 0.0,
+            ).astype(np.float32, copy=False)
 
         step_levels: list[int] = []
         step_temps: list[np.ndarray] = []
@@ -2021,8 +2096,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             if not fallback_profile_logged:
                 logger.info(
                     "kuchera_profile insufficient_levels=%d/%d fallback=10to1",
-                    len(step_levels),
-                    min_levels,
+                    len(step_levels), min_levels,
                 )
                 fallback_profile_logged = True
             fallback_used = True
@@ -2037,35 +2111,32 @@ def _derive_snowfall_kuchera_total_cumulative(
 
         step_snow_kgm2 = (step_apcp_clean * step_slr).astype(np.float32, copy=False)
         step_valid = apcp_valid & np.isfinite(step_slr)
+        return step_snow_kgm2, step_valid
 
-        if cumulative_kgm2 is None:
-            cumulative_kgm2 = step_snow_kgm2
-            valid_mask = step_valid
-            src_crs = step_crs
-            src_transform = step_transform
-            continue
+    cumulative_kgm2, src_crs, src_transform = _cumulative_apcp_loop(
+        model_id=model_id,
+        var_key=var_key,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        step_fhs=step_fhs,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        apcp_component=apcp_component,
+        apcp_product=apcp_product,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+        use_inventory_resolution=True,
+        process_step=_process_step,
+        error_label=f"No cumulative Kuchera snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+    )
 
-        if step_snow_kgm2.shape != cumulative_kgm2.shape:
-            raise ValueError(
-                f"Kuchera snowfall shape mismatch for {model_id}/{var_key} at fh{step_fh:03d}: "
-                f"{step_snow_kgm2.shape} != {cumulative_kgm2.shape}"
-            )
-
-        cumulative_kgm2 = cumulative_kgm2 + step_snow_kgm2
-        valid_mask = np.logical_or(valid_mask, step_valid)
-
-    if cumulative_kgm2 is None or valid_mask is None or src_crs is None or src_transform is None:
-        raise ValueError(
-            f"No cumulative Kuchera snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}"
-        )
-
-    cumulative_kgm2 = np.where(valid_mask, cumulative_kgm2, np.nan).astype(np.float32)
     cumulative_snow_inches = cumulative_kgm2 * 0.03937007874015748
     logger.info(
         "snow_ratio method=kuchera fh=%d levels=%s fallback=%s",
-        fh,
-        levels_hpa,
-        "10to1" if fallback_used else "none",
+        fh, levels_hpa, "10to1" if fallback_used else "none",
     )
     return cumulative_snow_inches.astype(np.float32, copy=False), src_crs, src_transform
 
