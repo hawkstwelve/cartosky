@@ -3,6 +3,7 @@ uvicorn[standard]
 numpy
 rasterio
 rio-tiler
+scipy
 herbie-data
 pyproj
 Pillow

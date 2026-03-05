@@ -32,6 +32,7 @@ from typing import Any
 
 import numpy as np
 import rasterio
+from scipy.ndimage import gaussian_filter
 
 from app.services.builder.cog_writer import (
     _gdal,
@@ -58,30 +59,6 @@ VALUE_HOVER_DOWNSAMPLE_FACTOR = 1
 CANONICAL_COVERAGE = "conus"
 
 
-def _gaussian_kernel_1d(sigma: float) -> np.ndarray:
-    radius = max(1, int(np.ceil(3.0 * sigma)))
-    x = np.arange(-radius, radius + 1, dtype=np.float32)
-    kernel = np.exp(-(x * x) / (2.0 * sigma * sigma), dtype=np.float32)
-    kernel_sum = float(kernel.sum())
-    if kernel_sum <= 0:
-        return np.array([1.0], dtype=np.float32)
-    return (kernel / kernel_sum).astype(np.float32)
-
-
-def _convolve_axis_edge(arr: np.ndarray, kernel: np.ndarray, axis: int) -> np.ndarray:
-    if kernel.size == 1:
-        return arr.astype(np.float32, copy=True)
-    pad = kernel.size // 2
-    pad_width = [(0, 0)] * arr.ndim
-    pad_width[axis] = (pad, pad)
-    padded = np.pad(arr, pad_width, mode="edge")
-    return np.apply_along_axis(
-        lambda values: np.convolve(values, kernel, mode="valid"),
-        axis,
-        padded,
-    ).astype(np.float32, copy=False)
-
-
 def _smooth_display_data(data: np.ndarray, sigma: float) -> np.ndarray:
     if sigma <= 0.0:
         return data
@@ -90,14 +67,13 @@ def _smooth_display_data(data: np.ndarray, sigma: float) -> np.ndarray:
     if not finite_mask.any():
         return data
 
-    kernel = _gaussian_kernel_1d(sigma)
     data_filled = np.where(finite_mask, data, 0.0).astype(np.float32, copy=False)
     weight = np.where(finite_mask, 1.0, 0.0).astype(np.float32, copy=False)
 
-    num = _convolve_axis_edge(data_filled, kernel, axis=1)
-    num = _convolve_axis_edge(num, kernel, axis=0)
-    den = _convolve_axis_edge(weight, kernel, axis=1)
-    den = _convolve_axis_edge(den, kernel, axis=0)
+    # truncate=3.0 matches the old kernel radius of ceil(3*sigma).
+    # mode='nearest' matches the old np.pad(..., mode='edge') boundary handling.
+    num = gaussian_filter(data_filled, sigma=sigma, mode='nearest', truncate=3.0)
+    den = gaussian_filter(weight, sigma=sigma, mode='nearest', truncate=3.0)
 
     smoothed = np.where(den > 1e-6, num / den, np.nan).astype(np.float32, copy=False)
     smoothed[~finite_mask] = np.nan
