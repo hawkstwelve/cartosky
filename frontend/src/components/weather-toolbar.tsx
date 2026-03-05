@@ -78,7 +78,7 @@ function ToolbarSelect(props: {
       <>
         {orderedGroups.map((g) => (
           <SelectGroup key={g}>
-            <SelectLabel className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 px-2 pt-1.5 pb-0.5">
+            <SelectLabel className="text-[10px] font-semibold uppercase tracking-wider text-white/60 px-2 pt-1.5 pb-0.5">
               {g}
             </SelectLabel>
             {groups.get(g)!.map((opt) => (
