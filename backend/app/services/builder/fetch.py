@@ -21,6 +21,8 @@ Usage
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import OrderedDict
+import hashlib
 import logging
 import os
 import re
@@ -46,12 +48,18 @@ ENV_HERBIE_RETRY_SLEEP = "TWF_HERBIE_RETRY_SLEEP_SECONDS"
 ENV_HERBIE_IDX_NEGATIVE_CACHE_INITIAL_TTL = "TWF_HERBIE_IDX_NEGATIVE_CACHE_INITIAL_TTL_SECONDS"
 ENV_HERBIE_IDX_NEGATIVE_CACHE_MAX_TTL = "TWF_HERBIE_IDX_NEGATIVE_CACHE_MAX_TTL_SECONDS"
 ENV_HERBIE_INVENTORY_CACHE_TTL = "TWF_HERBIE_INVENTORY_CACHE_TTL_SECONDS"
+ENV_HERBIE_FETCH_CACHE_MAX_ENTRIES = "TWF_HERBIE_FETCH_CACHE_MAX_ENTRIES"
+ENV_HERBIE_FETCH_CACHE_MAX_BYTES = "TWF_HERBIE_FETCH_CACHE_MAX_BYTES"
+ENV_HERBIE_FETCH_CACHE_MAX_CACHEABLE_BYTES = "TWF_HERBIE_FETCH_CACHE_MAX_CACHEABLE_BYTES"
 ENV_GRIB_DISK_CACHE_LOCK = "TWF_V3_GRIB_DISK_CACHE_LOCK"
 DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS = 8.0
 DEFAULT_GRIB_DISK_LOCK_POLL_SECONDS = 0.1
 DEFAULT_IDX_NEGATIVE_INITIAL_TTL_SECONDS = 60.0
 DEFAULT_IDX_NEGATIVE_MAX_TTL_SECONDS = 300.0
 DEFAULT_INVENTORY_CACHE_TTL_SECONDS = 600.0
+DEFAULT_FETCH_CACHE_MAX_ENTRIES = 256
+DEFAULT_FETCH_CACHE_MAX_BYTES = 64 * 1024 * 1024
+DEFAULT_FETCH_CACHE_MAX_CACHEABLE_BYTES = 4 * 1024 * 1024
 _GRIB_DISK_CACHE_LOCK_WAITS = 0
 
 _MISSING_VALUE_TAG_KEYS = (
@@ -102,6 +110,119 @@ class _InventorySearchResult:
     inventory: Any | None
     reason: str
     idx_key: str = ""
+
+
+@dataclass
+class _RangeFetchInflight:
+    event: threading.Event
+    waiters: int = 1
+    data: bytes | None = None
+    error: Exception | None = None
+
+
+class BundleFetchCache:
+    """Per-bundle cache for GRIB byte-range fetches."""
+
+    def __init__(
+        self,
+        *,
+        max_entries: int,
+        max_bytes: int,
+        max_cacheable_bytes: int,
+    ) -> None:
+        self.max_entries = max(1, int(max_entries))
+        self.max_bytes = max(1, int(max_bytes))
+        self.max_cacheable_bytes = max(1, int(max_cacheable_bytes))
+        self._entries: OrderedDict[str, bytes] = OrderedDict()
+        self._entries_bytes = 0
+        self._inflight: dict[str, _RangeFetchInflight] = {}
+        self._lock = threading.Lock()
+
+    def _evict_if_needed_locked(self, incoming_size: int) -> int:
+        evicted = 0
+        while self._entries and (
+            len(self._entries) >= self.max_entries
+            or self._entries_bytes + incoming_size > self.max_bytes
+        ):
+            _, removed = self._entries.popitem(last=False)
+            self._entries_bytes = max(0, self._entries_bytes - len(removed))
+            evicted += 1
+        return evicted
+
+    def get_or_fetch(
+        self,
+        key: str,
+        *,
+        fetcher: Any,
+        cacheable: bool,
+        expected_size: int | None = None,
+    ) -> tuple[bytes, str, int]:
+        with self._lock:
+            cached = self._entries.get(key)
+            if cached is not None:
+                self._entries.move_to_end(key)
+                return cached, "hit", 0
+            inflight = self._inflight.get(key)
+            if inflight is None:
+                inflight = _RangeFetchInflight(event=threading.Event(), waiters=1)
+                self._inflight[key] = inflight
+                leader = True
+            else:
+                inflight.waiters += 1
+                leader = False
+
+        if not leader:
+            inflight.event.wait()
+            with self._lock:
+                current = self._inflight.get(key)
+                if current is None:
+                    raise RuntimeError("range fetch inflight state missing")
+                current.waiters -= 1
+                payload = current.data
+                error = current.error
+                if current.waiters <= 0:
+                    self._inflight.pop(key, None)
+            if error is not None:
+                raise error
+            if payload is None:
+                raise RuntimeError("range fetch finished without payload")
+            return payload, "wait", 0
+
+        payload: bytes | None = None
+        error: Exception | None = None
+        evicted = 0
+        try:
+            payload = bytes(fetcher())
+            complete = expected_size is None or len(payload) == int(expected_size)
+            if (
+                cacheable
+                and complete
+                and len(payload) <= self.max_cacheable_bytes
+                and len(payload) <= self.max_bytes
+            ):
+                with self._lock:
+                    evicted = self._evict_if_needed_locked(len(payload))
+                    self._entries[key] = payload
+                    self._entries.move_to_end(key)
+                    self._entries_bytes += len(payload)
+                    while len(self._entries) > self.max_entries:
+                        _, removed = self._entries.popitem(last=False)
+                        self._entries_bytes = max(0, self._entries_bytes - len(removed))
+                        evicted += 1
+            return payload, "miss", evicted
+        except Exception as exc:  # pragma: no cover - surfaced to callers/tests
+            error = exc
+            raise
+        finally:
+            with self._lock:
+                current = self._inflight.get(key)
+                if current is not None:
+                    current.data = payload
+                    current.error = error
+                    current.event.set()
+                    current.waiters -= 1
+                    if current.waiters <= 0:
+                        self._inflight.pop(key, None)
 
 
 _IDX_NEGATIVE_CACHE: dict[tuple[str, str, str, int, str], _IdxNegativeCacheEntry] = {}
@@ -205,6 +326,17 @@ def _float_from_env(name: str, default: float, *, minimum: float = 0.0) -> float
     return max(minimum, parsed)
 
 
+def _int_from_env(name: str, default: int, *, minimum: int = 1) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return max(minimum, int(default))
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return max(minimum, int(default))
+    return max(minimum, parsed)
+
+
 def _idx_negative_initial_ttl_seconds() -> float:
     return _float_from_env(
         ENV_HERBIE_IDX_NEGATIVE_CACHE_INITIAL_TTL,
@@ -227,6 +359,40 @@ def _inventory_cache_ttl_seconds() -> float:
         ENV_HERBIE_INVENTORY_CACHE_TTL,
         DEFAULT_INVENTORY_CACHE_TTL_SECONDS,
         minimum=1.0,
+    )
+
+
+def _fetch_cache_max_entries() -> int:
+    return _int_from_env(
+        ENV_HERBIE_FETCH_CACHE_MAX_ENTRIES,
+        DEFAULT_FETCH_CACHE_MAX_ENTRIES,
+        minimum=1,
+    )
+
+
+def _fetch_cache_max_bytes() -> int:
+    return _int_from_env(
+        ENV_HERBIE_FETCH_CACHE_MAX_BYTES,
+        DEFAULT_FETCH_CACHE_MAX_BYTES,
+        minimum=1024,
+    )
+
+
+def _fetch_cache_max_cacheable_bytes() -> int:
+    max_bytes = _fetch_cache_max_bytes()
+    return _int_from_env(
+        ENV_HERBIE_FETCH_CACHE_MAX_CACHEABLE_BYTES,
+        min(DEFAULT_FETCH_CACHE_MAX_CACHEABLE_BYTES, max_bytes),
+        minimum=1024,
+    )
+
+
+def new_bundle_fetch_cache() -> BundleFetchCache:
+    """Create a byte-range cache intended for one bundle/build context."""
+    return BundleFetchCache(
+        max_entries=_fetch_cache_max_entries(),
+        max_bytes=_fetch_cache_max_bytes(),
+        max_cacheable_bytes=min(_fetch_cache_max_cacheable_bytes(), _fetch_cache_max_bytes()),
     )
 
 
@@ -271,6 +437,32 @@ def get_herbie_runtime_metrics_for_tests() -> dict[str, Any]:
 
 def _run_id_from_date(run_date: datetime) -> str:
     return run_date.strftime("%Y%m%d_%Hz")
+
+
+def _url_hash(url: str) -> str:
+    return hashlib.sha1(str(url).encode("utf-8")).hexdigest()[:12]
+
+
+def _range_cache_key(
+    *,
+    source: str,
+    model_id: str,
+    run_date: datetime,
+    fh: int,
+    url: str,
+    start_byte: int,
+    end_byte: int,
+) -> str:
+    return "|".join(
+        [
+            str(source).strip().lower() or "-",
+            str(model_id).strip().lower() or "-",
+            _run_id_from_date(run_date),
+            f"{int(fh):03d}",
+            str(url).strip(),
+            f"{int(start_byte)}-{int(end_byte)}",
+        ]
+    )
 
 
 def _idx_negative_key(
@@ -1161,24 +1353,16 @@ def _inventory_meta_from_herbie(
     return meta
 
 
-def _manual_subset_download_with_corrected_range(
+def _inventory_primary_byte_range(
     H: Any,
     *,
     search_pattern: str,
-    out_path: Path,
     model_id: str,
     run_date: datetime,
     product: str,
     fh: int,
     priority: str,
-) -> Path | None:
-    """Fallback subset fetch for edge-case index rows with duplicate start bytes.
-
-    Some upstream IDX inventories contain duplicate `start_byte` rows (for example
-    NAM 10m vector components). In those cases the first row can end up with an
-    invalid computed range in Herbie's subset path and produce 0-byte output.
-    This fallback computes `end_byte` from the next distinct start byte.
-    """
+) -> tuple[str, int, int] | None:
     try:
         inv_result = _inventory_search(
             H,
@@ -1192,29 +1376,13 @@ def _manual_subset_download_with_corrected_range(
         inv = inv_result.inventory
     except Exception:
         inv = None
-
     if inv is None or len(inv) == 0:
-        logger.warning(
-            "Manual subset fallback unavailable (%s fh%03d %s; priority=%s): no inventory rows",
-            model_id,
-            fh,
-            search_pattern,
-            priority,
-        )
         return None
 
     row = inv.iloc[0]
     try:
         start_byte = int(row["start_byte"])
-    except Exception as exc:
-        logger.warning(
-            "Manual subset fallback unavailable (%s fh%03d %s; priority=%s): invalid start_byte (%s)",
-            model_id,
-            fh,
-            search_pattern,
-            priority,
-            exc,
-        )
+    except Exception:
         return None
 
     end_byte: int | None = None
@@ -1241,106 +1409,237 @@ def _manual_subset_download_with_corrected_range(
             )
             full_idx = _inventory_index_dataframe(H, idx_key=idx_key) if idx_key else None
             if full_idx is None:
-                raise RuntimeError("full idx unavailable")
-            starts = (
-                full_idx["start_byte"]
-                .dropna()
-                .astype(int)
-            )
+                return None
+            starts = full_idx["start_byte"].dropna().astype(int)
             higher = starts[starts > start_byte]
             if len(higher) > 0:
                 candidate_end = int(higher.min() - 1)
                 if candidate_end >= start_byte:
                     end_byte = candidate_end
-        except Exception as exc:
-            logger.debug(
-                "Manual subset fallback full-index scan failed (%s fh%03d %s; priority=%s): %s",
-                model_id,
-                fh,
-                search_pattern,
-                priority,
-                exc,
-            )
+        except Exception:
+            end_byte = None
 
     if end_byte is None or end_byte < start_byte:
-        logger.warning(
-            "Manual subset fallback unavailable (%s fh%03d %s; priority=%s): invalid byte range start=%s end=%s",
-            model_id,
-            fh,
-            search_pattern,
-            priority,
-            start_byte,
-            end_byte,
-        )
         return None
 
     source = getattr(H, "grib", None)
     if source is None:
-        logger.warning(
-            "Manual subset fallback unavailable (%s fh%03d %s; priority=%s): no GRIB source URL/path",
-            model_id,
-            fh,
-            search_pattern,
-            priority,
+        return None
+    return str(source), start_byte, end_byte
+
+
+def _network_fetch_range_bytes(source_url: str, *, start_byte: int, end_byte: int) -> bytes:
+    headers = {"Range": f"bytes={start_byte}-{end_byte}"}
+    response = requests.get(source_url, headers=headers, timeout=45)
+    response.raise_for_status()
+    data = bytes(response.content)
+    response.close()
+    return data
+
+
+def _fetch_range_bytes(
+    *,
+    source: str,
+    source_url: str,
+    model_id: str,
+    run_date: datetime,
+    fh: int,
+    start_byte: int,
+    end_byte: int,
+    bundle_fetch_cache: BundleFetchCache | None,
+) -> bytes:
+    total_start = time.monotonic()
+    lookup_start = time.monotonic()
+    cache_key = _range_cache_key(
+        source=source,
+        model_id=model_id,
+        run_date=run_date,
+        fh=fh,
+        url=source_url,
+        start_byte=start_byte,
+        end_byte=end_byte,
+    )
+    _metric_observe_ms("cache_lookup_ms", (time.monotonic() - lookup_start) * 1000.0)
+
+    def _fetch_from_network() -> bytes:
+        http_start = time.monotonic()
+        payload = _network_fetch_range_bytes(
+            source_url,
+            start_byte=start_byte,
+            end_byte=end_byte,
         )
+        _metric_observe_ms("fetch_http_ms", (time.monotonic() - http_start) * 1000.0)
+        return payload
+
+    if bundle_fetch_cache is None:
+        _metric_increment("fetch_cache_miss")
+        logger.info(
+            "FETCH_CACHE event=miss source=%s model=%s run=%s fh=%03d range=%d-%d url_hash=%s reason=no_bundle_cache",
+            source,
+            model_id,
+            _run_id_from_date(run_date),
+            int(fh),
+            int(start_byte),
+            int(end_byte),
+            _url_hash(source_url),
+        )
+        payload = _fetch_from_network()
+        _metric_observe_ms("fetch_total_ms", (time.monotonic() - total_start) * 1000.0)
+        return payload
+
+    expected_size = max(0, int(end_byte) - int(start_byte) + 1)
+    cacheable = expected_size <= max(1, int(bundle_fetch_cache.max_cacheable_bytes))
+    if not cacheable:
+        _metric_increment("fetch_cache_skip_too_large")
+    payload, event, evicted = bundle_fetch_cache.get_or_fetch(
+        cache_key,
+        fetcher=_fetch_from_network,
+        cacheable=cacheable,
+        expected_size=expected_size if expected_size > 0 else None,
+    )
+    if event in {"hit", "wait"}:
+        _metric_increment("fetch_cache_hit")
+        logger.info(
+            "FETCH_CACHE event=hit source=%s model=%s run=%s fh=%03d range=%d-%d url_hash=%s mode=%s",
+            source,
+            model_id,
+            _run_id_from_date(run_date),
+            int(fh),
+            int(start_byte),
+            int(end_byte),
+            _url_hash(source_url),
+            event,
+        )
+    else:
+        _metric_increment("fetch_cache_miss")
+        logger.info(
+            "FETCH_CACHE event=miss source=%s model=%s run=%s fh=%03d range=%d-%d url_hash=%s cacheable=%s",
+            source,
+            model_id,
+            _run_id_from_date(run_date),
+            int(fh),
+            int(start_byte),
+            int(end_byte),
+            _url_hash(source_url),
+            "true" if cacheable else "false",
+        )
+        if cacheable:
+            if (
+                len(payload) == expected_size
+                and len(payload) <= int(bundle_fetch_cache.max_cacheable_bytes)
+                and len(payload) <= int(bundle_fetch_cache.max_bytes)
+            ):
+                _metric_increment("fetch_cache_store")
+            else:
+                _metric_increment("fetch_cache_skip_too_large")
+        if evicted > 0:
+            _metric_increment("fetch_cache_evict", evicted)
+    _metric_observe_ms("fetch_total_ms", (time.monotonic() - total_start) * 1000.0)
+    return payload
+
+
+def _download_subset_with_inventory_byte_range(
+    H: Any,
+    *,
+    search_pattern: str,
+    out_path: Path,
+    model_id: str,
+    run_date: datetime,
+    product: str,
+    fh: int,
+    priority: str,
+    bundle_fetch_cache: BundleFetchCache | None,
+) -> Path | None:
+    primary_range = _inventory_primary_byte_range(
+        H,
+        search_pattern=search_pattern,
+        model_id=model_id,
+        run_date=run_date,
+        product=product,
+        fh=fh,
+        priority=priority,
+    )
+    if primary_range is None:
         return None
 
+    source_url, start_byte, end_byte = primary_range
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        source_str = str(source)
-        if source_str.startswith(("http://", "https://")):
-            headers = {"Range": f"bytes={start_byte}-{end_byte}"}
-            response = requests.get(source_str, headers=headers, timeout=45)
-            response.raise_for_status()
-            data = response.content
-            response.close()
+        if source_url.startswith(("http://", "https://")):
+            payload = _fetch_range_bytes(
+                source=priority,
+                source_url=source_url,
+                model_id=model_id,
+                run_date=run_date,
+                fh=fh,
+                start_byte=start_byte,
+                end_byte=end_byte,
+                bundle_fetch_cache=bundle_fetch_cache,
+            )
         else:
-            with open(source_str, "rb") as src:
+            with open(source_url, "rb") as src:
                 src.seek(start_byte)
-                data = src.read(end_byte - start_byte + 1)
-        if not data:
-            logger.warning(
-                "Manual subset fallback produced empty payload (%s fh%03d %s; priority=%s; bytes=%d-%d)",
-                model_id,
-                fh,
-                search_pattern,
-                priority,
-                start_byte,
-                end_byte,
-            )
+                payload = src.read(end_byte - start_byte + 1)
+
+        if not payload:
             return None
-        out_path.write_bytes(data)
-        if not out_path.is_file() or out_path.stat().st_size <= 0:
-            logger.warning(
-                "Manual subset fallback wrote empty file (%s fh%03d %s; priority=%s; path=%s)",
-                model_id,
-                fh,
-                search_pattern,
-                priority,
-                out_path,
-            )
+        out_path.write_bytes(payload)
+        subset_ok, _subset_size = _subset_file_status(out_path)
+        if not subset_ok:
             return None
-        logger.info(
-            "Downloaded GRIB via manual byte-range fallback: %s (%s fh%03d %s; priority=%s; bytes=%d-%d)",
-            out_path.name,
-            model_id,
-            fh,
-            search_pattern,
-            priority,
-            start_byte,
-            end_byte,
-        )
         return out_path
-    except Exception as exc:
+    except Exception:
+        return None
+
+
+def _manual_subset_download_with_corrected_range(
+    H: Any,
+    *,
+    search_pattern: str,
+    out_path: Path,
+    model_id: str,
+    run_date: datetime,
+    product: str,
+    fh: int,
+    priority: str,
+    bundle_fetch_cache: BundleFetchCache | None = None,
+) -> Path | None:
+    """Fallback subset fetch for edge-case index rows with duplicate start bytes.
+
+    Some upstream IDX inventories contain duplicate `start_byte` rows (for example
+    NAM 10m vector components). In those cases the first row can end up with an
+    invalid computed range in Herbie's subset path and produce 0-byte output.
+    This fallback computes `end_byte` from the next distinct start byte.
+    """
+    subset_path = _download_subset_with_inventory_byte_range(
+        H,
+        search_pattern=search_pattern,
+        out_path=out_path,
+        model_id=model_id,
+        run_date=run_date,
+        product=product,
+        fh=fh,
+        priority=priority,
+        bundle_fetch_cache=bundle_fetch_cache,
+    )
+    if subset_path is None:
         logger.warning(
-            "Manual subset fallback download failed (%s fh%03d %s; priority=%s): %s",
+            "Manual subset fallback download failed (%s fh%03d %s; priority=%s): inventory byte-range unavailable",
             model_id,
             fh,
             search_pattern,
             priority,
-            exc,
         )
         return None
+    logger.info(
+        "Downloaded GRIB via manual byte-range fallback: %s (%s fh%03d %s; priority=%s)",
+        subset_path.name,
+        model_id,
+        fh,
+        search_pattern,
+        priority,
+    )
+    return subset_path
 
 
 def fetch_variable(
@@ -1351,6 +1650,7 @@ def fetch_variable(
     fh: int,
     *,
     herbie_kwargs: dict[str, Any] | None = None,
+    bundle_fetch_cache: BundleFetchCache | None = None,
     return_meta: bool = False,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]:
     """Fetch a single GRIB variable via Herbie and return its data.
@@ -1511,7 +1811,19 @@ def fetch_variable(
                             selected_meta = attempt_meta
                             break
 
-                        subset_path = H.download(search_pattern, errors="raise", overwrite=False)
+                        subset_path = _download_subset_with_inventory_byte_range(
+                            H,
+                            search_pattern=search_pattern,
+                            out_path=subset_hint,
+                            model_id=model_id,
+                            run_date=run_date,
+                            product=product,
+                            fh=fh,
+                            priority=priority,
+                            bundle_fetch_cache=bundle_fetch_cache,
+                        )
+                        if subset_path is None:
+                            subset_path = H.download(search_pattern, errors="raise", overwrite=False)
                         if subset_path is None:
                             saw_missing_subset_file = True
                             logger.warning(
@@ -1550,6 +1862,7 @@ def fetch_variable(
                                 product=product,
                                 fh=fh,
                                 priority=priority,
+                                bundle_fetch_cache=bundle_fetch_cache,
                             )
                             if manual_subset is not None:
                                 grib_path = manual_subset
@@ -1578,7 +1891,37 @@ def fetch_variable(
                         selected_meta = attempt_meta
                         break
                 else:
-                    subset_path = H.download(search_pattern, errors="raise", overwrite=True)
+                    subset_target: Path | None = None
+                    try:
+                        subset_target = Path(H.get_localFilePath(search_pattern))
+                    except Exception:
+                        subset_target = None
+                    subset_path = _download_subset_with_inventory_byte_range(
+                        H,
+                        search_pattern=search_pattern,
+                        out_path=(
+                            subset_target
+                            if subset_target is not None
+                            else Path("/tmp")
+                            / (
+                                "twf_subset_"
+                                + hashlib.sha1(
+                                    f"{model_id}|{product}|{_run_id_from_date(run_date)}|{priority}|{fh}|{search_pattern}".encode(
+                                        "utf-8"
+                                    )
+                                ).hexdigest()
+                                + ".grib2"
+                            )
+                        ),
+                        model_id=model_id,
+                        run_date=run_date,
+                        product=product,
+                        fh=fh,
+                        priority=priority,
+                        bundle_fetch_cache=bundle_fetch_cache,
+                    )
+                    if subset_path is None:
+                        subset_path = H.download(search_pattern, errors="raise", overwrite=True)
                     if subset_path is None:
                         saw_missing_subset_file = True
                         logger.warning(
@@ -1618,6 +1961,7 @@ def fetch_variable(
                             product=product,
                             fh=fh,
                             priority=priority,
+                            bundle_fetch_cache=bundle_fetch_cache,
                         )
                         if manual_subset is not None:
                             grib_path = manual_subset

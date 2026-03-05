@@ -67,6 +67,7 @@ class FetchContext:
     stats: dict[str, int] = field(default_factory=lambda: {"hits": 0, "misses": 0})
     warp_stats: dict[str, int] = field(default_factory=lambda: {"hits": 0, "misses": 0})
     coverage: str | None = None
+    bundle_fetch_cache: Any | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
 
@@ -797,12 +798,16 @@ def _fetch_component(
     last_exc: Exception | None = None
     for search_pattern in selectors.search:
         try:
+            fetch_kwargs: dict[str, Any] = {}
+            if ctx is not None and getattr(ctx, "bundle_fetch_cache", None) is not None:
+                fetch_kwargs["bundle_fetch_cache"] = getattr(ctx, "bundle_fetch_cache")
             fetch_result = fetch_variable(
                 model_id=model_id,
                 product=product,
                 search_pattern=search_pattern,
                 run_date=run_date,
                 fh=fh,
+                **fetch_kwargs,
                 return_meta=True,
             )
             data, crs, transform, meta = fetch_result
@@ -1187,12 +1192,16 @@ def _resolve_apcp_step_data(
 
         if not apcp_fetch_resolved and (exact_guess_used or inventory_selected):
             try:
+                fetch_kwargs: dict[str, Any] = {}
+                if ctx is not None and getattr(ctx, "bundle_fetch_cache", None) is not None:
+                    fetch_kwargs["bundle_fetch_cache"] = getattr(ctx, "bundle_fetch_cache")
                 selected_data, selected_crs, selected_transform, selected_meta = fetch_variable(
                     model_id=model_id,
                     product=resolved_apcp_product,
                     search_pattern=apcp_search_pattern,
                     run_date=run_date,
                     fh=step_fh,
+                    **fetch_kwargs,
                     return_meta=True,
                 )
                 selected_data = selected_data.astype(np.float32, copy=False)

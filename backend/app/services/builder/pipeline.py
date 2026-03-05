@@ -48,6 +48,7 @@ from app.services.builder.fetch import (
     HerbieTransientUnavailableError,
     convert_units,
     fetch_variable,
+    new_bundle_fetch_cache,
     product_hour_has_any_idx,
 )
 from app.services.colormaps import get_color_map_spec
@@ -800,6 +801,8 @@ def build_frame(
     run_id = _run_id_from_date(run_date)
     fh_str = f"fh{fh:03d}"
     local_fetch_ctx = fetch_ctx or FetchContext(coverage=region)
+    if getattr(local_fetch_ctx, "bundle_fetch_cache", None) is None:
+        local_fetch_ctx.bundle_fetch_cache = new_bundle_fetch_cache()
     fetch_stats_logged = False
 
     def _log_fetch_cache_stats_once() -> None:
@@ -931,6 +934,7 @@ def build_frame(
                         search_pattern=search_pattern,
                         run_date=run_date,
                         fh=fh,
+                        bundle_fetch_cache=getattr(local_fetch_ctx, "bundle_fetch_cache", None),
                     )
                     if pattern_idx > 1:
                         logger.info(
