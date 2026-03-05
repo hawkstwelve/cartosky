@@ -125,8 +125,19 @@ def _prepare_display_data_for_colorize(
 
 
 # ---------------------------------------------------------------------------
-# Gate 1: gdalinfo structural validation
+# Gate 1: structural validation (in-process via rasterio)
 # ---------------------------------------------------------------------------
+
+# Map GDAL type names (used by callers) to numpy/rasterio dtype strings.
+_GDAL_DTYPE_TO_RASTERIO: dict[str, str] = {
+    "Byte": "uint8",
+    "UInt16": "uint16",
+    "Int16": "int16",
+    "UInt32": "uint32",
+    "Int32": "int32",
+    "Float32": "float32",
+    "Float64": "float64",
+}
 
 
 def validate_cog(
@@ -137,64 +148,50 @@ def validate_cog(
     region: str,
     grid_meters: float,
 ) -> bool:
-    """Validate a COG's structure via gdalinfo -json.
+    """Validate a COG's structure using rasterio (in-process).
 
     Checks band count, band type, CRS, internal tiling, overview presence,
-    and pixel size.  Returns True if all checks pass, False otherwise.
-    Logs specific failures.
+    pixel size, and COG layout metadata.  Returns True if all checks pass.
     """
     try:
-        gdalinfo_bin = _find_gdalinfo()
-        result = subprocess.run(
-            [gdalinfo_bin, "-json", str(path)],
-            capture_output=True, text=True, check=True,
-            timeout=30,
-        )
-        info = json.loads(result.stdout)
-    except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError) as exc:
-        logger.error("gdalinfo failed for %s: %s", path, exc)
+        ds = rasterio.open(path)
+    except Exception as exc:
+        logger.error("Cannot open %s: %s", path, exc)
         return False
 
     ok = True
 
-    # Band count
-    bands = info.get("bands", [])
-    if len(bands) != expected_bands:
-        logger.error("Band count: expected %d, got %d (%s)", expected_bands, len(bands), path)
-        ok = False
-
-    # Band dtype
-    if bands:
-        actual_dtype = bands[0].get("type", "")
-        if actual_dtype != expected_dtype:
-            logger.error("Band type: expected %s, got %s (%s)", expected_dtype, actual_dtype, path)
+    try:
+        # Band count
+        if ds.count != expected_bands:
+            logger.error("Band count: expected %d, got %d (%s)", expected_bands, ds.count, path)
             ok = False
 
-    # CRS — must be EPSG:3857
-    crs_info = info.get("coordinateSystem", {}).get("wkt", "")
-    if "3857" not in crs_info:
-        logger.error("CRS does not contain EPSG:3857 (%s)", path)
-        ok = False
-
-    # Internal tiling (512×512)
-    if bands:
-        block = bands[0].get("block", [])
-        if block != [512, 512]:
-            logger.error("Block size: expected [512, 512], got %s (%s)", block, path)
+        # Band dtype
+        expected_rio_dtype = _GDAL_DTYPE_TO_RASTERIO.get(expected_dtype, expected_dtype.lower())
+        if ds.dtypes[0] != expected_rio_dtype:
+            logger.error("Band type: expected %s, got %s (%s)", expected_dtype, ds.dtypes[0], path)
             ok = False
 
-    # Overviews present
-    if bands:
-        overviews = bands[0].get("overviews", [])
-        if not overviews:
+        # CRS — must be EPSG:3857
+        if ds.crs is None or ds.crs.to_epsg() != 3857:
+            logger.error("CRS does not match EPSG:3857 (%s)", path)
+            ok = False
+
+        # Internal tiling (512×512)
+        block_shapes = ds.block_shapes
+        if block_shapes and block_shapes[0] != (512, 512):
+            logger.error("Block size: expected (512, 512), got %s (%s)", block_shapes[0], path)
+            ok = False
+
+        # Overviews present
+        if not ds.overviews(1):
             logger.error("No overviews found (%s)", path)
             ok = False
 
-    # Pixel size matches grid_meters (±0.1m tolerance)
-    geo_transform = info.get("geoTransform", [])
-    if len(geo_transform) >= 6:
-        pixel_x = abs(geo_transform[1])
-        pixel_y = abs(geo_transform[5])
+        # Pixel size matches grid_meters (±0.1m tolerance)
+        pixel_x = abs(ds.transform.a)
+        pixel_y = abs(ds.transform.e)
         if abs(pixel_x - grid_meters) > 0.1 or abs(pixel_y - grid_meters) > 0.1:
             logger.error(
                 "Pixel size: expected %.1fm, got (%.1f, %.1f) (%s)",
@@ -202,20 +199,18 @@ def validate_cog(
             )
             ok = False
 
-    # COG layout metadata
-    layout = info.get("metadata", {}).get("IMAGE_STRUCTURE", {}).get("LAYOUT", "")
-    if layout != "COG":
-        logger.error("Layout: expected 'COG', got %r (%s)", layout, path)
-        ok = False
+        # COG layout metadata
+        image_structure = ds.tags(ns="IMAGE_STRUCTURE")
+        layout = image_structure.get("LAYOUT", "")
+        if layout != "COG":
+            logger.error("Layout: expected 'COG', got %r (%s)", layout, path)
+            ok = False
+    finally:
+        ds.close()
 
     if ok:
         logger.info("Gate 1 PASS: %s", path.name)
     return ok
-
-
-def _find_gdalinfo() -> str:
-    """Locate gdalinfo via the same lazy resolver used for other GDAL tools."""
-    return _gdal("gdalinfo")
 
 
 # ---------------------------------------------------------------------------
