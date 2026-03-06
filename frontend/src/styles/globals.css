@@ -43,6 +43,8 @@
   }
 
   .map-anchor-marker {
+    display: inline-block;
+    width: max-content;
     position: relative;
     overflow: visible;
     pointer-events: none;
