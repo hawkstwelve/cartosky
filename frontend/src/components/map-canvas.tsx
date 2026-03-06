@@ -78,6 +78,7 @@ const PREFETCH_TILE_EVENT_BUDGET = 1;
 const PREFETCH_READY_TIMEOUT_MS = 8000;
 const WEBP_TO_TILE_STABLE_MS = 150;
 const WEBP_TO_TILE_CROSSFADE_MS = 200;
+const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
 const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
 const STATE_BOUNDARY_SOURCE_ID = "twf-boundaries";
@@ -664,6 +665,8 @@ export function MapCanvas({
   const previousLoopActiveRef = useRef(loopActive);
   const isLoopToTileTransitioningRef = useRef(false);
   const anchorMarkersRef = useRef<Map<string, AnchorMarkerRecord>>(new Map());
+  const isHoveringAnchorRef = useRef(false);
+  const anchorHoverLeaveTimeoutRef = useRef<number | null>(null);
   const onMapReadyRef = useRef(onMapReady);
   onMapReadyRef.current = onMapReady;
   const onViewportChangeRef = useRef(onViewportChange);
@@ -790,6 +793,11 @@ export function MapCanvas({
   }, []);
 
   const clearAnchorMarkers = useCallback(() => {
+    if (anchorHoverLeaveTimeoutRef.current !== null) {
+      window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
+      anchorHoverLeaveTimeoutRef.current = null;
+    }
+    isHoveringAnchorRef.current = false;
     setAnchorTooltip(null);
     for (const record of anchorMarkersRef.current.values()) {
       record.marker.remove();
@@ -850,13 +858,43 @@ export function MapCanvas({
         chip.textContent = activeMarker.label;
         chip.setAttribute("aria-label", activeMarker.cityName);
         chip.addEventListener("mouseenter", () => {
+          if (anchorHoverLeaveTimeoutRef.current !== null) {
+            window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
+            anchorHoverLeaveTimeoutRef.current = null;
+          }
+          isHoveringAnchorRef.current = true;
+          onMapHoverEndRef.current?.();
           showAnchorTooltip(map, activeMarker.cityName, activeMarker.lngLat);
         });
-        chip.addEventListener("mouseleave", hideAnchorTooltip);
+        chip.addEventListener("mouseleave", () => {
+          hideAnchorTooltip();
+          if (anchorHoverLeaveTimeoutRef.current !== null) {
+            window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
+          }
+          anchorHoverLeaveTimeoutRef.current = window.setTimeout(() => {
+            isHoveringAnchorRef.current = false;
+            anchorHoverLeaveTimeoutRef.current = null;
+          }, ANCHOR_HOVER_RESUME_DELAY_MS);
+        });
         chip.addEventListener("focus", () => {
+          if (anchorHoverLeaveTimeoutRef.current !== null) {
+            window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
+            anchorHoverLeaveTimeoutRef.current = null;
+          }
+          isHoveringAnchorRef.current = true;
+          onMapHoverEndRef.current?.();
           showAnchorTooltip(map, activeMarker.cityName, activeMarker.lngLat);
         });
-        chip.addEventListener("blur", hideAnchorTooltip);
+        chip.addEventListener("blur", () => {
+          hideAnchorTooltip();
+          if (anchorHoverLeaveTimeoutRef.current !== null) {
+            window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
+          }
+          anchorHoverLeaveTimeoutRef.current = window.setTimeout(() => {
+            isHoveringAnchorRef.current = false;
+            anchorHoverLeaveTimeoutRef.current = null;
+          }, ANCHOR_HOVER_RESUME_DELAY_MS);
+        });
 
         element.appendChild(chip);
 
@@ -2033,6 +2071,9 @@ export function MapCanvas({
     canvas.style.cursor = "";
 
     const handleMove = (e: maplibregl.MapMouseEvent) => {
+      if (isHoveringAnchorRef.current) {
+        return;
+      }
       const { lng, lat } = e.lngLat;
       const { x, y } = e.point;
       canvas.style.cursor = onMapHoverRef.current ? "crosshair" : "";
@@ -2051,6 +2092,11 @@ export function MapCanvas({
       map.off("mousemove", handleMove);
       canvas.removeEventListener("mouseleave", handleLeave);
       canvas.style.cursor = "";
+      if (anchorHoverLeaveTimeoutRef.current !== null) {
+        window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
+        anchorHoverLeaveTimeoutRef.current = null;
+      }
+      isHoveringAnchorRef.current = false;
     };
   }, [isLoaded]);
 
