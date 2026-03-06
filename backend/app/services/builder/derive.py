@@ -2242,14 +2242,15 @@ def _derive_snowfall_kuchera_total_cumulative(
         subset_valid_mask: np.ndarray | None = None
         subset_crs: rasterio.crs.CRS | None = None
         subset_transform: rasterio.transform.Affine | None = None
-        first_step_cumulative = False
+        requires_full_history_rebuild = False
+        rebuild_trigger_step_fh: int | None = None
         steps_processed = 0
 
         for local_step_index, step_fh in enumerate(subset_step_fhs):
             step_apcp_data, apcp_valid, step_crs, step_transform, step_cumulative_mode = _resolve_apcp_step_data(
                 step_fh=step_fh,
-                step_index=local_step_index,
-                step_fhs=subset_step_fhs,
+                step_index=start_index + local_step_index,
+                step_fhs=step_fhs,
                 model_id=model_id,
                 product=product,
                 run_date=run_date,
@@ -2268,8 +2269,12 @@ def _derive_snowfall_kuchera_total_cumulative(
             if int(step_fh) == int(fh):
                 current_step_fetch_counts["apcp"] = current_step_fetch_counts.get("apcp", 0) + 1
 
-            if local_step_index == 0 and step_cumulative_mode and start_index > 0:
-                first_step_cumulative = True
+            # Incremental reuse only has APCP differencing state for the current
+            # subset. Any 0-N cumulative window within that subset needs a full
+            # history rebuild to avoid subtracting against a stale baseline.
+            if step_cumulative_mode and start_index > 0:
+                requires_full_history_rebuild = True
+                rebuild_trigger_step_fh = int(step_fh)
                 break
 
             assert apcp_valid is not None
@@ -2428,9 +2433,19 @@ def _derive_snowfall_kuchera_total_cumulative(
                 subset_cumulative = (subset_cumulative + contribution).astype(np.float32, copy=False)
                 subset_valid_mask = np.logical_or(subset_valid_mask, step_valid)
 
-        if first_step_cumulative and start_index > 0:
-            start_index -= 1
-            reused_prev_cumulative = reused_prev_cumulative and start_index == len(step_fhs) - 1
+        if requires_full_history_rebuild and start_index > 0:
+            logger.info(
+                "kuchera_incremental cumulative_apcp_requires_full_rebuild fh=%03d step_fh=%03d start_index=%d",
+                fh,
+                rebuild_trigger_step_fh if rebuild_trigger_step_fh is not None else -1,
+                start_index,
+            )
+            start_index = 0
+            base_cumulative = None
+            base_crs = None
+            base_transform = None
+            base_fh = None
+            reused_prev_cumulative = False
             continue
 
         if subset_cumulative is None or subset_valid_mask is None or subset_crs is None or subset_transform is None:
