@@ -600,7 +600,7 @@ function styleFor(
         layout: {
           visibility: pointLabelsEnabled ? "visible" : "none",
           "text-field": ["coalesce", ["get", "label"], ""],
-          "text-font": ["Noto Sans Regular", "Open Sans Regular"],
+          "text-font": ["Open Sans Regular"],
           "text-size": ["interpolate", ["linear"], ["zoom"], 3, 9.5, 5.5, 10.5, 8, 11.5],
           "text-anchor": "top",
           "text-offset": [0, 0.9],
