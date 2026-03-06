@@ -272,12 +272,14 @@ type AnchorMarkerRecord = {
   marker: maplibregl.Marker;
   element: HTMLDivElement;
   chip: HTMLDivElement;
+  tooltip: HTMLDivElement;
 };
 
 type ActiveAnchorMarker = {
   id: string;
   lngLat: [number, number];
   label: string;
+  cityName: string;
 };
 
 function getActiveAnchorMarkers(
@@ -295,14 +297,16 @@ function getActiveAnchorMarkers(
     const lng = Number(coordinates?.[0]);
     const lat = Number(coordinates?.[1]);
     const label = typeof feature.properties?.label === "string" ? feature.properties.label.trim() : "";
+    const cityName = typeof feature.properties?.city === "string" ? feature.properties.city.trim() : "";
     const active = feature.properties?.active === true;
-    if (!id || !active || !label || !Number.isFinite(lng) || !Number.isFinite(lat)) {
+    if (!id || !active || !label || !cityName || !Number.isFinite(lng) || !Number.isFinite(lat)) {
       continue;
     }
     activeMarkers.push({
       id,
       lngLat: [lng, lat],
       label,
+      cityName,
     });
   }
 
@@ -810,6 +814,10 @@ export function MapCanvas({
           if (existing.chip.textContent !== activeMarker.label) {
             existing.chip.textContent = activeMarker.label;
           }
+          if (existing.tooltip.textContent !== activeMarker.cityName) {
+            existing.tooltip.textContent = activeMarker.cityName;
+            existing.chip.setAttribute("aria-label", activeMarker.cityName);
+          }
           existing.marker.setLngLat(activeMarker.lngLat);
           continue;
         }
@@ -821,7 +829,14 @@ export function MapCanvas({
         const chip = document.createElement("div");
         chip.className = "map-anchor-marker__chip";
         chip.textContent = activeMarker.label;
+        chip.setAttribute("aria-label", activeMarker.cityName);
+
+        const tooltip = document.createElement("div");
+        tooltip.className = "map-anchor-marker__tooltip glass";
+        tooltip.textContent = activeMarker.cityName;
+
         element.appendChild(chip);
+        element.appendChild(tooltip);
 
         const marker = new maplibregl.Marker({
           element,
@@ -835,6 +850,7 @@ export function MapCanvas({
           marker,
           element,
           chip,
+          tooltip,
         });
       }
     },

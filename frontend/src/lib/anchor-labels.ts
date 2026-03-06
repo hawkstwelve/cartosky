@@ -3,6 +3,7 @@ import type { Feature, FeatureCollection, Point } from "geojson";
 export type AnchorFeatureProperties = {
   st?: string | null;
   state?: string | null;
+  city?: string | null;
   label?: string;
   active?: boolean;
   value?: number | null;
@@ -92,6 +93,7 @@ function buildAnchorFeatureProperties(
   return {
     st: readAnchorString(sourceProperties.st),
     state: readAnchorString(sourceProperties.state),
+    city: readAnchorString(sourceProperties.city),
     label: typeof overrides?.label === "string" ? overrides.label : "",
     active: overrides?.active === true,
     value: readAnchorNumber(overrides?.value),

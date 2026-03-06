@@ -6,7 +6,8 @@
       "id": "AL_1",
       "properties": {
         "st": "AL",
-        "state": "Alabama"
+        "state": "Alabama",
+        "city": "Birmingham"
       },
       "geometry": {
         "type": "Point",
@@ -21,7 +22,8 @@
       "id": "AR_1",
       "properties": {
         "st": "AR",
-        "state": "Arkansas"
+        "state": "Arkansas",
+        "city": "Little Rock"
       },
       "geometry": {
         "type": "Point",
@@ -36,7 +38,8 @@
       "id": "AZ_1",
       "properties": {
         "st": "AZ",
-        "state": "Arizona"
+        "state": "Arizona",
+        "city": "Phoenix"
       },
       "geometry": {
         "type": "Point",
@@ -51,7 +54,8 @@
       "id": "AZ_2",
       "properties": {
         "st": "AZ",
-        "state": "Arizona"
+        "state": "Arizona",
+        "city": "Tucson"
       },
       "geometry": {
         "type": "Point",
@@ -66,7 +70,8 @@
       "id": "CA_1",
       "properties": {
         "st": "CA",
-        "state": "California"
+        "state": "California",
+        "city": "Los Angeles"
       },
       "geometry": {
         "type": "Point",
@@ -81,7 +86,8 @@
       "id": "CA_2",
       "properties": {
         "st": "CA",
-        "state": "California"
+        "state": "California",
+        "city": "San Francisco"
       },
       "geometry": {
         "type": "Point",
@@ -96,7 +102,8 @@
       "id": "CO_1",
       "properties": {
         "st": "CO",
-        "state": "Colorado"
+        "state": "Colorado",
+        "city": "Denver"
       },
       "geometry": {
         "type": "Point",
@@ -111,7 +118,8 @@
       "id": "CT_1",
       "properties": {
         "st": "CT",
-        "state": "Connecticut"
+        "state": "Connecticut",
+        "city": "Hartford"
       },
       "geometry": {
         "type": "Point",
@@ -126,7 +134,8 @@
       "id": "DC_1",
       "properties": {
         "st": "DC",
-        "state": "District of Columbia"
+        "state": "District of Columbia",
+        "city": "Washington"
       },
       "geometry": {
         "type": "Point",
@@ -141,7 +150,8 @@
       "id": "DE_1",
       "properties": {
         "st": "DE",
-        "state": "Delaware"
+        "state": "Delaware",
+        "city": "Wilmington"
       },
       "geometry": {
         "type": "Point",
@@ -156,7 +166,8 @@
       "id": "FL_1",
       "properties": {
         "st": "FL",
-        "state": "Florida"
+        "state": "Florida",
+        "city": "Miami"
       },
       "geometry": {
         "type": "Point",
@@ -171,7 +182,8 @@
       "id": "FL_2",
       "properties": {
         "st": "FL",
-        "state": "Florida"
+        "state": "Florida",
+        "city": "Tampa"
       },
       "geometry": {
         "type": "Point",
@@ -186,7 +198,8 @@
       "id": "GA_1",
       "properties": {
         "st": "GA",
-        "state": "Georgia"
+        "state": "Georgia",
+        "city": "Atlanta"
       },
       "geometry": {
         "type": "Point",
@@ -201,7 +214,8 @@
       "id": "GA_2",
       "properties": {
         "st": "GA",
-        "state": "Georgia"
+        "state": "Georgia",
+        "city": "Savannah"
       },
       "geometry": {
         "type": "Point",
@@ -216,7 +230,8 @@
       "id": "IA_1",
       "properties": {
         "st": "IA",
-        "state": "Iowa"
+        "state": "Iowa",
+        "city": "Des Moines"
       },
       "geometry": {
         "type": "Point",
@@ -231,7 +246,8 @@
       "id": "ID_1",
       "properties": {
         "st": "ID",
-        "state": "Idaho"
+        "state": "Idaho",
+        "city": "Boise"
       },
       "geometry": {
         "type": "Point",
@@ -246,7 +262,8 @@
       "id": "IL_1",
       "properties": {
         "st": "IL",
-        "state": "Illinois"
+        "state": "Illinois",
+        "city": "Chicago"
       },
       "geometry": {
         "type": "Point",
@@ -261,7 +278,8 @@
       "id": "IN_1",
       "properties": {
         "st": "IN",
-        "state": "Indiana"
+        "state": "Indiana",
+        "city": "Indianapolis"
       },
       "geometry": {
         "type": "Point",
@@ -276,7 +294,8 @@
       "id": "KS_1",
       "properties": {
         "st": "KS",
-        "state": "Kansas"
+        "state": "Kansas",
+        "city": "Wichita"
       },
       "geometry": {
         "type": "Point",
@@ -291,7 +310,8 @@
       "id": "KY_1",
       "properties": {
         "st": "KY",
-        "state": "Kentucky"
+        "state": "Kentucky",
+        "city": "Louisville"
       },
       "geometry": {
         "type": "Point",
@@ -306,7 +326,8 @@
       "id": "LA_1",
       "properties": {
         "st": "LA",
-        "state": "Louisiana"
+        "state": "Louisiana",
+        "city": "New Orleans"
       },
       "geometry": {
         "type": "Point",
@@ -321,7 +342,8 @@
       "id": "MA_1",
       "properties": {
         "st": "MA",
-        "state": "Massachusetts"
+        "state": "Massachusetts",
+        "city": "Boston"
       },
       "geometry": {
         "type": "Point",
@@ -336,7 +358,8 @@
       "id": "MD_1",
       "properties": {
         "st": "MD",
-        "state": "Maryland"
+        "state": "Maryland",
+        "city": "Baltimore"
       },
       "geometry": {
         "type": "Point",
@@ -351,7 +374,8 @@
       "id": "ME_1",
       "properties": {
         "st": "ME",
-        "state": "Maine"
+        "state": "Maine",
+        "city": "Portland"
       },
       "geometry": {
         "type": "Point",
@@ -366,7 +390,8 @@
       "id": "MI_1",
       "properties": {
         "st": "MI",
-        "state": "Michigan"
+        "state": "Michigan",
+        "city": "Detroit"
       },
       "geometry": {
         "type": "Point",
@@ -381,7 +406,8 @@
       "id": "MI_2",
       "properties": {
         "st": "MI",
-        "state": "Michigan"
+        "state": "Michigan",
+        "city": "Grand Rapids"
       },
       "geometry": {
         "type": "Point",
@@ -396,7 +422,8 @@
       "id": "MN_1",
       "properties": {
         "st": "MN",
-        "state": "Minnesota"
+        "state": "Minnesota",
+        "city": "Minneapolis"
       },
       "geometry": {
         "type": "Point",
@@ -411,7 +438,8 @@
       "id": "MN_2",
       "properties": {
         "st": "MN",
-        "state": "Minnesota"
+        "state": "Minnesota",
+        "city": "Duluth"
       },
       "geometry": {
         "type": "Point",
@@ -426,7 +454,8 @@
       "id": "MO_1",
       "properties": {
         "st": "MO",
-        "state": "Missouri"
+        "state": "Missouri",
+        "city": "St. Louis"
       },
       "geometry": {
         "type": "Point",
@@ -441,7 +470,8 @@
       "id": "MO_2",
       "properties": {
         "st": "MO",
-        "state": "Missouri"
+        "state": "Missouri",
+        "city": "Kansas City"
       },
       "geometry": {
         "type": "Point",
@@ -456,7 +486,8 @@
       "id": "MS_1",
       "properties": {
         "st": "MS",
-        "state": "Mississippi"
+        "state": "Mississippi",
+        "city": "Jackson"
       },
       "geometry": {
         "type": "Point",
@@ -471,7 +502,8 @@
       "id": "MT_1",
       "properties": {
         "st": "MT",
-        "state": "Montana"
+        "state": "Montana",
+        "city": "Billings"
       },
       "geometry": {
         "type": "Point",
@@ -486,7 +518,8 @@
       "id": "NC_1",
       "properties": {
         "st": "NC",
-        "state": "North Carolina"
+        "state": "North Carolina",
+        "city": "Charlotte"
       },
       "geometry": {
         "type": "Point",
@@ -501,7 +534,8 @@
       "id": "NC_2",
       "properties": {
         "st": "NC",
-        "state": "North Carolina"
+        "state": "North Carolina",
+        "city": "Raleigh"
       },
       "geometry": {
         "type": "Point",
@@ -516,7 +550,8 @@
       "id": "ND_1",
       "properties": {
         "st": "ND",
-        "state": "North Dakota"
+        "state": "North Dakota",
+        "city": "Fargo"
       },
       "geometry": {
         "type": "Point",
@@ -531,7 +566,8 @@
       "id": "NE_1",
       "properties": {
         "st": "NE",
-        "state": "Nebraska"
+        "state": "Nebraska",
+        "city": "Omaha"
       },
       "geometry": {
         "type": "Point",
@@ -546,7 +582,8 @@
       "id": "NH_1",
       "properties": {
         "st": "NH",
-        "state": "New Hampshire"
+        "state": "New Hampshire",
+        "city": "Manchester"
       },
       "geometry": {
         "type": "Point",
@@ -561,7 +598,8 @@
       "id": "NJ_1",
       "properties": {
         "st": "NJ",
-        "state": "New Jersey"
+        "state": "New Jersey",
+        "city": "Newark"
       },
       "geometry": {
         "type": "Point",
@@ -576,7 +614,8 @@
       "id": "NM_1",
       "properties": {
         "st": "NM",
-        "state": "New Mexico"
+        "state": "New Mexico",
+        "city": "Albuquerque"
       },
       "geometry": {
         "type": "Point",
@@ -591,7 +630,8 @@
       "id": "NV_1",
       "properties": {
         "st": "NV",
-        "state": "Nevada"
+        "state": "Nevada",
+        "city": "Las Vegas"
       },
       "geometry": {
         "type": "Point",
@@ -606,7 +646,8 @@
       "id": "NV_2",
       "properties": {
         "st": "NV",
-        "state": "Nevada"
+        "state": "Nevada",
+        "city": "Reno"
       },
       "geometry": {
         "type": "Point",
@@ -621,7 +662,8 @@
       "id": "NY_1",
       "properties": {
         "st": "NY",
-        "state": "New York"
+        "state": "New York",
+        "city": "New York"
       },
       "geometry": {
         "type": "Point",
@@ -636,7 +678,8 @@
       "id": "NY_2",
       "properties": {
         "st": "NY",
-        "state": "New York"
+        "state": "New York",
+        "city": "Buffalo"
       },
       "geometry": {
         "type": "Point",
@@ -651,7 +694,8 @@
       "id": "OH_1",
       "properties": {
         "st": "OH",
-        "state": "Ohio"
+        "state": "Ohio",
+        "city": "Columbus"
       },
       "geometry": {
         "type": "Point",
@@ -666,7 +710,8 @@
       "id": "OH_2",
       "properties": {
         "st": "OH",
-        "state": "Ohio"
+        "state": "Ohio",
+        "city": "Cleveland"
       },
       "geometry": {
         "type": "Point",
@@ -681,7 +726,8 @@
       "id": "OK_1",
       "properties": {
         "st": "OK",
-        "state": "Oklahoma"
+        "state": "Oklahoma",
+        "city": "Oklahoma City"
       },
       "geometry": {
         "type": "Point",
@@ -696,7 +742,8 @@
       "id": "OR_1",
       "properties": {
         "st": "OR",
-        "state": "Oregon"
+        "state": "Oregon",
+        "city": "Portland"
       },
       "geometry": {
         "type": "Point",
@@ -711,7 +758,8 @@
       "id": "PA_1",
       "properties": {
         "st": "PA",
-        "state": "Pennsylvania"
+        "state": "Pennsylvania",
+        "city": "Philadelphia"
       },
       "geometry": {
         "type": "Point",
@@ -726,7 +774,8 @@
       "id": "PA_2",
       "properties": {
         "st": "PA",
-        "state": "Pennsylvania"
+        "state": "Pennsylvania",
+        "city": "Pittsburgh"
       },
       "geometry": {
         "type": "Point",
@@ -741,7 +790,8 @@
       "id": "RI_1",
       "properties": {
         "st": "RI",
-        "state": "Rhode Island"
+        "state": "Rhode Island",
+        "city": "Providence"
       },
       "geometry": {
         "type": "Point",
@@ -756,7 +806,8 @@
       "id": "SC_1",
       "properties": {
         "st": "SC",
-        "state": "South Carolina"
+        "state": "South Carolina",
+        "city": "Charleston"
       },
       "geometry": {
         "type": "Point",
@@ -771,7 +822,8 @@
       "id": "SD_1",
       "properties": {
         "st": "SD",
-        "state": "South Dakota"
+        "state": "South Dakota",
+        "city": "Sioux Falls"
       },
       "geometry": {
         "type": "Point",
@@ -786,7 +838,8 @@
       "id": "TN_1",
       "properties": {
         "st": "TN",
-        "state": "Tennessee"
+        "state": "Tennessee",
+        "city": "Nashville"
       },
       "geometry": {
         "type": "Point",
@@ -801,7 +854,8 @@
       "id": "TN_2",
       "properties": {
         "st": "TN",
-        "state": "Tennessee"
+        "state": "Tennessee",
+        "city": "Memphis"
       },
       "geometry": {
         "type": "Point",
@@ -816,7 +870,8 @@
       "id": "TX_1",
       "properties": {
         "st": "TX",
-        "state": "Texas"
+        "state": "Texas",
+        "city": "Dallas"
       },
       "geometry": {
         "type": "Point",
@@ -831,7 +886,8 @@
       "id": "TX_2",
       "properties": {
         "st": "TX",
-        "state": "Texas"
+        "state": "Texas",
+        "city": "Houston"
       },
       "geometry": {
         "type": "Point",
@@ -846,7 +902,8 @@
       "id": "UT_1",
       "properties": {
         "st": "UT",
-        "state": "Utah"
+        "state": "Utah",
+        "city": "Salt Lake City"
       },
       "geometry": {
         "type": "Point",
@@ -861,7 +918,8 @@
       "id": "VA_1",
       "properties": {
         "st": "VA",
-        "state": "Virginia"
+        "state": "Virginia",
+        "city": "Richmond"
       },
       "geometry": {
         "type": "Point",
@@ -876,7 +934,8 @@
       "id": "VA_2",
       "properties": {
         "st": "VA",
-        "state": "Virginia"
+        "state": "Virginia",
+        "city": "Virginia Beach"
       },
       "geometry": {
         "type": "Point",
@@ -891,7 +950,8 @@
       "id": "VT_1",
       "properties": {
         "st": "VT",
-        "state": "Vermont"
+        "state": "Vermont",
+        "city": "Burlington"
       },
       "geometry": {
         "type": "Point",
@@ -906,7 +966,8 @@
       "id": "WA_1",
       "properties": {
         "st": "WA",
-        "state": "Washington"
+        "state": "Washington",
+        "city": "Seattle"
       },
       "geometry": {
         "type": "Point",
@@ -921,7 +982,8 @@
       "id": "WA_2",
       "properties": {
         "st": "WA",
-        "state": "Washington"
+        "state": "Washington",
+        "city": "Spokane"
       },
       "geometry": {
         "type": "Point",
@@ -936,7 +998,8 @@
       "id": "WI_1",
       "properties": {
         "st": "WI",
-        "state": "Wisconsin"
+        "state": "Wisconsin",
+        "city": "Milwaukee"
       },
       "geometry": {
         "type": "Point",
@@ -951,7 +1014,8 @@
       "id": "WI_2",
       "properties": {
         "st": "WI",
-        "state": "Wisconsin"
+        "state": "Wisconsin",
+        "city": "Madison"
       },
       "geometry": {
         "type": "Point",
@@ -966,7 +1030,8 @@
       "id": "WV_1",
       "properties": {
         "st": "WV",
-        "state": "West Virginia"
+        "state": "West Virginia",
+        "city": "Charleston"
       },
       "geometry": {
         "type": "Point",
@@ -981,7 +1046,8 @@
       "id": "WY_1",
       "properties": {
         "st": "WY",
-        "state": "Wyoming"
+        "state": "Wyoming",
+        "city": "Cheyenne"
       },
       "geometry": {
         "type": "Point",

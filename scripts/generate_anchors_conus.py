@@ -565,6 +565,7 @@ def build_geojson(selected_anchors: list[SelectedAnchor]) -> dict[str, object]:
                 "properties": {
                     "st": anchor.state_code,
                     "state": anchor.state_name,
+                    "city": anchor.city_name,
                 },
                 "geometry": {
                     "type": "Point",
