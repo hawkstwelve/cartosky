@@ -46,6 +46,7 @@ _KUCHERA_RATIO_CLAMP_MIN = np.float32(5.0)
 _KUCHERA_RATIO_CLAMP_MAX = np.float32(30.0)
 _KUCHERA_INCREMENTAL_WINDOW_DEFAULT = 6
 _KUCHERA_SIMPLIFIED_PROFILE_MAX_LEVELS = 4
+_KUCHERA_SFC_PRESSURE_MARGIN_PA_DEFAULT = np.float32(2500.0)
 _APCP_ACCUM_WINDOW_RE = re.compile(r":APCP:surface:(\d+)-(\d+)\s*hour acc(?:\s*fcst|@\([^)]*\))", re.IGNORECASE)
 
 
@@ -2107,6 +2108,12 @@ def _derive_snowfall_kuchera_total_cumulative(
     )
     sfc_pressure_product_raw = str(hints.get("kuchera_sfc_pressure_product", "")).strip()
     resolved_sfc_pressure_product = sfc_pressure_product_raw or product
+    sfc_pressure_margin_pa_raw = hints.get("kuchera_sfc_pressure_margin_pa")
+    try:
+        sfc_pressure_margin_pa = np.float32(float(sfc_pressure_margin_pa_raw))
+    except (TypeError, ValueError):
+        sfc_pressure_margin_pa = _KUCHERA_SFC_PRESSURE_MARGIN_PA_DEFAULT
+    sfc_pressure_margin_pa = np.float32(max(0.0, float(sfc_pressure_margin_pa)))
     min_step_lwe_raw = hints.get("min_step_lwe_kgm2", "0.01")
     try:
         min_step_lwe = float(min_step_lwe_raw)
@@ -2396,7 +2403,7 @@ def _derive_snowfall_kuchera_total_cumulative(
                 step_temp_clean = step_temp.astype(np.float32, copy=False)
                 if step_sfc_pressure is not None and step_temp_clean.shape == step_sfc_pressure.shape:
                     level_pa = np.float32(int(level_hpa) * 100)
-                    below_ground = np.isfinite(step_sfc_pressure) & (level_pa > step_sfc_pressure)
+                    below_ground = np.isfinite(step_sfc_pressure) & (level_pa > step_sfc_pressure + sfc_pressure_margin_pa)
                     masked_count = int(np.count_nonzero(below_ground))
                     if masked_count > 0:
                         step_temp_clean = np.where(below_ground, np.nan, step_temp_clean).astype(np.float32, copy=False)

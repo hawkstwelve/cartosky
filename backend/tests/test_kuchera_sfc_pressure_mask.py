@@ -404,3 +404,101 @@ def test_sfc_pressure_mask_graceful_fallback_on_fetch_failure(monkeypatch) -> No
     assert np.isfinite(data[0, 0])
     expected_snow = 5.0 * 5.0 * 0.03937007874015748
     np.testing.assert_allclose(data[0, 0], expected_snow, rtol=1e-4, atol=1e-4)
+
+
+def test_sfc_pressure_margin_keeps_barely_underground_levels(monkeypatch) -> None:
+    """At Denver-metro elevation (~1600m, sfc ~84000 Pa), 850 hPa (85000 Pa)
+    is barely underground.  The 2500 Pa margin should keep it because
+    85000 is NOT > 84000 + 2500 = 86500.  Without the margin, 850 would be
+    masked and SLR would jump from the 700 hPa cold layer."""
+
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    shape = (1, 1)
+
+    # Denver-like: sfc 840 hPa = 84000 Pa
+    sfc_pressure = np.array([[84000.0]], dtype=np.float32)
+    apcp = np.array([[5.0]], dtype=np.float32)
+
+    # 850 hPa: barely underground, mild extrapolation → -3°C
+    temp_850 = np.array([[-3.0]], dtype=np.float32)
+    # 700 hPa: cold → -14°C
+    temp_700 = np.array([[-14.0]], dtype=np.float32)
+    # 600 hPa, 500 hPa: colder
+    temp_600 = np.array([[-20.0]], dtype=np.float32)
+    temp_500 = np.array([[-28.0]], dtype=np.float32)
+
+    fake_fetch, exact_apcp_pattern = _make_fake_fetch(
+        apcp=apcp,
+        temp_850=temp_850,
+        temp_700=temp_700,
+        temp_600=temp_600,
+        temp_500=temp_500,
+        sfc_pressure=sfc_pressure,
+        crs=crs,
+        transform=transform,
+    )
+
+    monkeypatch.setattr(derive_module, "fetch_variable", fake_fetch)
+    monkeypatch.setattr(
+        derive_module,
+        "_kuchera_inventory_lines",
+        lambda *, model_id, product, run_date, fh, search_pattern: [exact_apcp_pattern],
+    )
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, default_step_hours=6: [1],
+    )
+
+    data_with_margin, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="hrrr",
+        var_key="snowfall_kuchera_total",
+        product="sfc",
+        run_date=datetime(2026, 3, 5, 17, 0),
+        fh=1,
+        var_spec_model=_kuchera_var_spec(use_sfc_pressure_mask=True),
+        var_capability=None,
+        model_plugin=_Plugin(),
+    )
+
+    # With default 2500 Pa margin: 85000 > 84000 + 2500 = 86500 → FALSE
+    # 850 hPa is KEPT → max_T = -3°C = 270.15 K
+    # Cold branch: SLR = 12 + 1*(271.16 - 270.15) = 13.01
+    max_t_k = -3.0 + 273.15  # 270.15 K
+    expected_slr = 12.0 + 1.0 * (271.16 - max_t_k)
+    expected_snow = 5.0 * expected_slr * 0.03937007874015748
+    np.testing.assert_allclose(data_with_margin[0, 0], expected_snow, rtol=1e-3, atol=1e-4)
+
+    # Verify that without margin (margin=0), 850 would be masked → higher SLR
+    var_spec_zero_margin = SimpleNamespace(
+        selectors=SimpleNamespace(
+            hints={
+                "apcp_component": "apcp_step",
+                "step_hours": "1",
+                "kuchera_levels_hpa": "850,700,600,500",
+                "kuchera_require_rh": "false",
+                "kuchera_min_levels": "1",
+                "kuchera_use_ptype_gate": "true",
+                "kuchera_use_sfc_pressure_mask": "true",
+                "kuchera_sfc_pressure_margin_pa": "0",
+            }
+        )
+    )
+    data_no_margin, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="hrrr",
+        var_key="snowfall_kuchera_total",
+        product="sfc",
+        run_date=datetime(2026, 3, 5, 17, 0),
+        fh=1,
+        var_spec_model=var_spec_zero_margin,
+        var_capability=None,
+        model_plugin=_Plugin(),
+    )
+
+    # With margin=0: 85000 > 84000 → TRUE → 850 masked → max_T from 700 hPa
+    # SLR = 12 + 1*(271.16 - 259.15) = 24.01 → much more snow
+    assert data_no_margin[0, 0] > data_with_margin[0, 0], (
+        f"Zero-margin should yield more snow (overcorrection): "
+        f"no_margin={data_no_margin[0, 0]:.4f} vs with_margin={data_with_margin[0, 0]:.4f}"
+    )
