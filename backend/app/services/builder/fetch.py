@@ -31,11 +31,12 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 import numpy as np
 import rasterio
 import rasterio.crs
+import rasterio.errors
 import rasterio.transform
 import requests
 
@@ -1640,6 +1641,34 @@ def _manual_subset_download_with_corrected_range(
         priority,
     )
     return subset_path
+
+
+@overload
+def fetch_variable(
+    model_id: str,
+    product: str,
+    search_pattern: str,
+    run_date: datetime,
+    fh: int,
+    *,
+    herbie_kwargs: dict[str, Any] | None = ...,
+    bundle_fetch_cache: BundleFetchCache | None = ...,
+    return_meta: Literal[False] = ...,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]: ...
+
+
+@overload
+def fetch_variable(
+    model_id: str,
+    product: str,
+    search_pattern: str,
+    run_date: datetime,
+    fh: int,
+    *,
+    herbie_kwargs: dict[str, Any] | None = ...,
+    bundle_fetch_cache: BundleFetchCache | None = ...,
+    return_meta: Literal[True],
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]: ...
 
 
 def fetch_variable(

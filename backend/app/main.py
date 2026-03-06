@@ -738,6 +738,8 @@ def _normalize_topic(raw_topic: Any, *, force_pinned: bool) -> dict[str, Any] | 
         return None
 
     raw_id = raw_topic.get("id")
+    if raw_id is None:
+        return None
     try:
         topic_id = int(raw_id)
     except (TypeError, ValueError):
@@ -1025,7 +1027,7 @@ def _model_allowed_cycle_hours(model: str) -> set[int]:
 
     cadence_raw = run_discovery.get("cycle_cadence_hours") if isinstance(run_discovery, dict) else 1
     try:
-        cadence = max(1, int(cadence_raw))
+        cadence = max(1, int(cadence_raw if cadence_raw is not None else 1))
     except (TypeError, ValueError):
         cadence = 1
     return set(range(0, 24, cadence))
@@ -1831,7 +1833,8 @@ def _sample_dataset_xy(ds: rasterio.DatasetReader, *, lon: float, lat: float) ->
 
 def _sample_dataset_index(ds: rasterio.DatasetReader, *, lon: float, lat: float) -> tuple[int, int]:
     x, y = _sample_dataset_xy(ds, lon=lon, lat=lat)
-    return ds.index(x, y)
+    row, col = ds.index(x, y)
+    return row, col
 
 
 def _read_sample_value(
@@ -1865,7 +1868,7 @@ def _sample_batch_values(
     for point in points:
         row, col = _sample_dataset_index(ds, lon=point.lon, lat=point.lat)
         value, no_data = _read_sample_value(ds, row=row, col=col, masked=True)
-        values[point.id] = None if no_data else round(float(value), 1)
+        values[point.id] = None if no_data or value is None else round(float(value), 1)
     return values
 
 

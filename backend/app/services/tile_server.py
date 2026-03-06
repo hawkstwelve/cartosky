@@ -535,7 +535,7 @@ def get_tile(
         val_path = _resolve_value_cog_path(model, run, var, fh)
         if val_path is not None:
             try:
-                with Reader(input=str(val_path)) as val_cog:
+                with Reader(input=str(val_path)) as val_cog:  # type: ignore[call-arg]
                     resampling_kwargs = rio_tiler_resampling_kwargs(model_id=model, var_key=var)
                     tile = _read_tile_compat(
                         val_cog,
@@ -601,7 +601,7 @@ def get_tile(
         )
 
     try:
-        with Reader(input=str(cog_path)) as cog:
+        with Reader(input=str(cog_path)) as cog:  # type: ignore[call-arg]
             resampling_kwargs = rio_tiler_resampling_kwargs(model_id=model, var_key=var)
             tile = _read_tile_compat(
                 cog,

@@ -17,11 +17,12 @@ import os
 from pathlib import Path
 import re
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Literal, overload
 
 import numpy as np
 import rasterio
 import rasterio.transform
+import rasterio.crs
 
 from app.services.builder.cog_writer import warp_to_target_grid
 from app.services.builder.fetch import convert_units, fetch_variable, inventory_lines_for_pattern
@@ -808,6 +809,34 @@ def _kuchera_frozen_fraction_for_step(
     return frozen_frac, False, fetch_count
 
 
+@overload
+def _fetch_component(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    model_plugin: Any,
+    var_key: str,
+    ctx: FetchContext | None = ...,
+    return_meta: Literal[False] = ...,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]: ...
+
+
+@overload
+def _fetch_component(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    model_plugin: Any,
+    var_key: str,
+    ctx: FetchContext | None = ...,
+    return_meta: Literal[True],
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]: ...
+
+
 def _fetch_component(
     *,
     model_id: str,
@@ -1041,6 +1070,42 @@ def _resolve_warped_state(
         target_grid_id = f"{model_id}:{target_region}"
     resampling = str(derive_component_resampling).strip() if use_warped else ""
     return use_warped, target_region, target_grid_id, resampling
+
+
+@overload
+def _fetch_step_component(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    step_fh: int,
+    model_plugin: Any,
+    var_key: str,
+    use_warped: bool,
+    target_region: str,
+    target_grid_id: str,
+    resampling: str,
+    ctx: FetchContext | None,
+    return_meta: Literal[False] = ...,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]: ...
+
+
+@overload
+def _fetch_step_component(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    step_fh: int,
+    model_plugin: Any,
+    var_key: str,
+    use_warped: bool,
+    target_region: str,
+    target_grid_id: str,
+    resampling: str,
+    ctx: FetchContext | None,
+    return_meta: Literal[True],
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]: ...
 
 
 def _fetch_step_component(
@@ -1305,6 +1370,7 @@ def _resolve_apcp_step_data(
             selector_reason = "selector_regex_fallback"
 
     # 4. Classify mode and apply cumulative differencing.
+    assert apcp_step is not None  # guaranteed set by steps 1/2/3 above
     apcp_valid_raw = np.isfinite(apcp_step) & (apcp_step >= 0.0)
     apcp_cum_clean = np.where(apcp_valid_raw, apcp_step, 0.0).astype(np.float32, copy=False)
 
@@ -1394,6 +1460,8 @@ def _resolve_apcp_step_data(
             cum_diff_state.consumed_sum_valid = apcp_valid.copy()
 
     cum_diff_state.consumed_through_fh = int(step_fh)
+    assert step_crs is not None  # guaranteed set by steps 1/2/3 above
+    assert step_transform is not None  # guaranteed set by steps 1/2/3 above
     return step_apcp_data, apcp_valid, step_crs, step_transform, cumulative_mode_used
 
 
@@ -1497,7 +1565,7 @@ def _cumulative_apcp_loop(
             )
 
         cumulative = cumulative + contribution
-        valid_mask = np.logical_or(valid_mask, step_valid)
+        valid_mask = np.logical_or(valid_mask, step_valid)  # type: ignore[arg-type]
 
     if cumulative is None or valid_mask is None or src_crs is None or src_transform is None:
         raise ValueError(error_label)
@@ -2110,7 +2178,7 @@ def _derive_snowfall_kuchera_total_cumulative(
     resolved_sfc_pressure_product = sfc_pressure_product_raw or product
     sfc_pressure_margin_pa_raw = hints.get("kuchera_sfc_pressure_margin_pa")
     try:
-        sfc_pressure_margin_pa = np.float32(float(sfc_pressure_margin_pa_raw))
+        sfc_pressure_margin_pa = np.float32(float(sfc_pressure_margin_pa_raw))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         sfc_pressure_margin_pa = _KUCHERA_SFC_PRESSURE_MARGIN_PA_DEFAULT
     sfc_pressure_margin_pa = np.float32(max(0.0, float(sfc_pressure_margin_pa)))

@@ -663,7 +663,7 @@ def _build_one(
 
 def _is_derive_bundle_candidate(plugin: Any, var_id: str) -> bool:
     normalize = getattr(plugin, "normalize_var_id", None)
-    normalized = normalize(var_id) if callable(normalize) else str(var_id)
+    normalized: str = str(normalize(var_id)) if callable(normalize) else str(var_id)
     if normalized == "precip_total":
         return True
     if normalized == "snowfall_total" or normalized.startswith("snowfall_"):
@@ -694,7 +694,7 @@ def _build_bundle(
     normalized_vars: list[str] = []
     seen: set[str] = set()
     for var_id in var_ids:
-        normalized = normalize(var_id) if callable(normalize) else str(var_id)
+        normalized: str = str(normalize(var_id)) if callable(normalize) else str(var_id)
         if normalized in seen:
             continue
         seen.add(normalized)

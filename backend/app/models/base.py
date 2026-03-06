@@ -129,12 +129,18 @@ class ModelCapabilities:
 
 
 class ModelPlugin(Protocol):
-    id: str
-    name: str
-    regions: Mapping[str, RegionSpec]
-    vars: Mapping[str, VarSpec]
-    product: str
-    capabilities: ModelCapabilities | None
+    @property
+    def id(self) -> str: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def regions(self) -> Mapping[str, RegionSpec]: ...
+    @property
+    def vars(self) -> Mapping[str, VarSpec]: ...
+    @property
+    def product(self) -> str: ...
+    @property
+    def capabilities(self) -> ModelCapabilities | None: ...
 
     def get_region(self, region_id: str) -> RegionSpec | None:
         ...

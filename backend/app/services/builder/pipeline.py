@@ -32,7 +32,7 @@ from typing import Any
 
 import numpy as np
 import rasterio
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
 from app.services.builder.cog_writer import (
     _gdal,
@@ -930,7 +930,7 @@ def build_frame(
             src_transform = None
             for pattern_idx, search_pattern in enumerate(search_patterns, start=1):
                 try:
-                    raw_data, src_crs, src_transform = fetch_variable(
+                    raw_data, src_crs, src_transform = fetch_variable(  # type: ignore[misc]
                         model_id=model,
                         product=product,
                         search_pattern=search_pattern,
@@ -1028,7 +1028,7 @@ def build_frame(
                 build_iso_contour_geojson(
                     value_data=warped_data,
                     value_transform=dst_transform,
-                    out_geojson_path=contour_geojson_path,
+                    out_geojson_path=staging_dir / contour_rel_path,
                     level=32.0,
                     srs="EPSG:4326",
                 )

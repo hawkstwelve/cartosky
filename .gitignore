@@ -21,3 +21,4 @@ extract_colorbar.py
 .hintrc
 .pytest_cache/
 .github/
+/.vscode/
