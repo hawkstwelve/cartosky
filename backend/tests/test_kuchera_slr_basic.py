@@ -127,5 +127,8 @@ def test_kuchera_can_use_distinct_profile_product_without_rh_fetch(monkeypatch) 
     assert out_transform == transform
     assert np.isfinite(data).all()
     assert ("sfc", "apcp_step", 1) in seen_products
-    assert ("prs", "tmp925", 1) in seen_products
+    temp_fetches = [(product, var_key, fh) for product, var_key, fh in seen_products if var_key.startswith("tmp")]
+    assert temp_fetches
+    assert all(product == "prs" for product, _, _ in temp_fetches)
+    assert len(temp_fetches) <= 2
     assert not any(var_key.startswith("rh") for _, var_key, _ in seen_products)

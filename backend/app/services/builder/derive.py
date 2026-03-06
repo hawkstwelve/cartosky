@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
 import os
+from pathlib import Path
 import re
 import time
 from typing import Any, Callable
@@ -43,6 +44,8 @@ _KUCHERA_DEFAULT_LEVELS_HPA: tuple[int, ...] = (925, 850, 700, 600, 500)
 _KUCHERA_VENDOR_T0_K = np.float32(271.16)
 _KUCHERA_RATIO_CLAMP_MIN = np.float32(5.0)
 _KUCHERA_RATIO_CLAMP_MAX = np.float32(30.0)
+_KUCHERA_INCREMENTAL_WINDOW_DEFAULT = 6
+_KUCHERA_SIMPLIFIED_PROFILE_MAX_LEVELS = 2
 _APCP_ACCUM_WINDOW_RE = re.compile(r":APCP:surface:(\d+)-(\d+)\s*hour acc(?:\s*fcst|@\([^)]*\))", re.IGNORECASE)
 
 
@@ -91,6 +94,14 @@ def _parse_hint_bool(value: Any, *, default: bool) -> bool:
     if text in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _parse_hint_int(value: Any, *, default: int, minimum: int = 0) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default)
+    return max(int(minimum), int(parsed))
 
 
 def _parse_kuchera_levels_hpa(value: Any) -> list[int]:
@@ -167,6 +178,114 @@ def _compute_kuchera_slr(
     max_temp_k = _kuchera_maxt_low500_from_temp_stack_k(temp_stack_c)
     ratio = _kuchera_ratio_from_maxt_low500_k(max_temp_k)
     return np.where(np.isfinite(ratio), ratio, 10.0).astype(np.float32, copy=False)
+
+
+def _run_id_from_date(run_date: datetime) -> str:
+    run_date_utc = run_date.astimezone(timezone.utc) if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
+    return run_date_utc.strftime("%Y%m%d_%Hz")
+
+
+def _kuchera_select_profile_levels(levels_hpa: list[int], *, simplified: bool) -> list[int]:
+    """Select Kuchera profile levels deterministically for operational mode.
+
+    In simplified mode we cap profile fetches to a small fixed set (prefer 850/700 hPa)
+    to keep per-frame cost low while retaining a stable warm-layer estimate.
+    """
+    if not levels_hpa:
+        return []
+    if not simplified:
+        return list(levels_hpa)
+    preferred_order = (850, 700, 600, 500, 925)
+    selected: list[int] = []
+    for level in preferred_order:
+        if level in levels_hpa and level not in selected:
+            selected.append(level)
+        if len(selected) >= _KUCHERA_SIMPLIFIED_PROFILE_MAX_LEVELS:
+            break
+    if len(selected) < _KUCHERA_SIMPLIFIED_PROFILE_MAX_LEVELS:
+        for level in levels_hpa:
+            if level not in selected:
+                selected.append(level)
+            if len(selected) >= _KUCHERA_SIMPLIFIED_PROFILE_MAX_LEVELS:
+                break
+    return selected
+
+
+def _read_value_cog(path: Path) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    with rasterio.open(path) as ds:
+        data = ds.read(1).astype(np.float32, copy=False)
+        return data, ds.crs, ds.transform
+
+
+def _kuchera_load_prior_cumulative(
+    *,
+    model_id: str,
+    run_date: datetime,
+    var_key: str,
+    fh: int,
+    ctx: FetchContext | None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | None:
+    if fh <= 0:
+        return None
+    run_id = _run_id_from_date(run_date)
+    cache_key = (str(model_id), str(run_id), str(var_key), int(fh))
+    if ctx is not None:
+        cache = getattr(ctx, "kuchera_cumulative_cache", None)
+        if isinstance(cache, dict) and cache_key in cache:
+            cached = cache[cache_key]
+            return cached[0], cached[1], cached[2]
+
+    data_root_raw = getattr(ctx, "data_root", None) if ctx is not None else None
+    if data_root_raw is None:
+        data_root_raw = os.getenv("TWF_V3_DATA_ROOT", "./data/v3")
+    try:
+        data_root = Path(str(data_root_raw))
+    except Exception:
+        return None
+
+    candidate_paths = [
+        data_root / "staging" / str(model_id) / run_id / str(var_key) / f"fh{int(fh):03d}.val.cog.tif",
+        data_root / "published" / str(model_id) / run_id / str(var_key) / f"fh{int(fh):03d}.val.cog.tif",
+    ]
+    for candidate in candidate_paths:
+        try:
+            if not candidate.exists():
+                continue
+            loaded_data, loaded_crs, loaded_transform = _read_value_cog(candidate)
+            # Stored val COG is snowfall inches; internal accumulator uses mm-equivalent.
+            loaded_data = (loaded_data / np.float32(0.03937007874015748)).astype(np.float32, copy=False)
+            loaded = (loaded_data, loaded_crs, loaded_transform)
+            if ctx is not None:
+                cache = getattr(ctx, "kuchera_cumulative_cache", None)
+                if not isinstance(cache, dict):
+                    cache = {}
+                    setattr(ctx, "kuchera_cumulative_cache", cache)
+                cache[cache_key] = loaded
+            return loaded
+        except Exception:
+            continue
+    return None
+
+
+def _kuchera_store_cumulative_cache(
+    *,
+    model_id: str,
+    run_date: datetime,
+    var_key: str,
+    fh: int,
+    data: np.ndarray,
+    crs: rasterio.crs.CRS,
+    transform: rasterio.transform.Affine,
+    ctx: FetchContext | None,
+) -> None:
+    if ctx is None:
+        return
+    cache = getattr(ctx, "kuchera_cumulative_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        setattr(ctx, "kuchera_cumulative_cache", cache)
+    cache_key = (str(model_id), _run_id_from_date(run_date), str(var_key), int(fh))
+    cache[cache_key] = (data.astype(np.float32, copy=False), crs, transform)
 
 
 def derive_variable(
@@ -643,9 +762,10 @@ def _kuchera_frozen_fraction_for_step(
     resampling: str,
     ctx: FetchContext | None,
     expected_shape: tuple[int, ...],
-) -> tuple[np.ndarray, bool]:
+) -> tuple[np.ndarray, bool, int]:
     component_keys = ("csnow", "crain", "cicep", "cfrzr")
     fetched: dict[str, np.ndarray] = {}
+    fetch_count = 0
     try:
         for key in component_keys:
             component_data, _, _ = _fetch_step_component(
@@ -661,6 +781,7 @@ def _kuchera_frozen_fraction_for_step(
                 resampling=resampling,
                 ctx=ctx,
             )
+            fetch_count += 1
             component_clean = np.asarray(component_data, dtype=np.float32)
             if component_clean.shape != expected_shape:
                 raise ValueError(
@@ -675,14 +796,14 @@ def _kuchera_frozen_fraction_for_step(
             step_fh=step_fh,
             reason=str(exc),
         )
-        return np.ones(expected_shape, dtype=np.float32), True
+        return np.ones(expected_shape, dtype=np.float32), True, fetch_count
 
     csnow_prob = _normalize_ptype_probability(fetched["csnow"])
     _ = _normalize_ptype_probability(fetched["crain"])
     cicep_prob = _normalize_ptype_probability(fetched["cicep"])
     _ = _normalize_ptype_probability(fetched["cfrzr"])
     frozen_frac = np.clip(csnow_prob + cicep_prob, 0.0, 1.0).astype(np.float32, copy=False)
-    return frozen_frac, False
+    return frozen_frac, False, fetch_count
 
 
 def _fetch_component(
@@ -1957,6 +2078,7 @@ def _derive_snowfall_kuchera_total_cumulative(
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     del var_capability
+    frame_start = time.perf_counter()
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     apcp_component = str(hints.get("apcp_component", "apcp_step"))
     apcp_product_raw = str(hints.get("kuchera_apcp_product", "")).strip()
@@ -1965,7 +2087,15 @@ def _derive_snowfall_kuchera_total_cumulative(
     profile_product = profile_product_raw or None
     ptype_product_raw = str(hints.get("kuchera_ptype_product", "")).strip()
     ptype_product = ptype_product_raw or apcp_product or product
-    levels_hpa = _parse_kuchera_levels_hpa(hints.get("kuchera_levels_hpa"))
+    configured_levels_hpa = _parse_kuchera_levels_hpa(hints.get("kuchera_levels_hpa"))
+    profile_mode_hint = str(hints.get("kuchera_profile_mode", "")).strip().lower()
+    use_simplified_profile = (
+        profile_mode_hint in {"simplified", "ops", "operational"}
+        or (not profile_mode_hint and str(model_id).lower() == "hrrr")
+    )
+    profile_levels_hpa = _kuchera_select_profile_levels(configured_levels_hpa, simplified=use_simplified_profile)
+    if not profile_levels_hpa:
+        raise ValueError(f"No Kuchera profile levels configured for {model_id}/{var_key} fh{fh:03d}")
     use_ptype_gate = _parse_hint_bool(
         hints.get("kuchera_use_ptype_gate"),
         default=False,
@@ -1976,75 +2106,41 @@ def _derive_snowfall_kuchera_total_cumulative(
     except (TypeError, ValueError):
         min_step_lwe = 0.01
     min_step_lwe = max(min_step_lwe, 0.0)
+    rebuild_window_steps = _parse_hint_int(
+        hints.get("kuchera_incremental_rebuild_window_steps"),
+        default=_KUCHERA_INCREMENTAL_WINDOW_DEFAULT,
+        minimum=1,
+    )
 
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, default_step_hours=6)
+    if not step_fhs:
+        raise ValueError(f"No cumulative Kuchera source steps resolved for {model_id}/{var_key} fh{fh:03d}")
     logger.info(
-        "derive %s fh%03d apcp_steps=%d profile_levels=%s apcp_product=%s profile_product=%s%s",
-        var_key, fh, len(step_fhs), levels_hpa,
+        "derive %s fh%03d apcp_steps=%d profile_levels=%s profile_mode=%s apcp_product=%s profile_product=%s%s",
+        var_key,
+        fh,
+        len(step_fhs),
+        profile_levels_hpa,
+        "simplified" if use_simplified_profile else "full",
         apcp_product or product,
         profile_product or product,
         _cadence_hint_suffix(hints),
     )
     logger.debug("derive %s fh%03d apcp_steps=%s", var_key, fh, step_fhs)
 
+    if use_simplified_profile:
+        logger.info(
+            "kuchera_profile_mode=simplified model=%s fh=%03d levels=%s",
+            model_id,
+            fh,
+            profile_levels_hpa,
+        )
+
     use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
         derive_component_target_grid, derive_component_resampling, model_id,
     )
 
-    # -- Prefetch temperature profile components in parallel. --
-    # APCP is NOT prefetched here because the inventory-driven resolution
-    # state machine can't be replicated by a simple cache warm.
     resolved_profile_product = str(profile_product or product)
-    _prefetch_tasks: list[_PrefetchTask] = []
-    for _pf_step_fh in step_fhs:
-        for _pf_level in levels_hpa:
-            _prefetch_tasks.append(_PrefetchTask(
-                model_id=model_id, product=resolved_profile_product,
-                run_date=run_date, fh=_pf_step_fh, model_plugin=model_plugin,
-                var_key=f"tmp{_pf_level}",
-                warped=use_warped, target_region=target_region,
-                target_grid_id=target_grid_id, resampling=resampling,
-            ))
-    _prefetch_components_parallel(_prefetch_tasks, ctx, label=f"kuchera_profile fh{fh:03d}")
-    del _prefetch_tasks
-
-    # -- Build in-memory profile dict: (step_fh, level_hpa) → temp. --
-    unavailable_temp_levels: set[int] = set()
-    _profile: dict[tuple[int, int], np.ndarray | None] = {}
-    for _blevel in levels_hpa:
-        if _blevel in unavailable_temp_levels:
-            for _bsfh in step_fhs:
-                _profile[(_bsfh, _blevel)] = None
-            continue
-        for _bsfh in step_fhs:
-            _btmp: np.ndarray | None = None
-            try:
-                _bt, _, _ = _fetch_step_component(
-                    model_id=model_id, product=resolved_profile_product,
-                    run_date=run_date, step_fh=_bsfh, model_plugin=model_plugin,
-                    var_key=f"tmp{_blevel}",
-                    use_warped=use_warped, target_region=target_region,
-                    target_grid_id=target_grid_id, resampling=resampling,
-                    ctx=ctx,
-                )
-                _btmp = _bt.astype(np.float32, copy=False)
-            except ValueError:
-                unavailable_temp_levels.add(_blevel)
-                _profile[(_bsfh, _blevel)] = None
-                for _brem in step_fhs[step_fhs.index(_bsfh) + 1:]:
-                    _profile[(_brem, _blevel)] = None
-                break
-            except (HerbieTransientUnavailableError, RuntimeError):
-                _profile[(_bsfh, _blevel)] = None
-                continue
-            _profile[(_bsfh, _blevel)] = _btmp
-
-    logger.debug(
-        "kuchera profile_dict entries=%d unavail_temp=%s",
-        len(_profile),
-        unavailable_temp_levels or "none",
-    )
-
     fallback_used = False
     fallback_profile_logged = False
     missing_level_warning_logged = False
@@ -2072,165 +2168,314 @@ def _derive_snowfall_kuchera_total_cumulative(
         "ratio_count": 0.0,
         "ratio_clamp_max_count": 0.0,
     }
+    apcp_cumulative_fallback_used = False
+    current_step_fetch_counts: dict[str, int] = {"apcp": 0, "profile_temp": 0, "ptype": 0}
 
-    def _process_step(
-        step_fh: int,
-        step_data: np.ndarray,
-        apcp_valid: np.ndarray | None,
-        step_crs: rasterio.crs.CRS,
-        step_transform: rasterio.transform.Affine,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        nonlocal fallback_used
-        nonlocal fallback_profile_logged
-        nonlocal missing_level_warning_logged
-        nonlocal sparse_level_warning_logged
-        nonlocal ptype_any_precip_pixels
-        nonlocal ptype_any_reduced_pixels
-        # apcp_valid is provided by _resolve_apcp_step_data (pre-cleaned,
-        # post-differencing); step_data is the cleaned step increment.
-        assert apcp_valid is not None
-        step_apcp_clean = step_data
-        if min_step_lwe > 0.0:
-            step_apcp_clean = np.where(
-                step_apcp_clean >= min_step_lwe, step_apcp_clean, 0.0,
-            ).astype(np.float32, copy=False)
-        step_apcp_for_snow = step_apcp_clean
-        if use_ptype_gate:
-            frozen_frac, _ = _kuchera_frozen_fraction_for_step(
-                model_id=model_id,
-                var_key=var_key,
-                product=str(ptype_product),
-                run_date=run_date,
+    reused_prev_cumulative = False
+    base_fh: int | None = None
+    base_cumulative: np.ndarray | None = None
+    base_crs: rasterio.crs.CRS | None = None
+    base_transform: rasterio.transform.Affine | None = None
+    start_index = max(0, len(step_fhs) - rebuild_window_steps)
+
+    if len(step_fhs) >= 2:
+        prev_fh = int(step_fhs[-2])
+        prior = _kuchera_load_prior_cumulative(
+            model_id=model_id,
+            run_date=run_date,
+            var_key=var_key,
+            fh=prev_fh,
+            ctx=ctx,
+        )
+        if prior is not None:
+            base_cumulative, base_crs, base_transform = prior
+            base_fh = prev_fh
+            start_index = len(step_fhs) - 1
+            reused_prev_cumulative = True
+
+    if base_cumulative is None and start_index > 0:
+        anchor_fh = int(step_fhs[start_index - 1])
+        prior = _kuchera_load_prior_cumulative(
+            model_id=model_id,
+            run_date=run_date,
+            var_key=var_key,
+            fh=anchor_fh,
+            ctx=ctx,
+        )
+        if prior is None:
+            start_index = 0
+            base_fh = None
+        else:
+            base_cumulative, base_crs, base_transform = prior
+            base_fh = anchor_fh
+
+    steps_processed = 0
+    while True:
+        subset_step_fhs = step_fhs[start_index:]
+        if not subset_step_fhs:
+            raise ValueError(f"No incremental Kuchera steps selected for {model_id}/{var_key} fh{fh:03d}")
+
+        if start_index > 0:
+            anchor_fh = int(step_fhs[start_index - 1])
+            if base_fh != anchor_fh or base_cumulative is None:
+                prior = _kuchera_load_prior_cumulative(
+                    model_id=model_id,
+                    run_date=run_date,
+                    var_key=var_key,
+                    fh=anchor_fh,
+                    ctx=ctx,
+                )
+                if prior is None:
+                    start_index = 0
+                    base_cumulative = None
+                    base_crs = None
+                    base_transform = None
+                    base_fh = None
+                    reused_prev_cumulative = False
+                    continue
+                base_cumulative, base_crs, base_transform = prior
+                base_fh = anchor_fh
+
+        cum_diff_state = _ApcpCumDiffState()
+        subset_cumulative: np.ndarray | None = None
+        subset_valid_mask: np.ndarray | None = None
+        subset_crs: rasterio.crs.CRS | None = None
+        subset_transform: rasterio.transform.Affine | None = None
+        first_step_cumulative = False
+        steps_processed = 0
+
+        for local_step_index, step_fh in enumerate(subset_step_fhs):
+            step_apcp_data, apcp_valid, step_crs, step_transform, step_cumulative_mode = _resolve_apcp_step_data(
                 step_fh=step_fh,
+                step_index=local_step_index,
+                step_fhs=subset_step_fhs,
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
                 model_plugin=model_plugin,
+                ctx=ctx,
+                apcp_component=apcp_component,
+                apcp_product=apcp_product,
                 use_warped=use_warped,
                 target_region=target_region,
                 target_grid_id=target_grid_id,
                 resampling=resampling,
-                ctx=ctx,
-                expected_shape=step_apcp_clean.shape,
+                cum_diff_state=cum_diff_state,
             )
-            step_apcp_for_snow = _apply_kuchera_ptype_gate(step_apcp_clean, frozen_frac)
+            apcp_cumulative_fallback_used = apcp_cumulative_fallback_used or bool(step_cumulative_mode)
+            steps_processed += 1
+            if int(step_fh) == int(fh):
+                current_step_fetch_counts["apcp"] = current_step_fetch_counts.get("apcp", 0) + 1
 
-            finite_frozen = np.isfinite(frozen_frac)
-            if np.any(finite_frozen):
-                frozen_values = frozen_frac[finite_frozen]
-                ptype_stats["frozen_min"] = min(ptype_stats["frozen_min"], float(np.min(frozen_values)))
-                ptype_stats["frozen_max"] = max(ptype_stats["frozen_max"], float(np.max(frozen_values)))
-                ptype_stats["frozen_sum"] += float(np.sum(frozen_values, dtype=np.float64))
-                ptype_stats["frozen_count"] += float(frozen_values.size)
-            finite_apcp = np.isfinite(step_apcp_clean)
-            if np.any(finite_apcp):
-                apcp_values = step_apcp_clean[finite_apcp]
-                ptype_stats["apcp_min"] = min(ptype_stats["apcp_min"], float(np.min(apcp_values)))
-                ptype_stats["apcp_max"] = max(ptype_stats["apcp_max"], float(np.max(apcp_values)))
-            finite_apcp_frozen = np.isfinite(step_apcp_for_snow)
-            if np.any(finite_apcp_frozen):
-                apcp_frozen_values = step_apcp_for_snow[finite_apcp_frozen]
-                ptype_stats["apcp_frozen_min"] = min(ptype_stats["apcp_frozen_min"], float(np.min(apcp_frozen_values)))
-                ptype_stats["apcp_frozen_max"] = max(ptype_stats["apcp_frozen_max"], float(np.max(apcp_frozen_values)))
+            if local_step_index == 0 and step_cumulative_mode and start_index > 0:
+                first_step_cumulative = True
+                break
 
-            precip_mask = apcp_valid & np.isfinite(step_apcp_clean) & (step_apcp_clean > 0.0) & np.isfinite(frozen_frac)
-            if np.any(precip_mask):
-                ptype_any_precip_pixels = True
-                if np.any(frozen_frac[precip_mask] < 0.999):
-                    ptype_any_reduced_pixels = True
+            assert apcp_valid is not None
+            step_apcp_clean = step_apcp_data
+            if min_step_lwe > 0.0:
+                step_apcp_clean = np.where(
+                    step_apcp_clean >= min_step_lwe,
+                    step_apcp_clean,
+                    0.0,
+                ).astype(np.float32, copy=False)
 
-        step_levels: list[int] = []
-        step_temps: list[np.ndarray] = []
-        for level_hpa in levels_hpa:
-            _p_temp = _profile.get((step_fh, level_hpa))
-            if _p_temp is None:
-                continue
-            if _p_temp.shape != step_apcp_clean.shape:
+            step_apcp_for_snow = step_apcp_clean
+            if use_ptype_gate:
+                frozen_frac, _ptype_fallback_used, ptype_fetch_count = _kuchera_frozen_fraction_for_step(
+                    model_id=model_id,
+                    var_key=var_key,
+                    product=str(ptype_product),
+                    run_date=run_date,
+                    step_fh=step_fh,
+                    model_plugin=model_plugin,
+                    use_warped=use_warped,
+                    target_region=target_region,
+                    target_grid_id=target_grid_id,
+                    resampling=resampling,
+                    ctx=ctx,
+                    expected_shape=step_apcp_clean.shape,
+                )
+                if int(step_fh) == int(fh):
+                    current_step_fetch_counts["ptype"] = current_step_fetch_counts.get("ptype", 0) + int(ptype_fetch_count)
+                step_apcp_for_snow = _apply_kuchera_ptype_gate(step_apcp_clean, frozen_frac)
+
+                finite_frozen = np.isfinite(frozen_frac)
+                if np.any(finite_frozen):
+                    frozen_values = frozen_frac[finite_frozen]
+                    ptype_stats["frozen_min"] = min(ptype_stats["frozen_min"], float(np.min(frozen_values)))
+                    ptype_stats["frozen_max"] = max(ptype_stats["frozen_max"], float(np.max(frozen_values)))
+                    ptype_stats["frozen_sum"] += float(np.sum(frozen_values, dtype=np.float64))
+                    ptype_stats["frozen_count"] += float(frozen_values.size)
+                finite_apcp = np.isfinite(step_apcp_clean)
+                if np.any(finite_apcp):
+                    apcp_values = step_apcp_clean[finite_apcp]
+                    ptype_stats["apcp_min"] = min(ptype_stats["apcp_min"], float(np.min(apcp_values)))
+                    ptype_stats["apcp_max"] = max(ptype_stats["apcp_max"], float(np.max(apcp_values)))
+                finite_apcp_frozen = np.isfinite(step_apcp_for_snow)
+                if np.any(finite_apcp_frozen):
+                    apcp_frozen_values = step_apcp_for_snow[finite_apcp_frozen]
+                    ptype_stats["apcp_frozen_min"] = min(ptype_stats["apcp_frozen_min"], float(np.min(apcp_frozen_values)))
+                    ptype_stats["apcp_frozen_max"] = max(ptype_stats["apcp_frozen_max"], float(np.max(apcp_frozen_values)))
+
+                precip_mask = apcp_valid & np.isfinite(step_apcp_clean) & (step_apcp_clean > 0.0) & np.isfinite(frozen_frac)
+                if np.any(precip_mask):
+                    ptype_any_precip_pixels = True
+                    if np.any(frozen_frac[precip_mask] < 0.999):
+                        ptype_any_reduced_pixels = True
+
+            step_levels: list[int] = []
+            step_temps: list[np.ndarray] = []
+            for level_hpa in profile_levels_hpa:
+                try:
+                    step_temp, _, _ = _fetch_step_component(
+                        model_id=model_id,
+                        product=resolved_profile_product,
+                        run_date=run_date,
+                        step_fh=step_fh,
+                        model_plugin=model_plugin,
+                        var_key=f"tmp{int(level_hpa)}",
+                        use_warped=use_warped,
+                        target_region=target_region,
+                        target_grid_id=target_grid_id,
+                        resampling=resampling,
+                        ctx=ctx,
+                    )
+                    if int(step_fh) == int(fh):
+                        current_step_fetch_counts["profile_temp"] = current_step_fetch_counts.get("profile_temp", 0) + 1
+                except (HerbieTransientUnavailableError, RuntimeError, ValueError):
+                    continue
+                if step_temp.shape != step_apcp_clean.shape:
+                    raise ValueError(
+                        f"Kuchera temp shape mismatch for {model_id}/{var_key} at fh{step_fh:03d} "
+                        f"level={level_hpa}: {step_temp.shape} != {step_apcp_clean.shape}"
+                    )
+                step_levels.append(int(level_hpa))
+                step_temps.append(step_temp.astype(np.float32, copy=False))
+
+            step_max_t_k = np.full(step_apcp_clean.shape, np.nan, dtype=np.float32)
+            if not step_levels:
+                if not fallback_profile_logged:
+                    logger.info(
+                        "kuchera_profile insufficient_levels=0/%d fallback=10to1",
+                        len(profile_levels_hpa),
+                    )
+                    fallback_profile_logged = True
+                fallback_used = True
+                step_slr = np.full(step_apcp_clean.shape, 10.0, dtype=np.float32)
+            else:
+                if len(step_levels) < len(profile_levels_hpa) and not missing_level_warning_logged:
+                    missing_levels = sorted(level for level in profile_levels_hpa if level not in set(step_levels))
+                    logger.warning(
+                        "kuchera_maxt_low500 missing_levels available=%d/%d step_fh=%03d missing=%s",
+                        len(step_levels),
+                        len(profile_levels_hpa),
+                        step_fh,
+                        missing_levels,
+                    )
+                    missing_level_warning_logged = True
+                if len(step_levels) < min(2, len(profile_levels_hpa)) and not sparse_level_warning_logged:
+                    logger.warning(
+                        "kuchera_maxt_low500 sparse_levels available=%d/%d step_fh=%03d using_warmest_available=true",
+                        len(step_levels),
+                        len(profile_levels_hpa),
+                        step_fh,
+                    )
+                    sparse_level_warning_logged = True
+                step_max_t_k = _kuchera_maxt_low500_from_temp_stack_k(step_temps)
+                step_slr = _kuchera_ratio_from_maxt_low500_k(step_max_t_k)
+                step_slr = np.where(np.isfinite(step_slr), step_slr, 10.0).astype(np.float32, copy=False)
+
+            valid_precip_ratio = (
+                apcp_valid
+                & np.isfinite(step_apcp_for_snow)
+                & (step_apcp_for_snow > 0.0)
+                & np.isfinite(step_slr)
+            )
+            if np.any(valid_precip_ratio):
+                ratio_values = step_slr[valid_precip_ratio]
+                kuchera_maxt_stats["ratio_min"] = min(kuchera_maxt_stats["ratio_min"], float(np.min(ratio_values)))
+                kuchera_maxt_stats["ratio_max"] = max(kuchera_maxt_stats["ratio_max"], float(np.max(ratio_values)))
+                kuchera_maxt_stats["ratio_sum"] += float(np.sum(ratio_values, dtype=np.float64))
+                kuchera_maxt_stats["ratio_count"] += float(ratio_values.size)
+                kuchera_maxt_stats["ratio_clamp_max_count"] += float(
+                    np.count_nonzero(ratio_values >= (_KUCHERA_RATIO_CLAMP_MAX - np.float32(1e-6)))
+                )
+
+                valid_max_t = valid_precip_ratio & np.isfinite(step_max_t_k)
+                if np.any(valid_max_t):
+                    max_t_values = step_max_t_k[valid_max_t]
+                    kuchera_maxt_stats["max_t_min"] = min(kuchera_maxt_stats["max_t_min"], float(np.min(max_t_values)))
+                    kuchera_maxt_stats["max_t_max"] = max(kuchera_maxt_stats["max_t_max"], float(np.max(max_t_values)))
+                    kuchera_maxt_stats["max_t_sum"] += float(np.sum(max_t_values, dtype=np.float64))
+                    kuchera_maxt_stats["max_t_count"] += float(max_t_values.size)
+
+            contribution = (step_apcp_for_snow * step_slr).astype(np.float32, copy=False)
+            step_valid = apcp_valid & np.isfinite(step_slr)
+
+            if subset_cumulative is None:
+                subset_cumulative = contribution
+                subset_valid_mask = step_valid
+                subset_crs = step_crs
+                subset_transform = step_transform
+            else:
+                if contribution.shape != subset_cumulative.shape:
+                    raise ValueError(
+                        f"Kuchera contribution shape mismatch at fh{step_fh:03d}: "
+                        f"{contribution.shape} != {subset_cumulative.shape}"
+                    )
+                subset_cumulative = (subset_cumulative + contribution).astype(np.float32, copy=False)
+                subset_valid_mask = np.logical_or(subset_valid_mask, step_valid)
+
+        if first_step_cumulative and start_index > 0:
+            start_index -= 1
+            reused_prev_cumulative = reused_prev_cumulative and start_index == len(step_fhs) - 1
+            continue
+
+        if subset_cumulative is None or subset_valid_mask is None or subset_crs is None or subset_transform is None:
+            raise ValueError(f"No cumulative Kuchera source steps resolved for {model_id}/{var_key} fh{fh:03d}")
+
+        if base_cumulative is not None and base_crs is not None and base_transform is not None:
+            base_data = np.asarray(base_cumulative, dtype=np.float32)
+            shape_match = base_data.shape == subset_cumulative.shape
+            crs_match = base_crs == subset_crs
+            transform_match = base_transform == subset_transform
+            if not (shape_match and crs_match and transform_match):
+                if start_index > 0:
+                    logger.warning(
+                        "kuchera_incremental base-grid mismatch at fh=%03d; retrying full rebuild "
+                        "(shape_match=%s crs_match=%s transform_match=%s)",
+                        fh,
+                        shape_match,
+                        crs_match,
+                        transform_match,
+                    )
+                    start_index = 0
+                    base_cumulative = None
+                    base_crs = None
+                    base_transform = None
+                    base_fh = None
+                    reused_prev_cumulative = False
+                    continue
                 raise ValueError(
-                    f"Kuchera temp shape mismatch for {model_id}/{var_key} at fh{step_fh:03d} level={level_hpa}: "
-                    f"{_p_temp.shape} != {step_apcp_clean.shape}"
+                    f"Kuchera incremental base-grid mismatch for {model_id}/{var_key} fh{fh:03d}"
                 )
-            step_levels.append(level_hpa)
-            step_temps.append(_p_temp)
 
-        step_max_t_k = np.full(step_apcp_clean.shape, np.nan, dtype=np.float32)
-        if not step_levels:
-            if not fallback_profile_logged:
-                logger.info(
-                    "kuchera_profile insufficient_levels=0/%d fallback=10to1",
-                    len(levels_hpa),
-                )
-                fallback_profile_logged = True
-            fallback_used = True
-            step_slr = np.full(step_apcp_clean.shape, 10.0, dtype=np.float32)
+            base_valid = np.isfinite(base_data)
+            base_clean = np.where(base_valid, base_data, 0.0).astype(np.float32, copy=False)
+            subset_clean = np.where(subset_valid_mask, subset_cumulative, 0.0).astype(np.float32, copy=False)
+            cumulative_kgm2 = (base_clean + subset_clean).astype(np.float32, copy=False)
+            valid_mask = base_valid | subset_valid_mask
+            src_crs = base_crs
+            src_transform = base_transform
         else:
-            if len(step_levels) < len(levels_hpa) and not missing_level_warning_logged:
-                missing_levels = sorted(level for level in levels_hpa if level not in set(step_levels))
-                logger.warning(
-                    "kuchera_maxt_low500 missing_levels available=%d/%d step_fh=%03d missing=%s",
-                    len(step_levels),
-                    len(levels_hpa),
-                    step_fh,
-                    missing_levels,
-                )
-                missing_level_warning_logged = True
-            if len(step_levels) < 3 and not sparse_level_warning_logged:
-                logger.warning(
-                    "kuchera_maxt_low500 sparse_levels available=%d/%d step_fh=%03d using_warmest_available=true",
-                    len(step_levels),
-                    len(levels_hpa),
-                    step_fh,
-                )
-                sparse_level_warning_logged = True
-            step_max_t_k = _kuchera_maxt_low500_from_temp_stack_k(step_temps)
-            step_slr = _kuchera_ratio_from_maxt_low500_k(step_max_t_k)
-            step_slr = np.where(np.isfinite(step_slr), step_slr, 10.0).astype(np.float32, copy=False)
+            cumulative_kgm2 = subset_cumulative.astype(np.float32, copy=False)
+            valid_mask = subset_valid_mask
+            src_crs = subset_crs
+            src_transform = subset_transform
+        break
 
-        valid_precip_ratio = (
-            apcp_valid
-            & np.isfinite(step_apcp_for_snow)
-            & (step_apcp_for_snow > 0.0)
-            & np.isfinite(step_slr)
-        )
-        if np.any(valid_precip_ratio):
-            ratio_values = step_slr[valid_precip_ratio]
-            kuchera_maxt_stats["ratio_min"] = min(kuchera_maxt_stats["ratio_min"], float(np.min(ratio_values)))
-            kuchera_maxt_stats["ratio_max"] = max(kuchera_maxt_stats["ratio_max"], float(np.max(ratio_values)))
-            kuchera_maxt_stats["ratio_sum"] += float(np.sum(ratio_values, dtype=np.float64))
-            kuchera_maxt_stats["ratio_count"] += float(ratio_values.size)
-            kuchera_maxt_stats["ratio_clamp_max_count"] += float(
-                np.count_nonzero(ratio_values >= (_KUCHERA_RATIO_CLAMP_MAX - np.float32(1e-6)))
-            )
-
-            valid_max_t = valid_precip_ratio & np.isfinite(step_max_t_k)
-            if np.any(valid_max_t):
-                max_t_values = step_max_t_k[valid_max_t]
-                kuchera_maxt_stats["max_t_min"] = min(kuchera_maxt_stats["max_t_min"], float(np.min(max_t_values)))
-                kuchera_maxt_stats["max_t_max"] = max(kuchera_maxt_stats["max_t_max"], float(np.max(max_t_values)))
-                kuchera_maxt_stats["max_t_sum"] += float(np.sum(max_t_values, dtype=np.float64))
-                kuchera_maxt_stats["max_t_count"] += float(max_t_values.size)
-
-        step_snow_kgm2 = (step_apcp_for_snow * step_slr).astype(np.float32, copy=False)
-        step_valid = apcp_valid & np.isfinite(step_slr)
-        return step_snow_kgm2, step_valid
-
-    cumulative_kgm2, src_crs, src_transform, apcp_cumulative_fallback_used = _cumulative_apcp_loop(
-        model_id=model_id,
-        var_key=var_key,
-        product=product,
-        run_date=run_date,
-        fh=fh,
-        step_fhs=step_fhs,
-        model_plugin=model_plugin,
-        ctx=ctx,
-        apcp_component=apcp_component,
-        apcp_product=apcp_product,
-        use_warped=use_warped,
-        target_region=target_region,
-        target_grid_id=target_grid_id,
-        resampling=resampling,
-        use_inventory_resolution=True,
-        process_step=_process_step,
-        error_label=f"No cumulative Kuchera snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}",
-    )
-
+    cumulative_kgm2 = np.where(valid_mask, cumulative_kgm2, np.nan).astype(np.float32, copy=False)
     cumulative_snow_inches = cumulative_kgm2 * 0.03937007874015748
     if use_ptype_gate and ptype_stats["frozen_count"] > 0:
         frozen_mean = ptype_stats["frozen_sum"] / ptype_stats["frozen_count"]
@@ -2288,7 +2533,29 @@ def _derive_snowfall_kuchera_total_cumulative(
     )
     logger.info(
         "snow_ratio method=kuchera fh=%d levels=%s fallback=%s",
-        fh, levels_hpa, "10to1" if fallback_used else "none",
+        fh, profile_levels_hpa, "10to1" if fallback_used else "none",
+    )
+    logger.info(
+        "kuchera_incremental fh=%03d total_steps=%d computed_steps=%d reused_prev_cumulative=%s "
+        "base_fh=%s current_step_fetches=%s compute_ms=%d",
+        fh,
+        len(step_fhs),
+        steps_processed,
+        "true" if reused_prev_cumulative else "false",
+        f"{base_fh:03d}" if base_fh is not None else "none",
+        current_step_fetch_counts,
+        int((time.perf_counter() - frame_start) * 1000),
+    )
+
+    _kuchera_store_cumulative_cache(
+        model_id=model_id,
+        run_date=run_date,
+        var_key=var_key,
+        fh=fh,
+        data=cumulative_kgm2,
+        crs=src_crs,
+        transform=src_transform,
+        ctx=ctx,
     )
     return cumulative_snow_inches.astype(np.float32, copy=False), src_crs, src_transform
 
@@ -2326,7 +2593,7 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
     ),
     "snowfall_kuchera_total_cumulative": DeriveStrategy(
         id="snowfall_kuchera_total_cumulative",
-        required_inputs=("apcp_step", "tmp925", "tmp850", "tmp700", "tmp600", "tmp500"),
+        required_inputs=("apcp_step", "tmp850", "tmp700"),
         output_var_key="snowfall_kuchera_total",
         execute=_derive_snowfall_kuchera_total_cumulative,
     ),

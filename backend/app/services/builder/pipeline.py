@@ -801,6 +801,8 @@ def build_frame(
     run_id = _run_id_from_date(run_date)
     fh_str = f"fh{fh:03d}"
     local_fetch_ctx = fetch_ctx or FetchContext(coverage=region)
+    setattr(local_fetch_ctx, "data_root", str(data_root))
+    setattr(local_fetch_ctx, "run_id", run_id)
     if getattr(local_fetch_ctx, "bundle_fetch_cache", None) is None:
         local_fetch_ctx.bundle_fetch_cache = new_bundle_fetch_cache()
     fetch_stats_logged = False
