@@ -30,6 +30,7 @@ import {
   anchorBatchPointsFromGeoJson,
   buildAnchorDisplayGeoJson,
   buildInactiveAnchorFeatureCollection,
+  resolveAnchorDisplayRule,
   type AnchorFeatureCollection,
 } from "@/lib/anchor-labels";
 import {
@@ -2546,6 +2547,11 @@ export default function App() {
     if (anchorSelectionKeyRef.current !== selectionKey) {
       anchorSelectionKeyRef.current = selectionKey;
       setAnchorDisplayGeoJson(buildInactiveAnchorFeatureCollection(anchorBaseGeoJson));
+    }
+
+    if (variable && resolveAnchorDisplayRule(variable).mode === "hidden") {
+      setAnchorDisplayGeoJson(buildInactiveAnchorFeatureCollection(anchorBaseGeoJson));
+      return;
     }
 
     if (
