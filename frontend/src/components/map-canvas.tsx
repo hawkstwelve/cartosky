@@ -91,7 +91,6 @@ const LAKE_SHORELINE_LAYER_ID = "twf-lake-shoreline";
 const LOOP_SOURCE_ID = "twf-loop-image";
 const LOOP_LAYER_ID = "twf-loop-image";
 const ANCHOR_SOURCE_ID = "twf-anchors";
-const ANCHOR_DOT_LAYER_ID = "twf-anchors-dot";
 const ANCHOR_LABEL_LAYER_ID = "twf-anchors-label";
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -272,25 +271,13 @@ function setLayerVisibility(map: maplibregl.Map, id: string, visible: boolean) {
   map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
 }
 
-function getAnchorDotPaint(basemapMode: BasemapMode): Record<string, unknown> {
-  return {
-    "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 1.1, 5, 1.6, 8, 2.2],
-    "circle-color": basemapMode === "dark" ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.6)",
-    "circle-stroke-color": basemapMode === "dark" ? "rgba(6,10,16,0.9)" : "rgba(16,24,32,0.78)",
-    "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 3, 0.9, 8, 1.15],
-    "circle-opacity": ["case", ["boolean", ["get", "active"], false], 0.8, 0],
-    "circle-stroke-opacity": ["case", ["boolean", ["get", "active"], false], 0.9, 0],
-    "circle-blur": 0.05,
-  };
-}
-
 function getAnchorLabelPaint(): Record<string, unknown> {
   return {
-    "text-color": "rgba(255,255,255,0.96)",
+    "text-color": "rgba(15,23,42,0.96)",
     "text-opacity": ["case", ["boolean", ["get", "active"], false], 1, 0],
-    "text-halo-color": "rgba(8,12,18,0.94)",
-    "text-halo-width": ["interpolate", ["linear"], ["zoom"], 3, 2.1, 8, 2.8],
-    "text-halo-blur": 0.7,
+    "text-halo-color": "rgba(255,255,255,0.98)",
+    "text-halo-width": ["interpolate", ["linear"], ["zoom"], 3, 2.8, 6, 3.3, 8, 3.8],
+    "text-halo-blur": 0.3,
   };
 }
 
@@ -345,7 +332,6 @@ function styleFor(
   const lakeFillColor = getLakeFillColor(basemapMode);
   const basemapPaint = getBasemapPaintSettings(basemapMode);
   const labelPaint = getLabelPaintSettings(basemapMode);
-  const anchorDotPaint = getAnchorDotPaint(basemapMode);
   const anchorLabelPaint = getAnchorLabelPaint();
   const overlayOpacity: any = overlayFadeOutZoom
     ? [
@@ -585,15 +571,6 @@ function styleFor(
         },
       },
       {
-        id: ANCHOR_DOT_LAYER_ID,
-        type: "circle",
-        source: ANCHOR_SOURCE_ID,
-        layout: {
-          visibility: pointLabelsEnabled ? "visible" : "none",
-        },
-        paint: anchorDotPaint as any,
-      },
-      {
         id: ANCHOR_LABEL_LAYER_ID,
         type: "symbol",
         source: ANCHOR_SOURCE_ID,
@@ -601,10 +578,11 @@ function styleFor(
           visibility: pointLabelsEnabled ? "visible" : "none",
           "text-field": ["coalesce", ["get", "label"], ""],
           "text-font": ["Open Sans Regular"],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 3, 9.5, 5.5, 10.5, 8, 11.5],
-          "text-anchor": "top",
-          "text-offset": [0, 0.9],
-          "text-padding": 3,
+          "text-size": ["interpolate", ["linear"], ["zoom"], 3, 8.5, 5.5, 9.25, 8, 10],
+          "text-anchor": "center",
+          "text-offset": [0, 0],
+          "text-padding": 2,
+          "text-letter-spacing": -0.02,
           "text-allow-overlap": false,
           "text-ignore-placement": false,
           "text-optional": true,
@@ -832,9 +810,6 @@ export function MapCanvas({
     if (map.getLayer(LAKE_SHORELINE_LAYER_ID)) {
       map.moveLayer(LAKE_SHORELINE_LAYER_ID, "twf-labels");
     }
-    if (map.getLayer(ANCHOR_DOT_LAYER_ID)) {
-      map.moveLayer(ANCHOR_DOT_LAYER_ID, "twf-labels");
-    }
     if (map.getLayer(ANCHOR_LABEL_LAYER_ID)) {
       map.moveLayer(ANCHOR_LABEL_LAYER_ID, "twf-labels");
     }
@@ -859,7 +834,6 @@ export function MapCanvas({
   }, []);
 
   const setAnchorLayerVisibility = useCallback((map: maplibregl.Map, visible: boolean) => {
-    setLayerVisibility(map, ANCHOR_DOT_LAYER_ID, visible);
     setLayerVisibility(map, ANCHOR_LABEL_LAYER_ID, visible);
   }, []);
 
