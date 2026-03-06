@@ -49,6 +49,7 @@ ENV_DEFAULT_POLL_SECONDS = "TWF_V3_SCHEDULER_POLL_SECONDS"
 ENV_DEFAULT_KEEP_RUNS = "TWF_V3_SCHEDULER_KEEP_RUNS"
 ENV_PROBE_VAR = "TWF_V3_SCHEDULER_PROBE_VAR"
 ENV_HERBIE_PRIORITY = "TWF_HERBIE_PRIORITY"
+ENV_HERBIE_SAVE_DIR = "HERBIE_SAVE_DIR"
 ENV_LOOP_PREGENERATE_ENABLED = "TWF_V3_LOOP_PREGENERATE_ENABLED"
 ENV_LOOP_CACHE_ROOT = "TWF_V3_LOOP_CACHE_ROOT"
 ENV_LOOP_PREGENERATE_WORKERS = "TWF_V3_LOOP_PREGENERATE_WORKERS"
@@ -908,6 +909,83 @@ def _enforce_run_retention(root: Path, keep_runs: int) -> None:
         shutil.rmtree(old_run_dir, ignore_errors=True)
 
 
+def _extract_herbie_run_id(path: Path, *, model_root: Path) -> str | None:
+    try:
+        relative = path.relative_to(model_root)
+    except ValueError:
+        return None
+    if len(relative.parts) < 2:
+        return None
+
+    day_token = relative.parts[0]
+    if not re.fullmatch(r"\d{8}", day_token):
+        return None
+
+    name = path.name.lower()
+    if name.endswith(".lock"):
+        name = name[:-5]
+    match = re.search(r"t(?P<hour>\d{2})z", name)
+    if match is None:
+        return None
+    return _run_id_from_dt(
+        datetime(
+            int(day_token[0:4]),
+            int(day_token[4:6]),
+            int(day_token[6:8]),
+            int(match.group("hour")),
+            tzinfo=timezone.utc,
+        )
+    )
+
+
+def _prune_empty_dirs(root: Path) -> None:
+    if not root.is_dir():
+        return
+    for child in sorted((path for path in root.rglob("*") if path.is_dir()), reverse=True):
+        try:
+            child.rmdir()
+        except OSError:
+            continue
+
+
+def _enforce_herbie_cache_retention(root: Path, model_id: str, keep_runs: int) -> None:
+    if keep_runs < 1:
+        return
+
+    model_root = root / model_id
+    if not model_root.is_dir():
+        return
+
+    run_files: dict[str, list[Path]] = {}
+    for path in model_root.rglob("*"):
+        if not path.is_file():
+            continue
+        run_id = _extract_herbie_run_id(path, model_root=model_root)
+        if run_id is None:
+            continue
+        run_files.setdefault(run_id, []).append(path)
+
+    if len(run_files) <= keep_runs:
+        return
+
+    sorted_runs = sorted(
+        run_files,
+        key=lambda run_id: _parse_run_id_datetime(run_id) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    keep_run_ids = set(sorted_runs[:keep_runs])
+    for run_id in sorted_runs[keep_runs:]:
+        for path in run_files.get(run_id, []):
+            logger.info("Removing old Herbie cache file: %s", path)
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                logger.warning("Failed removing old Herbie cache file: %s", path)
+    _prune_empty_dirs(model_root)
+
+
 def _convert_rgba_cog_to_loop_webp(
     *,
     model_id: str,
@@ -1455,6 +1533,9 @@ def _process_run(
     _enforce_run_retention(data_root / "staging" / model_id, keep_runs)
     _enforce_run_retention(data_root / "published" / model_id, keep_runs)
     _enforce_run_retention(loop_cache_root / model_id, keep_runs)
+    herbie_save_dir_raw = os.getenv(ENV_HERBIE_SAVE_DIR, "").strip()
+    if herbie_save_dir_raw:
+        _enforce_herbie_cache_retention(Path(herbie_save_dir_raw).resolve(), model_id, keep_runs)
 
     available = 0
     for var_id, fh in targets:
@@ -1616,7 +1697,7 @@ def main(argv: list[str] | None = None) -> int:
     keep_runs = (
         int(args.keep_runs)
         if args.keep_runs is not None
-        else _int_from_env(ENV_DEFAULT_KEEP_RUNS, 2, min_value=1)
+        else _int_from_env(ENV_DEFAULT_KEEP_RUNS, 4, min_value=1)
     )
     probe_var = None
     if isinstance(args.probe_var, str) and args.probe_var.strip():

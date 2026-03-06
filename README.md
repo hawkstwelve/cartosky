@@ -151,7 +151,7 @@ Set `VITE_TWF_V3_WEBP_DEFAULT_ENABLED=1` to enable adaptive WebP rendering (on b
 | `TWF_V3_SCHEDULER_VARS` | `tmp2m,tmp850,dp2m,…` | Variables to build each run |
 | `TWF_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Variables built first (probe for availability) |
 | `TWF_V3_SCHEDULER_POLL_SECONDS` | `300` | Idle poll interval |
-| `TWF_V3_SCHEDULER_KEEP_RUNS` | `2` | Number of completed runs to retain |
+| `TWF_V3_SCHEDULER_KEEP_RUNS` | `4` | Number of completed runs to retain |
 | `TWF_V3_LOOP_PREGENERATE_ENABLED` | `0` | Enable post-publish loop WebP generation |
 | `TWF_V3_LOOP_CACHE_ROOT` | — | Loop WebP output dir (keep in sync with API) |
 | `TWF_V3_LOOP_PREGENERATE_WORKERS` | — | Parallel WebP encoding workers |

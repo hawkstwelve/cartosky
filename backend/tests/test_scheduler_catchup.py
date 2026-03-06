@@ -261,6 +261,75 @@ def test_process_run_publishes_early_then_refreshes_after_more_progress(
     assert pointer_calls == 2
 
 
+def test_enforce_herbie_cache_retention_keeps_latest_four_runs(tmp_path: Path) -> None:
+    herbie_root = tmp_path / "herbie_cache"
+    model_root = herbie_root / "hrrr"
+    kept = {
+        "20260227_18z",
+        "20260227_12z",
+        "20260227_06z",
+        "20260227_00z",
+    }
+    removed = {
+        "20260226_18z",
+        "20260226_12z",
+    }
+
+    files = {
+        "20260227_18z": [
+            model_root / "20260227" / "hrrr.t18z.wrfsfcf00.grib2",
+            model_root / "20260227" / "subset_deadbeef__hrrr.t18z.wrfsfcf00.grib2",
+            model_root / "20260227" / "subset_deadbeef__hrrr.t18z.wrfsfcf00.grib2.lock",
+        ],
+        "20260227_12z": [model_root / "20260227" / "hrrr.t12z.wrfsfcf00.grib2"],
+        "20260227_06z": [model_root / "20260227" / "hrrr.t06z.wrfsfcf00.grib2"],
+        "20260227_00z": [model_root / "20260227" / "hrrr.t00z.wrfsfcf00.grib2"],
+        "20260226_18z": [model_root / "20260226" / "hrrr.t18z.wrfsfcf00.grib2"],
+        "20260226_12z": [model_root / "20260226" / "subset_badcafe__hrrr.t12z.wrfsfcf00.grib2"],
+    }
+    for paths in files.values():
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x")
+
+    scheduler_module._enforce_herbie_cache_retention(herbie_root, "hrrr", 4)
+
+    for run_id in kept:
+        for path in files[run_id]:
+            assert path.exists()
+    for run_id in removed:
+        for path in files[run_id]:
+            assert not path.exists()
+    assert not (model_root / "20260226").exists()
+
+
+def test_enforce_herbie_cache_retention_preserves_unparsed_files(tmp_path: Path) -> None:
+    herbie_root = tmp_path / "herbie_cache"
+    model_root = herbie_root / "gfs"
+    legacy_note = model_root / "20260226" / "README.txt"
+    legacy_note.parent.mkdir(parents=True, exist_ok=True)
+    legacy_note.write_text("keep me")
+
+    run_ids = [
+        "20260227_18z",
+        "20260227_12z",
+        "20260227_06z",
+        "20260227_00z",
+        "20260226_18z",
+    ]
+    for run_id in run_ids:
+        day, hour = run_id.split("_")
+        path = model_root / day / f"gfs.t{hour[:2]}z.pgrb2.0p25.f000"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(run_id)
+
+    scheduler_module._enforce_herbie_cache_retention(herbie_root, "gfs", 4)
+
+    assert legacy_note.exists()
+    assert not (model_root / "20260226" / "gfs.t18z.pgrb2.0p25.f000").exists()
+    assert (model_root / "20260227" / "gfs.t18z.pgrb2.0p25.f000").exists()
+
+
 def test_process_run_pregenerates_loop_cache_on_publish_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
