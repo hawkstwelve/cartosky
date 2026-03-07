@@ -142,7 +142,7 @@ function ToolbarSelect(props: {
 
 function DisplayToggle(props: {
   label: string;
-  description: string;
+  description?: string;
   checked: boolean;
   onToggle: () => void;
 }) {
@@ -162,7 +162,7 @@ function DisplayToggle(props: {
     >
       <div className="min-w-0">
         <div className="text-sm font-semibold">{label}</div>
-        <div className="text-[11px] text-white/58">{description}</div>
+        {description ? <div className="text-[11px] text-white/58">{description}</div> : null}
       </div>
       <div
         className={cn(
@@ -383,13 +383,11 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               <div className="space-y-2">
                 <DisplayToggle
                   label="City Labels"
-                  description="Show anchor labels for sampled locations."
                   checked={pointLabelsEnabled}
                   onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
                 />
                 <DisplayToggle
                   label="Legend"
-                  description="Show the color scale overlay."
                   checked={legendVisible}
                   onToggle={() => onLegendVisibleChange(!legendVisible)}
                 />

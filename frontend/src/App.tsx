@@ -3520,7 +3520,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="absolute bottom-28 right-4 z-40 hidden sm:block">
+        <div className="absolute right-4 bottom-24 z-40 hidden sm:block">
           {displayPanelOpen ? (
             <div className="glass mb-3 w-[220px] rounded-2xl px-3 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.35)]">
               <div className="mb-3">
@@ -3575,7 +3575,7 @@ export default function App() {
                     step={1}
                     value={Math.round(opacity * 100)}
                     onChange={(event) => setOpacity(Number(event.target.value) / 100)}
-                    className="h-2 w-full cursor-pointer accent-emerald-300"
+                    className="h-2 w-full cursor-pointer accent-[#6da18d]"
                     aria-label="Overlay opacity"
                   />
                 </div>
