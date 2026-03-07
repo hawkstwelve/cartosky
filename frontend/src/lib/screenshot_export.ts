@@ -28,10 +28,21 @@ const DEFAULT_HEIGHT = 900;
 const DEFAULT_PIXEL_RATIO = 2;
 const MAP_SETTLE_DELAY_MS = 150;
 const MAP_IDLE_TIMEOUT_MS = 15_000;
+const SCREENSHOT_LOGO_SRC = "/assets/logo.png";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
+  });
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+    image.src = src;
   });
 }
 
@@ -117,6 +128,38 @@ function defaultOverlayLines(state: ScreenshotExportState): string[] {
   return [`${model} • ${run} • FH ${state.fh}`, `${variableLabel} • ${regionLabel}`];
 }
 
+function drawGlassCard(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+): void {
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.28)";
+  ctx.shadowBlur = 22;
+  ctx.shadowOffsetY = 6;
+  ctx.fillStyle = "rgba(0,0,0,0.42)";
+  drawRoundedRect(ctx, x, y, width, height, radius);
+  ctx.fill();
+  ctx.restore();
+
+  const gradient = ctx.createLinearGradient(0, y, 0, y + height);
+  gradient.addColorStop(0, "rgba(255,255,255,0.05)");
+  gradient.addColorStop(0.35, "rgba(255,255,255,0.02)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.save();
+  ctx.fillStyle = gradient;
+  drawRoundedRect(ctx, x, y, width, height, radius);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.12)";
+  ctx.lineWidth = 1;
+  drawRoundedRect(ctx, x + 0.5, y + 0.5, width - 1, height - 1, Math.max(0, radius - 0.5));
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawOverlay(
   ctx: CanvasRenderingContext2D,
   lines: string[],
@@ -144,9 +187,7 @@ function drawOverlay(
   const boxWidth = Math.min(maxWidth, Math.ceil(textWidth) + paddingX * 2);
   const boxHeight = cleaned.length * lineHeight + paddingY * 2 - 4;
 
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  drawRoundedRect(ctx, boxX, boxY, boxWidth, boxHeight, 12);
-  ctx.fill();
+  drawGlassCard(ctx, boxX, boxY, boxWidth, boxHeight, 12);
 
   ctx.fillStyle = "rgba(255,255,255,0.96)";
   ctx.textBaseline = "top";
@@ -329,12 +370,12 @@ function drawBottomLegend(
   legend: LegendPayload,
   width: number,
   height: number,
-  watermarkReserve: number
+  bottomPadding: number
 ): void {
   const outerPadding = 18;
   const bandHeight = 96;
   const bandX = outerPadding;
-  const bandY = height - outerPadding - watermarkReserve - bandHeight;
+  const bandY = height - bottomPadding - bandHeight;
   const bandWidth = width - outerPadding * 2;
   const contentX = bandX + 18;
   const contentY = bandY + 14;
@@ -345,10 +386,7 @@ function drawBottomLegend(
   const headerText = compactLegendTitle(legend);
 
   ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  drawRoundedRect(ctx, bandX, bandY, bandWidth, bandHeight, 12);
-  ctx.fill();
-
+  drawGlassCard(ctx, bandX, bandY, bandWidth, bandHeight, 12);
   ctx.font = "700 17px system-ui, -apple-system, Segoe UI, sans-serif";
   drawLegendLabel(ctx, headerText, contentX, contentY + 14);
 
@@ -429,15 +467,26 @@ function drawBottomLegend(
   ctx.restore();
 }
 
-function drawWatermark(ctx: CanvasRenderingContext2D, width: number, height: number): void {
-  const text = "TheWeatherModels.com";
-  const padding = 16;
+async function drawLogo(ctx: CanvasRenderingContext2D, width: number): Promise<void> {
+  const logo = await loadImage(SCREENSHOT_LOGO_SRC);
+  const padding = 18;
+  const maxWidth = 180;
+  const maxHeight = 52;
+  const scale = Math.min(maxWidth / logo.width, maxHeight / logo.height);
+  const drawWidth = Math.max(1, Math.round(logo.width * scale));
+  const drawHeight = Math.max(1, Math.round(logo.height * scale));
+  const cardPaddingX = 14;
+  const cardPaddingY = 10;
+  const cardWidth = drawWidth + cardPaddingX * 2;
+  const cardHeight = drawHeight + cardPaddingY * 2;
+  const cardX = width - padding - cardWidth;
+  const cardY = padding;
+
+  drawGlassCard(ctx, cardX, cardY, cardWidth, cardHeight, 12);
   ctx.save();
-  ctx.font = "600 12px system-ui, -apple-system, Segoe UI, sans-serif";
-  ctx.fillStyle = "rgba(255,255,255,0.7)";
-  ctx.textAlign = "right";
-  ctx.textBaseline = "bottom";
-  ctx.fillText(text, width - padding, height - padding);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(logo, cardX + cardPaddingX, cardY + cardPaddingY, drawWidth, drawHeight);
   ctx.restore();
 }
 
@@ -509,11 +558,16 @@ export async function exportViewerScreenshotPng(
     outputCtx.drawImage(rawCanvas, 0, 0, width, height);
     drawOverlay(outputCtx, overlayLines, width);
 
-    const watermarkReserve = 34;
-    if (opts.legend) {
-      drawBottomLegend(outputCtx, opts.legend, width, height, watermarkReserve);
+    try {
+      await drawLogo(outputCtx, width);
+    } catch (error) {
+      console.warn("[screenshot] Logo load failed; continuing without logo.", error);
     }
-    drawWatermark(outputCtx, width, height);
+
+    const bottomPadding = 18;
+    if (opts.legend) {
+      drawBottomLegend(outputCtx, opts.legend, width, height, bottomPadding);
+    }
 
     return canvasToPngBlob(outputCanvas);
   } finally {
