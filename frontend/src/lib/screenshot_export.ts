@@ -178,6 +178,18 @@ function formatLegendValue(value: number): string {
   return value.toFixed(1);
 }
 
+function compactLegendTitle(legend: LegendPayload): string {
+  const title = legend.title.trim();
+  const units = legend.units?.trim();
+  if (!units) {
+    return title;
+  }
+  if (title.toLowerCase().includes(units.toLowerCase())) {
+    return title;
+  }
+  return `${title} (${units})`;
+}
+
 function radarGroupLabelForCode(code: string, index: number): string {
   const normalized = code.toLowerCase();
   if (normalized === "rain") return "Rain";
@@ -320,50 +332,43 @@ function drawBottomLegend(
   watermarkReserve: number
 ): void {
   const outerPadding = 18;
-  const bandHeight = 128;
+  const bandHeight = 96;
   const bandX = outerPadding;
   const bandY = height - outerPadding - watermarkReserve - bandHeight;
   const bandWidth = width - outerPadding * 2;
-  const contentX = bandX + 20;
-  const contentY = bandY + 18;
-  const contentWidth = bandWidth - 40;
-  const contentBottom = bandY + bandHeight - 16;
-  const barY = contentBottom - 26;
-  const sectionTop = contentY + 44;
+  const contentX = bandX + 18;
+  const contentY = bandY + 14;
+  const contentWidth = bandWidth - 36;
+  const contentBottom = bandY + bandHeight - 14;
+  const barY = contentBottom - 20;
+  const sectionTop = contentY + 24;
+  const headerText = compactLegendTitle(legend);
 
   ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.66)";
-  drawRoundedRect(ctx, bandX, bandY, bandWidth, bandHeight, 16);
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  drawRoundedRect(ctx, bandX, bandY, bandWidth, bandHeight, 12);
   ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.12)";
-  ctx.lineWidth = 1;
-  ctx.stroke();
 
-  ctx.font = "700 20px system-ui, -apple-system, Segoe UI, sans-serif";
-  drawLegendLabel(ctx, legend.title, contentX, contentY + 18);
-
-  if (legend.units) {
-    ctx.font = "600 12px system-ui, -apple-system, Segoe UI, sans-serif";
-    drawLegendLabel(ctx, legend.units, contentX, contentY + 36);
-  }
+  ctx.font = "700 17px system-ui, -apple-system, Segoe UI, sans-serif";
+  drawLegendLabel(ctx, headerText, contentX, contentY + 14);
 
   if (isPrecipPtypeLegend(legend)) {
     const rows = groupPrecipPtypeRows(legend);
     if (rows.length > 0) {
-      const gap = 14;
+      const gap = 12;
       const sectionWidth = (contentWidth - gap * (rows.length - 1)) / rows.length;
       rows.forEach((row, index) => {
         const x = contentX + index * (sectionWidth + gap);
-        ctx.font = "700 11px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(ctx, row.label.toUpperCase(), x, sectionTop + 10);
-        ctx.font = "600 12px system-ui, -apple-system, Segoe UI, sans-serif";
+        ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
+        drawLegendLabel(ctx, row.label.toUpperCase(), x, sectionTop + 8);
+        ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
         drawLegendLabel(
           ctx,
-          `${formatLegendValue(row.min)}-${formatLegendValue(row.max)}${legend.units ? ` ${legend.units}` : ""}`,
+          `${formatLegendValue(row.min)}-${formatLegendValue(row.max)}`,
           x,
-          sectionTop + 28
+          sectionTop + 22
         );
-        fillHorizontalGradient(ctx, x, barY, sectionWidth, 18, row.colors);
+        fillHorizontalGradient(ctx, x, barY, sectionWidth, 14, row.colors);
         ctx.strokeStyle = "rgba(255,255,255,0.18)";
         ctx.stroke();
       });
@@ -375,24 +380,24 @@ function drawBottomLegend(
   if (isRadarPtypeLegend(legend)) {
     const groups = groupRadarEntries(legend);
     if (groups.length > 0) {
-      const gap = 14;
+      const gap = 12;
       const sectionWidth = (contentWidth - gap * (groups.length - 1)) / groups.length;
       groups.forEach((group, groupIndex) => {
         const x = contentX + groupIndex * (sectionWidth + gap);
-        ctx.font = "700 11px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(ctx, group.label.toUpperCase(), x, sectionTop + 10);
+        ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
+        drawLegendLabel(ctx, group.label.toUpperCase(), x, sectionTop + 8);
         const values = group.entries.slice().reverse();
-        const swatchCount = Math.min(5, values.length);
-        const swatchGap = 8;
+        const swatchCount = Math.min(4, values.length);
+        const swatchGap = 6;
         const swatchWidth = (sectionWidth - swatchGap * Math.max(0, swatchCount - 1)) / Math.max(1, swatchCount);
         for (let index = 0; index < swatchCount; index += 1) {
           const entry = values[Math.round((index / Math.max(1, swatchCount - 1)) * (values.length - 1))];
           const swatchX = x + index * (swatchWidth + swatchGap);
           ctx.fillStyle = entry.color;
-          drawRoundedRect(ctx, swatchX, barY, swatchWidth, 18, 6);
+          drawRoundedRect(ctx, swatchX, barY, swatchWidth, 14, 5);
           ctx.fill();
-          ctx.font = "600 10px system-ui, -apple-system, Segoe UI, sans-serif";
-          drawLegendLabel(ctx, formatLegendValue(entry.value), swatchX, barY - 6);
+          ctx.font = "600 9px system-ui, -apple-system, Segoe UI, sans-serif";
+          drawLegendLabel(ctx, formatLegendValue(entry.value), swatchX, barY - 4);
         }
       });
       ctx.restore();
@@ -405,7 +410,7 @@ function drawBottomLegend(
     return;
   }
 
-  fillHorizontalGradient(ctx, contentX, barY, contentWidth, 20, legend.entries.map((entry) => entry.color));
+  fillHorizontalGradient(ctx, contentX, barY, contentWidth, 16, legend.entries.map((entry) => entry.color));
   ctx.strokeStyle = "rgba(255,255,255,0.18)";
   ctx.stroke();
 
@@ -413,13 +418,13 @@ function drawBottomLegend(
     Math.min(legend.entries.length - 1, Math.max(0, Math.round((legend.entries.length - 1) * ratio)))
   );
   const dedupedIndices = labelIndices.filter((value, index) => index === 0 || value !== labelIndices[index - 1]);
-  ctx.font = "600 12px system-ui, -apple-system, Segoe UI, sans-serif";
+  ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
   dedupedIndices.forEach((entryIndex, index) => {
     const entry = legend.entries[entryIndex];
     const ratio = dedupedIndices.length === 1 ? 0 : index / (dedupedIndices.length - 1);
     const labelX = contentX + ratio * contentWidth;
     const align: CanvasTextAlign = index === 0 ? "left" : index === dedupedIndices.length - 1 ? "right" : "center";
-    drawLegendLabel(ctx, formatLegendValue(entry.value), labelX, barY - 8, align);
+    drawLegendLabel(ctx, formatLegendValue(entry.value), labelX, barY - 4, align);
   });
   ctx.restore();
 }
