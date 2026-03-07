@@ -3,6 +3,7 @@ import {
   Boxes,
   CalendarClock,
   ChevronDown,
+  ChevronUp,
   Layers,
   MapPin,
   Send,
@@ -128,7 +129,7 @@ function ToolbarSelect(props: {
       <Select value={value} onValueChange={onValueChange} disabled={disabled || options.length === 0}>
         <SelectTrigger
           className={cn(
-            "h-7.5 w-full border-border/50 bg-secondary/40 px-2.5 text-[12px] font-medium text-foreground shadow-sm transition-all duration-150 hover:border-border hover:bg-secondary/60 focus:border-primary/50 focus:ring-1 focus:ring-primary/30 [&>span]:line-clamp-none",
+            "h-[30px] w-full border-border/50 bg-secondary/40 px-2.5 text-[12px] font-medium text-foreground shadow-sm transition-all duration-150 hover:border-border hover:bg-secondary/60 focus:border-primary/50 focus:ring-1 focus:ring-primary/30 [&>span]:line-clamp-none",
             triggerClassName
           )}
         >
@@ -223,6 +224,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     onPostToTwf,
   } = props;
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
+  const [desktopPanelOpen, setDesktopPanelOpen] = useState(false);
 
   const selectedModelLabel = models.find((opt) => opt.value === model)?.label ?? "Model";
   const selectedVariableLabel = variables.find((opt) => opt.value === variable)?.label ?? "Variable";
@@ -235,51 +237,85 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     <header role="toolbar" aria-label="Weather model controls" className="fixed top-[4.35rem] z-50 w-full px-3 sm:px-4">
       <div className="hidden sm:block">
         <div className="flex items-start">
-          <div className="glass-strong inline-flex max-w-[calc(100vw-9rem)] items-end gap-2 rounded-2xl border border-white/12 px-3 py-2.5 shadow-[0_18px_40px_rgba(0,0,0,0.34)]">
-            <ToolbarSelect
-              label="Region"
-              icon={MapPin}
-              value={region}
-              onValueChange={onRegionChange}
-              options={regions}
-              disabled={disabled}
-              placeholder="Region"
-              triggerClassName="min-w-[142px] max-w-[142px]"
-            />
+          <div className="relative">
+            {desktopPanelOpen ? (
+              <div className="glass-strong inline-flex max-w-[calc(100vw-9rem)] items-end gap-2 rounded-2xl border border-white/12 px-3 py-2.5 shadow-[0_18px_40px_rgba(0,0,0,0.34)]">
+                <ToolbarSelect
+                  label="Region"
+                  icon={MapPin}
+                  value={region}
+                  onValueChange={onRegionChange}
+                  options={regions}
+                  disabled={disabled}
+                  placeholder="Region"
+                  triggerClassName="min-w-[142px] max-w-[142px]"
+                />
 
-            <ToolbarSelect
-              label="Model"
-              icon={Boxes}
-              value={model}
-              onValueChange={onModelChange}
-              options={models}
-              disabled={disabled}
-              placeholder="Model"
-              triggerClassName="min-w-[142px] max-w-[142px]"
-            />
+                <ToolbarSelect
+                  label="Model"
+                  icon={Boxes}
+                  value={model}
+                  onValueChange={onModelChange}
+                  options={models}
+                  disabled={disabled}
+                  placeholder="Model"
+                  triggerClassName="min-w-[142px] max-w-[142px]"
+                />
 
-            <ToolbarSelect
-              label="Run"
-              icon={CalendarClock}
-              value={run}
-              onValueChange={onRunChange}
-              options={runs}
-              disabled={disabled}
-              placeholder="Run"
-              triggerClassName="min-w-[160px] max-w-[160px]"
-            />
+                <ToolbarSelect
+                  label="Run"
+                  icon={CalendarClock}
+                  value={run}
+                  onValueChange={onRunChange}
+                  options={runs}
+                  disabled={disabled}
+                  placeholder="Run"
+                  triggerClassName="min-w-[160px] max-w-[160px]"
+                />
 
-            <ToolbarSelect
-              label="Variable"
-              icon={Layers}
-              value={variable}
-              onValueChange={onVariableChange}
-              options={variables}
-              disabled={disabled}
-              placeholder="Variable"
-              grouped
-              triggerClassName="min-w-[210px] max-w-[228px]"
-            />
+                <ToolbarSelect
+                  label="Variable"
+                  icon={Layers}
+                  value={variable}
+                  onValueChange={onVariableChange}
+                  options={variables}
+                  disabled={disabled}
+                  placeholder="Variable"
+                  grouped
+                  triggerClassName="min-w-[210px] max-w-[228px]"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setDesktopPanelOpen(false)}
+                  className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-white/10 bg-black/18 px-2.5 text-[12px] font-semibold text-white/80 transition-all duration-150 hover:bg-black/28"
+                  aria-label="Collapse controls"
+                  title="Collapse controls"
+                >
+                  <ChevronUp className="h-4 w-4" />
+                  Close
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setDesktopPanelOpen(true)}
+                className="glass-strong inline-flex items-center gap-3 rounded-full border border-white/12 px-4 py-2.5 text-left shadow-[0_18px_40px_rgba(0,0,0,0.34)] transition-all duration-150 hover:bg-white/10"
+                aria-expanded={desktopPanelOpen}
+                aria-label="Open controls"
+              >
+                <SlidersHorizontal className="h-4 w-4 text-white/86" />
+                <div className="flex items-center gap-2 text-[12px] text-white/72">
+                  <span className="font-semibold text-white/88">Controls</span>
+                  <span className="rounded-full border border-white/10 bg-white/8 px-2 py-0.5">{selectedModelLabel}</span>
+                  <span className="rounded-full border border-white/10 bg-white/8 px-2 py-0.5">{selectedRunLabel}</span>
+                  <span className="max-w-[240px] truncate rounded-full border border-white/10 bg-white/8 px-2 py-0.5">
+                    {selectedVariableLabel}
+                  </span>
+                </div>
+                <ChevronDown className="h-4 w-4 text-white/72" />
+              </button>
+            )}
           </div>
         </div>
       </div>
