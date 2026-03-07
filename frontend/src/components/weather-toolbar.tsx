@@ -128,11 +128,11 @@ function ToolbarSelect(props: {
       <Select value={value} onValueChange={onValueChange} disabled={disabled || options.length === 0}>
         <SelectTrigger
           className={cn(
-            "h-8 w-full border-border/50 bg-secondary/40 text-xs font-medium text-foreground shadow-sm transition-all duration-150 hover:border-border hover:bg-secondary/60 focus:border-primary/50 focus:ring-1 focus:ring-primary/30 [&>span]:line-clamp-none",
+            "h-7.5 w-full border-border/50 bg-secondary/40 px-2.5 text-[12px] font-medium text-foreground shadow-sm transition-all duration-150 hover:border-border hover:bg-secondary/60 focus:border-primary/50 focus:ring-1 focus:ring-primary/30 [&>span]:line-clamp-none",
             triggerClassName
           )}
         >
-          <span className="whitespace-nowrap pr-1">{selectedLabel}</span>
+          <span className="truncate whitespace-nowrap pr-1">{selectedLabel}</span>
         </SelectTrigger>
         <SelectContent>{content}</SelectContent>
       </Select>
@@ -235,7 +235,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     <header role="toolbar" aria-label="Weather model controls" className="fixed top-[4.35rem] z-50 w-full px-3 sm:px-4">
       <div className="hidden sm:block">
         <div className="flex items-start">
-          <div className="glass-strong inline-flex max-w-[calc(100vw-9rem)] items-end gap-2.5 rounded-2xl border border-white/12 px-4 py-3 shadow-[0_18px_40px_rgba(0,0,0,0.34)]">
+          <div className="glass-strong inline-flex max-w-[calc(100vw-9rem)] items-end gap-2 rounded-2xl border border-white/12 px-3 py-2.5 shadow-[0_18px_40px_rgba(0,0,0,0.34)]">
             <ToolbarSelect
               label="Region"
               icon={MapPin}
@@ -244,7 +244,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               options={regions}
               disabled={disabled}
               placeholder="Region"
-              triggerClassName="min-w-[160px]"
+              triggerClassName="min-w-[142px] max-w-[142px]"
             />
 
             <ToolbarSelect
@@ -255,7 +255,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               options={models}
               disabled={disabled}
               placeholder="Model"
-              triggerClassName="min-w-[160px]"
+              triggerClassName="min-w-[142px] max-w-[142px]"
             />
 
             <ToolbarSelect
@@ -266,7 +266,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               options={runs}
               disabled={disabled}
               placeholder="Run"
-              triggerClassName="min-w-[160px]"
+              triggerClassName="min-w-[160px] max-w-[160px]"
             />
 
             <ToolbarSelect
@@ -278,7 +278,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               disabled={disabled}
               placeholder="Variable"
               grouped
-              triggerClassName="min-w-[224px] max-w-[260px]"
+              triggerClassName="min-w-[210px] max-w-[228px]"
             />
           </div>
         </div>
