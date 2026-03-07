@@ -548,18 +548,24 @@ async def list_topics(sess: TwfSession, forum_id: int, pinned: bool, per_page: i
 
 
 # ----------------------------
-# Cookie payload helpers (state/verifier only)
+# Cookie payload helpers
 # ----------------------------
 
-def pack_oauth_cookie(state: str, verifier: str) -> str:
-    blob = json.dumps({"state": state, "verifier": verifier}).encode("utf-8")
+def pack_oauth_cookie(state: str, verifier: str, return_to: str | None = None) -> str:
+    payload: dict[str, str] = {"state": state, "verifier": verifier}
+    if isinstance(return_to, str) and return_to.strip():
+        payload["return_to"] = return_to.strip()
+    blob = json.dumps(payload).encode("utf-8")
     return _b64url(blob)
 
 def unpack_oauth_cookie(val: str) -> dict[str, str]:
     padded = val + "=" * (-len(val) % 4)
     raw = base64.urlsafe_b64decode(padded.encode("ascii"))
     obj = json.loads(raw.decode("utf-8"))
-    return {"state": obj["state"], "verifier": obj["verifier"]}
+    payload = {"state": obj["state"], "verifier": obj["verifier"]}
+    if isinstance(obj.get("return_to"), str) and obj["return_to"].strip():
+        payload["return_to"] = obj["return_to"].strip()
+    return payload
 
 def new_session_id() -> str:
     return secrets.token_urlsafe(32)

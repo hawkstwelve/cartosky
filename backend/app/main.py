@@ -19,6 +19,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import numpy as np
 import rasterio
@@ -565,17 +566,38 @@ def _require_twf_session(request: Request) -> twf_oauth.TwfSession:
 # from pydantic import BaseModel, Field
 
 
+def _sanitize_twf_return_to(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not trimmed or not trimmed.startswith("/") or trimmed.startswith("//"):
+        return None
+    parsed = urlsplit(trimmed)
+    if parsed.scheme or parsed.netloc:
+        return None
+    return trimmed
+
+
+def _twf_frontend_redirect_url(return_to: str | None, **params: str) -> str:
+    fallback = urlsplit(twf_oauth.FRONTEND_RETURN)
+    target_path = _sanitize_twf_return_to(return_to) or fallback.path or "/"
+    existing_params = dict(parse_qsl(fallback.query, keep_blank_values=True)) if target_path == fallback.path else {}
+    existing_params.update({key: value for key, value in params.items() if value})
+    return urlunsplit((fallback.scheme, fallback.netloc, target_path, urlencode(existing_params), ""))
+
+
 @app.get("/auth/twf/start")
-async def twf_start() -> RedirectResponse:
+async def twf_start(return_to: str | None = None) -> RedirectResponse:
     state = secrets.token_urlsafe(24)
     verifier, challenge = twf_oauth.pkce_pair()
     url = twf_oauth.build_authorize_url(state, challenge)
+    resolved_return_to = _sanitize_twf_return_to(return_to)
 
     resp = RedirectResponse(url=url, status_code=302)
     # Store only state + PKCE verifier (short-lived)
     resp.set_cookie(
         key=twf_oauth.OAUTH_COOKIE_NAME,
-        value=twf_oauth.pack_oauth_cookie(state, verifier),
+        value=twf_oauth.pack_oauth_cookie(state, verifier, resolved_return_to),
         httponly=True,
         secure=True,
         samesite="none",
@@ -590,62 +612,76 @@ async def twf_callback(
     code: str | None = None,
     state: str | None = None,
 ) -> RedirectResponse:
-    if not code or not state:
-        raise HTTPException(status_code=400, detail="Missing code/state")
-
-    cookie_val = request.cookies.get(twf_oauth.OAUTH_COOKIE_NAME)
-    if not cookie_val:
-        raise HTTPException(status_code=400, detail="Missing oauth cookie")
-
-    packed = twf_oauth.unpack_oauth_cookie(cookie_val)
-    if packed.get("state") != state:
-        raise HTTPException(status_code=400, detail="State mismatch")
-
-    tok = await twf_oauth.exchange_code_for_token(code, packed["verifier"])
-    access = tok.get("access_token")
-    refresh = tok.get("refresh_token")
-    if not isinstance(access, str) or not access:
-        raise HTTPException(status_code=500, detail="No access_token returned")
-    if not isinstance(refresh, str) or not refresh:
-        raise HTTPException(status_code=500, detail="No refresh_token returned")
-
-    expires_in = int(tok.get("expires_in", 3600))
-    me = await twf_oauth.twf_me(access)
-
-    member_id = int(me["id"])
-    display_name = str(me.get("name") or f"member-{member_id}")
-    photo_url_raw = me.get("photoUrl")
-    photo_url = str(photo_url_raw) if isinstance(photo_url_raw, str) and photo_url_raw.strip() else None
-
-    sid = twf_oauth.new_session_id()
-    twf_oauth.upsert_session(
-        twf_oauth.TwfSession(
-            session_id=sid,
-            member_id=member_id,
-            display_name=display_name,
-            photo_url=photo_url,
-            access_token=access,
-            refresh_token=refresh,
-            expires_at=int(time.time()) + expires_in,
+    def _error_redirect(message: str, return_to: str | None = None) -> RedirectResponse:
+        return RedirectResponse(
+            url=_twf_frontend_redirect_url(return_to, twf="error", twf_message=message),
+            status_code=302,
         )
-    )
 
-    resp = RedirectResponse(url=f"{twf_oauth.FRONTEND_RETURN}?twf=linked", status_code=302)
+    packed: dict[str, str] | None = None
+    try:
+        if not code or not state:
+            return _error_redirect("Missing code or state.")
 
-    # App session cookie (separate from forum cookies)
-    resp.set_cookie(
-        key=twf_oauth.SESSION_COOKIE_NAME,
-        value=sid,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=60 * 60 * 24 * 30,
-        path="/",
-    )
+        cookie_val = request.cookies.get(twf_oauth.OAUTH_COOKIE_NAME)
+        if not cookie_val:
+            return _error_redirect("OAuth session expired. Try again.")
 
-    # Clear short-lived OAuth temp cookie
-    resp.delete_cookie(key=twf_oauth.OAUTH_COOKIE_NAME, path="/")
-    return resp
+        packed = twf_oauth.unpack_oauth_cookie(cookie_val)
+        if packed.get("state") != state:
+            return _error_redirect("Login verification failed. Try again.", packed.get("return_to"))
+
+        tok = await twf_oauth.exchange_code_for_token(code, packed["verifier"])
+        access = tok.get("access_token")
+        refresh = tok.get("refresh_token")
+        if not isinstance(access, str) or not access:
+            return _error_redirect("Login failed. No access token returned.", packed.get("return_to"))
+        if not isinstance(refresh, str) or not refresh:
+            return _error_redirect("Login failed. No refresh token returned.", packed.get("return_to"))
+
+        expires_in = int(tok.get("expires_in", 3600))
+        me = await twf_oauth.twf_me(access)
+
+        member_id = int(me["id"])
+        display_name = str(me.get("name") or f"member-{member_id}")
+        photo_url_raw = me.get("photoUrl")
+        photo_url = str(photo_url_raw) if isinstance(photo_url_raw, str) and photo_url_raw.strip() else None
+
+        sid = twf_oauth.new_session_id()
+        twf_oauth.upsert_session(
+            twf_oauth.TwfSession(
+                session_id=sid,
+                member_id=member_id,
+                display_name=display_name,
+                photo_url=photo_url,
+                access_token=access,
+                refresh_token=refresh,
+                expires_at=int(time.time()) + expires_in,
+            )
+        )
+
+        resp = RedirectResponse(
+            url=_twf_frontend_redirect_url(packed.get("return_to"), twf="linked"),
+            status_code=302,
+        )
+
+        # App session cookie (separate from forum cookies)
+        resp.set_cookie(
+            key=twf_oauth.SESSION_COOKIE_NAME,
+            value=sid,
+            httponly=True,
+            secure=True,
+            samesite="none",
+            max_age=60 * 60 * 24 * 30,
+            path="/",
+        )
+
+        # Clear short-lived OAuth temp cookie
+        resp.delete_cookie(key=twf_oauth.OAUTH_COOKIE_NAME, path="/")
+        return resp
+    except Exception:
+        logger.exception("TWF OAuth callback failed")
+        return _error_redirect("Login failed. Please try again.", packed.get("return_to") if packed else None)
 
 
 @app.get("/auth/twf/status")

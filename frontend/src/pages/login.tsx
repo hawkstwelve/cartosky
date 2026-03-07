@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 type TwfStatus =
   | { linked: false }
@@ -45,11 +45,16 @@ function profileInitial(name: string): string {
 
 export default function Login() {
   const apiBase = useMemo(() => getApiBase(), []);
+  const [searchParams] = useSearchParams();
 
   const [status, setStatus] = useState<TwfStatus>({ linked: false });
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [logoutBusy, setLogoutBusy] = useState(false);
+  const authState = searchParams.get("twf");
+  const authMessage = searchParams.get("twf_message")?.trim() ?? "";
+  const authSuccess = authState === "linked";
+  const authFailure = authState === "error";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -85,7 +90,7 @@ export default function Login() {
   const connected = status.linked === true;
 
   function startTwfLogin() {
-    window.location.href = `${apiBase}/auth/twf/start`;
+    window.location.href = `${apiBase}/auth/twf/start?return_to=${encodeURIComponent("/login")}`;
   }
 
   async function disconnectTwf() {
@@ -130,6 +135,19 @@ export default function Login() {
           </div>
 
           <div className="mt-8 rounded-[24px] border border-white/10 bg-white/[0.045] p-5">
+            {authSuccess ? (
+              <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-50">
+                <CheckCircle2 className="h-4 w-4" />
+                Login complete.
+              </div>
+            ) : null}
+
+            {authFailure ? (
+              <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                {authMessage || "Login failed. Please try again."}
+              </div>
+            ) : null}
+
             {loadingStatus ? (
               <div className="flex items-center justify-center gap-2 py-10 text-sm text-white/68">
                 <Loader2 className="h-4 w-4 animate-spin" />
