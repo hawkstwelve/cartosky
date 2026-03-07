@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { AlertCircle, Eye, MapPin, Moon, Sun } from "lucide-react";
+import { AlertCircle, Eye, MapPin, Moon, SlidersHorizontal, Sun } from "lucide-react";
 
 import { BottomForecastControls } from "@/components/bottom-forecast-controls";
 import { MapCanvas, type BasemapMode } from "@/components/map-canvas";
@@ -687,6 +687,7 @@ export default function App() {
   const [legendVisible, setLegendVisible] = useState(() =>
     typeof window === "undefined" ? true : window.innerWidth >= 640
   );
+  const [displayPanelOpen, setDisplayPanelOpen] = useState(false);
   const [isPageVisible, setIsPageVisible] = useState(() =>
     typeof document === "undefined" ? true : !document.hidden
   );
@@ -3517,46 +3518,65 @@ export default function App() {
           </div>
         )}
 
-        <div className="glass absolute right-[15rem] top-36 z-40 hidden w-[220px] flex-col gap-3 rounded-2xl px-3 py-3 sm:flex">
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48">Map Display</div>
-            <div className="pt-1 text-xs text-white/62">Viewer overlays and reference aids.</div>
-          </div>
+        <div className="absolute bottom-28 right-20 z-40 hidden sm:block">
+          {displayPanelOpen ? (
+            <div className="glass mb-3 w-[220px] rounded-2xl px-3 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.35)]">
+              <div className="mb-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48">Display</div>
+                <div className="pt-1 text-xs text-white/62">Map overlays and reference aids.</div>
+              </div>
+
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setPointLabelsEnabled((current) => !current)}
+                  aria-pressed={pointLabelsEnabled}
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <MapPin className="h-4 w-4 text-white/72" />
+                      City Labels
+                    </div>
+                    <div className="pt-0.5 text-[11px] text-white/56">Show sampled location labels.</div>
+                  </div>
+                  <div className={pointLabelsEnabled ? "text-xs font-semibold text-emerald-300" : "text-xs font-semibold text-white/42"}>
+                    {pointLabelsEnabled ? "On" : "Off"}
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setLegendVisible((current) => !current)}
+                  aria-pressed={legendVisible}
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <Eye className="h-4 w-4 text-white/72" />
+                      Legend
+                    </div>
+                    <div className="pt-0.5 text-[11px] text-white/56">Toggle the scale and opacity panel.</div>
+                  </div>
+                  <div className={legendVisible ? "text-xs font-semibold text-emerald-300" : "text-xs font-semibold text-white/42"}>
+                    {legendVisible ? "On" : "Off"}
+                  </div>
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <button
             type="button"
-            onClick={() => setPointLabelsEnabled((current) => !current)}
-            aria-pressed={pointLabelsEnabled}
-            className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
+            onClick={() => setDisplayPanelOpen((current) => !current)}
+            aria-expanded={displayPanelOpen}
+            className={displayPanelOpen
+              ? "glass inline-flex h-11 items-center gap-2 rounded-full border border-white/20 px-4 text-sm font-semibold text-white"
+              : "glass inline-flex h-11 items-center gap-2 rounded-full border border-white/12 px-4 text-sm font-semibold text-white/88 hover:bg-white/10"
+            }
           >
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                <MapPin className="h-4 w-4 text-white/72" />
-                City Labels
-              </div>
-              <div className="pt-0.5 text-[11px] text-white/56">Show sampled location labels on the map.</div>
-            </div>
-            <div className={pointLabelsEnabled ? "text-xs font-semibold text-emerald-300" : "text-xs font-semibold text-white/42"}>
-              {pointLabelsEnabled ? "On" : "Off"}
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setLegendVisible((current) => !current)}
-            aria-pressed={legendVisible}
-            className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
-          >
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                <Eye className="h-4 w-4 text-white/72" />
-                Legend
-              </div>
-              <div className="pt-0.5 text-[11px] text-white/56">Toggle the color scale and opacity panel.</div>
-            </div>
-            <div className={legendVisible ? "text-xs font-semibold text-emerald-300" : "text-xs font-semibold text-white/42"}>
-              {legendVisible ? "On" : "Off"}
-            </div>
+            <SlidersHorizontal className="h-4 w-4" />
+            Display
           </button>
         </div>
 

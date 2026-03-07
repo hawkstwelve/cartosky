@@ -3,7 +3,6 @@ import {
   Boxes,
   CalendarClock,
   ChevronDown,
-  Eye,
   Layers,
   MapPin,
   Send,
@@ -222,6 +221,10 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
 
   const selectedModelLabel = models.find((opt) => opt.value === model)?.label ?? "Model";
   const selectedVariableLabel = variables.find((opt) => opt.value === variable)?.label ?? "Variable";
+  const selectedRunLabel = (runs.find((opt) => opt.value === run)?.label ?? "Run").replace(
+    /^Latest\s*\((.*)\)$/,
+    "$1"
+  );
 
   return (
     <header
@@ -301,21 +304,6 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
             <ChevronDown className={cn("h-4 w-4 transition-transform duration-150", mobilePanelOpen ? "rotate-180" : "")} />
           </button>
 
-          <button
-            type="button"
-            onClick={() => onLegendVisibleChange(!legendVisible)}
-            aria-pressed={legendVisible}
-            className={cn(
-              "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold transition-all duration-150",
-              legendVisible
-                ? "border-white/20 bg-white/14 text-white"
-                : "border-white/10 bg-black/25 text-white/80 hover:bg-black/35"
-            )}
-          >
-            <Eye className="h-4 w-4" />
-            Legend
-          </button>
-
           {onPostToTwf ? (
             <div className="ml-auto">
               <ShareButton onClick={onPostToTwf} compact />
@@ -329,6 +317,9 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
           </span>
           <span className="truncate rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/74">
             {selectedVariableLabel}
+          </span>
+          <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/68">
+            {selectedRunLabel}
           </span>
         </div>
 
