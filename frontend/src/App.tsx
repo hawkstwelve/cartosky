@@ -3572,6 +3572,24 @@ export default function App() {
                 </button>
 
                 <div className="rounded-lg border border-white/10 bg-black/18 px-3 py-2">
+                  <button
+                    type="button"
+                    onClick={() => setBasemapMode(basemapMode === "dark" ? "light" : "dark")}
+                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                        {basemapMode === "dark" ? <Moon className="h-4 w-4 text-white/72" /> : <Sun className="h-4 w-4 text-white/72" />}
+                        Basemap
+                      </div>
+                    </div>
+                    <div className="text-xs font-semibold text-[#354d42]">
+                      {basemapMode === "dark" ? "Dark" : "Light"}
+                    </div>
+                  </button>
+                </div>
+
+                <div className="rounded-lg border border-white/10 bg-black/18 px-3 py-2">
                   <div className="mb-1 flex items-center justify-between">
                     <span className="text-sm font-semibold text-white">Opacity</span>
                     <span className="font-mono text-[10px] text-white/62">{Math.round(opacity * 100)}%</span>
@@ -3587,22 +3605,6 @@ export default function App() {
                     aria-label="Overlay opacity"
                   />
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setBasemapMode(basemapMode === "dark" ? "light" : "dark")}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                      {basemapMode === "dark" ? <Moon className="h-4 w-4 text-white/72" /> : <Sun className="h-4 w-4 text-white/72" />}
-                      Basemap
-                    </div>
-                  </div>
-                  <div className="text-xs font-semibold text-[#354d42]">
-                    {basemapMode === "dark" ? "Dark" : "Light"}
-                  </div>
-                </button>
               </div>
             </div>
           ) : null}
