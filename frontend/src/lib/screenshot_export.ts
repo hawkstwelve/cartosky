@@ -120,12 +120,11 @@ function waitForMapIdle(map: maplibregl.Map): Promise<void> {
   });
 }
 
-function defaultOverlayLines(state: ScreenshotExportState): string[] {
+function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayload | null): string[] {
   const model = state.model.trim() || "Model";
   const run = state.run.trim() || "Run";
-  const variableLabel = state.variable.label.trim() || state.variable.key.trim() || "Variable";
-  const regionLabel = state.region?.label?.trim() || state.region?.id?.trim() || "Region";
-  return [`${model} • ${run} • FH ${state.fh}`, `${variableLabel} • ${regionLabel}`];
+  const variableLabel = legend ? compactLegendTitle(legend) : state.variable.label.trim() || state.variable.key.trim() || "Variable";
+  return [`${model} • ${run} • FH ${state.fh}`, variableLabel];
 }
 
 function drawGlassCard(
@@ -137,25 +136,29 @@ function drawGlassCard(
   radius: number
 ): void {
   ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.28)";
-  ctx.shadowBlur = 22;
-  ctx.shadowOffsetY = 6;
-  ctx.fillStyle = "rgba(0,0,0,0.42)";
+  ctx.shadowColor = "rgba(0,0,0,0.35)";
+  ctx.shadowBlur = 32;
+  ctx.shadowOffsetY = 8;
+  ctx.fillStyle = "rgba(0,0,0,0.38)";
   drawRoundedRect(ctx, x, y, width, height, radius);
   ctx.fill();
   ctx.restore();
 
   const gradient = ctx.createLinearGradient(0, y, 0, y + height);
-  gradient.addColorStop(0, "rgba(255,255,255,0.05)");
-  gradient.addColorStop(0.35, "rgba(255,255,255,0.02)");
+  gradient.addColorStop(0, "rgba(255,255,255,0.08)");
+  gradient.addColorStop(0.22, "rgba(255,255,255,0.03)");
   gradient.addColorStop(1, "rgba(255,255,255,0)");
   ctx.save();
   ctx.fillStyle = gradient;
   drawRoundedRect(ctx, x, y, width, height, radius);
   ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.12)";
+  ctx.strokeStyle = "rgba(255,255,255,0.10)";
   ctx.lineWidth = 1;
   drawRoundedRect(ctx, x + 0.5, y + 0.5, width - 1, height - 1, Math.max(0, radius - 0.5));
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,0.04)";
+  ctx.lineWidth = 1;
+  drawRoundedRect(ctx, x + 1.5, y + 1.5, width - 3, height - 3, Math.max(0, radius - 1.5));
   ctx.stroke();
   ctx.restore();
 }
@@ -373,40 +376,33 @@ function drawBottomLegend(
   bottomPadding: number
 ): void {
   const outerPadding = 18;
-  const bandHeight = 96;
+  const isPrecip = isPrecipPtypeLegend(legend);
+  const isRadar = isRadarPtypeLegend(legend);
+  const bandHeight = isPrecip || isRadar ? 58 : 42;
   const bandX = outerPadding;
   const bandY = height - bottomPadding - bandHeight;
   const bandWidth = width - outerPadding * 2;
-  const contentX = bandX + 18;
-  const contentY = bandY + 14;
-  const contentWidth = bandWidth - 36;
-  const contentBottom = bandY + bandHeight - 14;
-  const barY = contentBottom - 20;
-  const sectionTop = contentY + 24;
-  const headerText = compactLegendTitle(legend);
+  const contentX = bandX + 14;
+  const contentWidth = bandWidth - 28;
+  const contentBottom = bandY + bandHeight - 10;
+  const barHeight = isPrecip || isRadar ? 12 : 14;
+  const barY = contentBottom - barHeight;
 
   ctx.save();
   drawGlassCard(ctx, bandX, bandY, bandWidth, bandHeight, 12);
-  ctx.font = "700 17px system-ui, -apple-system, Segoe UI, sans-serif";
-  drawLegendLabel(ctx, headerText, contentX, contentY + 14);
 
-  if (isPrecipPtypeLegend(legend)) {
+  if (isPrecip) {
     const rows = groupPrecipPtypeRows(legend);
     if (rows.length > 0) {
-      const gap = 12;
+      const gap = 10;
       const sectionWidth = (contentWidth - gap * (rows.length - 1)) / rows.length;
       rows.forEach((row, index) => {
         const x = contentX + index * (sectionWidth + gap);
-        ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(ctx, row.label.toUpperCase(), x, sectionTop + 8);
-        ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(
-          ctx,
-          `${formatLegendValue(row.min)}-${formatLegendValue(row.max)}`,
-          x,
-          sectionTop + 22
-        );
-        fillHorizontalGradient(ctx, x, barY, sectionWidth, 14, row.colors);
+        ctx.font = "700 9px system-ui, -apple-system, Segoe UI, sans-serif";
+        drawLegendLabel(ctx, row.label.toUpperCase(), x, bandY + 16);
+        ctx.font = "600 10px system-ui, -apple-system, Segoe UI, sans-serif";
+        drawLegendLabel(ctx, `${formatLegendValue(row.min)}-${formatLegendValue(row.max)}`, x, bandY + 29);
+        fillHorizontalGradient(ctx, x, barY, sectionWidth, barHeight, row.colors);
         ctx.strokeStyle = "rgba(255,255,255,0.18)";
         ctx.stroke();
       });
@@ -415,27 +411,27 @@ function drawBottomLegend(
     }
   }
 
-  if (isRadarPtypeLegend(legend)) {
+  if (isRadar) {
     const groups = groupRadarEntries(legend);
     if (groups.length > 0) {
-      const gap = 12;
+      const gap = 10;
       const sectionWidth = (contentWidth - gap * (groups.length - 1)) / groups.length;
       groups.forEach((group, groupIndex) => {
         const x = contentX + groupIndex * (sectionWidth + gap);
-        ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(ctx, group.label.toUpperCase(), x, sectionTop + 8);
+        ctx.font = "700 9px system-ui, -apple-system, Segoe UI, sans-serif";
+        drawLegendLabel(ctx, group.label.toUpperCase(), x, bandY + 16);
         const values = group.entries.slice().reverse();
         const swatchCount = Math.min(4, values.length);
-        const swatchGap = 6;
+        const swatchGap = 5;
         const swatchWidth = (sectionWidth - swatchGap * Math.max(0, swatchCount - 1)) / Math.max(1, swatchCount);
         for (let index = 0; index < swatchCount; index += 1) {
           const entry = values[Math.round((index / Math.max(1, swatchCount - 1)) * (values.length - 1))];
           const swatchX = x + index * (swatchWidth + swatchGap);
           ctx.fillStyle = entry.color;
-          drawRoundedRect(ctx, swatchX, barY, swatchWidth, 14, 5);
+          drawRoundedRect(ctx, swatchX, barY, swatchWidth, barHeight, 5);
           ctx.fill();
           ctx.font = "600 9px system-ui, -apple-system, Segoe UI, sans-serif";
-          drawLegendLabel(ctx, formatLegendValue(entry.value), swatchX, barY - 4);
+          drawLegendLabel(ctx, formatLegendValue(entry.value), swatchX, bandY + 29);
         }
       });
       ctx.restore();
@@ -448,7 +444,7 @@ function drawBottomLegend(
     return;
   }
 
-  fillHorizontalGradient(ctx, contentX, barY, contentWidth, 16, legend.entries.map((entry) => entry.color));
+  fillHorizontalGradient(ctx, contentX, barY, contentWidth, barHeight, legend.entries.map((entry) => entry.color));
   ctx.strokeStyle = "rgba(255,255,255,0.18)";
   ctx.stroke();
 
@@ -456,13 +452,13 @@ function drawBottomLegend(
     Math.min(legend.entries.length - 1, Math.max(0, Math.round((legend.entries.length - 1) * ratio)))
   );
   const dedupedIndices = labelIndices.filter((value, index) => index === 0 || value !== labelIndices[index - 1]);
-  ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
+  ctx.font = "600 10px system-ui, -apple-system, Segoe UI, sans-serif";
   dedupedIndices.forEach((entryIndex, index) => {
     const entry = legend.entries[entryIndex];
     const ratio = dedupedIndices.length === 1 ? 0 : index / (dedupedIndices.length - 1);
     const labelX = contentX + ratio * contentWidth;
     const align: CanvasTextAlign = index === 0 ? "left" : index === dedupedIndices.length - 1 ? "right" : "center";
-    drawLegendLabel(ctx, formatLegendValue(entry.value), labelX, barY - 4, align);
+    drawLegendLabel(ctx, formatLegendValue(entry.value), labelX, bandY + 16, align);
   });
   ctx.restore();
 }
@@ -503,7 +499,7 @@ export async function exportViewerScreenshotPng(
   const pixelRatio = Number.isFinite(opts.pixelRatio)
     ? Math.max(1, Number(opts.pixelRatio))
     : DEFAULT_PIXEL_RATIO;
-  const overlayLines = (opts.overlayLines ?? defaultOverlayLines(state)).filter(Boolean);
+  const overlayLines = (opts.overlayLines ?? defaultOverlayLines(state, opts.legend)).filter(Boolean);
 
   const container = document.createElement("div");
   container.style.position = "fixed";
