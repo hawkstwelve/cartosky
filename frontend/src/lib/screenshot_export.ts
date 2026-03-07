@@ -167,6 +167,77 @@ function drawOverlay(
   ctx.restore();
 }
 
+function buildLegendExportClone(legendEl: HTMLElement): { host: HTMLDivElement; clone: HTMLElement } {
+  const rect = legendEl.getBoundingClientRect();
+  const host = document.createElement("div");
+  host.style.position = "fixed";
+  host.style.left = "-10000px";
+  host.style.top = "0";
+  host.style.pointerEvents = "none";
+  host.style.zIndex = "-1";
+  host.style.padding = "0";
+  host.style.margin = "0";
+
+  const clone = legendEl.cloneNode(true) as HTMLElement;
+  clone.style.position = "static";
+  clone.style.left = "auto";
+  clone.style.right = "auto";
+  clone.style.top = "auto";
+  clone.style.bottom = "auto";
+  clone.style.transform = "none";
+  clone.style.width = `${Math.max(120, Math.ceil(rect.width || legendEl.offsetWidth || 220))}px`;
+  clone.style.maxHeight = "none";
+  clone.style.height = "auto";
+  clone.style.overflow = "visible";
+  clone.style.backgroundColor = "rgba(0, 0, 0, 0.72)";
+  clone.style.border = "1px solid rgba(255, 255, 255, 0.14)";
+  clone.style.boxShadow = "0 8px 24px rgba(0, 0, 0, 0.32)";
+  clone.style.backdropFilter = "none";
+  clone.style.setProperty("-webkit-backdrop-filter", "none");
+  clone.style.setProperty("--foreground", "0 0% 95%");
+  clone.style.setProperty("--muted-foreground", "0 0% 62%");
+  clone.style.setProperty("--border", "0 0% 100%");
+  clone.style.setProperty("--secondary", "0 0% 100%");
+  clone.style.setProperty("--muted", "0 0% 100%");
+
+  const body = clone.querySelector<HTMLElement>("#legend-body");
+  if (body) {
+    body.style.gridTemplateRows = "1fr";
+    body.style.overflow = "visible";
+  }
+
+  const headerButton = clone.querySelector<HTMLButtonElement>("button[aria-controls='legend-body']");
+  if (headerButton) {
+    headerButton.setAttribute("aria-expanded", "true");
+  }
+
+  clone.querySelectorAll<HTMLElement>("*").forEach((node) => {
+    node.style.animation = "none";
+    node.style.transition = "none";
+    node.style.transform = "none";
+    node.style.filter = "none";
+    node.style.backdropFilter = "none";
+    node.style.setProperty("-webkit-backdrop-filter", "none");
+    node.style.textOverflow = "clip";
+    node.style.maxHeight = "none";
+
+    if (node.classList.contains("truncate")) {
+      node.style.whiteSpace = "normal";
+      node.style.overflow = "visible";
+    }
+
+    if (node.classList.contains("legend-scroll")) {
+      node.style.maxHeight = "none";
+      node.style.overflow = "visible";
+      node.style.scrollbarWidth = "none";
+    }
+  });
+
+  host.appendChild(clone);
+  document.body.appendChild(host);
+  return { host, clone };
+}
+
 async function drawLegend(
   ctx: CanvasRenderingContext2D,
   legendEl: HTMLElement,
@@ -174,36 +245,46 @@ async function drawLegend(
   height: number,
   watermarkReserve: number
 ): Promise<void> {
-  const legendDataUrl = await toPng(legendEl, {
-    cacheBust: true,
-    backgroundColor: "transparent",
-    pixelRatio: 2,
-  });
-  const legendImage = await loadImage(legendDataUrl);
+  const { host, clone } = buildLegendExportClone(legendEl);
 
-  const maxWidth = 520;
-  const maxHeight = 220;
-  const scale = Math.min(1, maxWidth / legendImage.width, maxHeight / legendImage.height);
-  const drawWidth = Math.max(1, Math.round(legendImage.width * scale));
-  const drawHeight = Math.max(1, Math.round(legendImage.height * scale));
-  const padding = 18;
-  const platePadding = 10;
-  const x = width - padding - drawWidth;
-  const y = height - padding - watermarkReserve - drawHeight;
+  try {
+    if ("fonts" in document) {
+      await document.fonts.ready;
+    }
 
-  ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  drawRoundedRect(
-    ctx,
-    x - platePadding,
-    y - platePadding,
-    drawWidth + platePadding * 2,
-    drawHeight + platePadding * 2,
-    10
-  );
-  ctx.fill();
-  ctx.drawImage(legendImage, x, y, drawWidth, drawHeight);
-  ctx.restore();
+    const legendDataUrl = await toPng(clone, {
+      cacheBust: true,
+      backgroundColor: "transparent",
+      pixelRatio: 2,
+    });
+    const legendImage = await loadImage(legendDataUrl);
+
+    const maxWidth = 520;
+    const maxHeight = 220;
+    const scale = Math.min(1, maxWidth / legendImage.width, maxHeight / legendImage.height);
+    const drawWidth = Math.max(1, Math.round(legendImage.width * scale));
+    const drawHeight = Math.max(1, Math.round(legendImage.height * scale));
+    const padding = 18;
+    const platePadding = 10;
+    const x = width - padding - drawWidth;
+    const y = height - padding - watermarkReserve - drawHeight;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    drawRoundedRect(
+      ctx,
+      x - platePadding,
+      y - platePadding,
+      drawWidth + platePadding * 2,
+      drawHeight + platePadding * 2,
+      10
+    );
+    ctx.fill();
+    ctx.drawImage(legendImage, x, y, drawWidth, drawHeight);
+    ctx.restore();
+  } finally {
+    host.remove();
+  }
 }
 
 function drawWatermark(ctx: CanvasRenderingContext2D, width: number, height: number): void {
