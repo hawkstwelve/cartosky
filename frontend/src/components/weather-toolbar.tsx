@@ -167,7 +167,7 @@ function DisplayToggle(props: {
       <div
         className={cn(
           "relative h-5 w-9 shrink-0 rounded-full transition-colors duration-150",
-          checked ? "bg-emerald-400/75" : "bg-white/18"
+          checked ? "bg-[#354d42]" : "bg-white/18"
         )}
       >
         <span
@@ -290,8 +290,8 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
         ) : null}
       </div>
 
-      <div className="sm:hidden">
-        <div className="flex items-center gap-2 px-3 py-2.5">
+      <div className="sm:hidden relative px-3 py-2.5 pb-2">
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setMobilePanelOpen((value) => !value)}
@@ -308,15 +308,9 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
             Layers
             <ChevronDown className={cn("h-4 w-4 transition-transform duration-150", mobilePanelOpen ? "rotate-180" : "")} />
           </button>
-
-          {onPostToTwf ? (
-            <div className="ml-auto">
-              <ShareButton onClick={onPostToTwf} compact />
-            </div>
-          ) : null}
         </div>
 
-        <div className="flex items-center gap-2 px-3 pb-2 text-[11px]">
+        <div className="flex items-center gap-2 pt-2 pr-24 text-[11px]">
           <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/68">
             {selectedRunLabel}
           </span>
@@ -328,10 +322,16 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
           </span>
         </div>
 
+        {onPostToTwf ? (
+          <div className="absolute right-3 bottom-2">
+            <ShareButton onClick={onPostToTwf} compact />
+          </div>
+        ) : null}
+
         {mobilePanelOpen ? (
           <div
             id="mobile-layers-panel"
-            className="glass-strong mx-3 mb-3 rounded-2xl border border-white/12 px-3 py-3 shadow-[0_16px_48px_rgba(0,0,0,0.45)]"
+            className="glass-strong mt-3 mb-3 rounded-2xl border border-white/12 px-3 py-3 shadow-[0_16px_48px_rgba(0,0,0,0.45)]"
           >
             <div className="grid grid-cols-1 gap-3">
               <ToolbarSelect

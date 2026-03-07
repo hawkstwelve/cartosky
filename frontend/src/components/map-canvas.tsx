@@ -2130,7 +2130,7 @@ export function MapCanvas({
         </div>
       )}
 
-      <div className="pointer-events-none absolute left-4 top-[7.5rem] z-50">
+      <div className="pointer-events-none absolute left-4 top-36 z-50 hidden sm:block">
         <div className="pointer-events-auto overflow-hidden rounded-xl border border-white/10 bg-black/40 shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md">
           <button
             type="button"

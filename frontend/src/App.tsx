@@ -3520,7 +3520,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="absolute right-4 bottom-24 z-40 hidden sm:block">
+        <div className="absolute right-4 bottom-6 z-40 hidden sm:block">
           {displayPanelOpen ? (
             <div className="glass mb-3 w-[220px] rounded-2xl px-3 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.35)]">
               <div className="mb-3">
@@ -3541,7 +3541,7 @@ export default function App() {
                       City Labels
                     </div>
                   </div>
-                  <div className={pointLabelsEnabled ? "text-xs font-semibold text-emerald-300" : "text-xs font-semibold text-white/42"}>
+                  <div className={pointLabelsEnabled ? "text-xs font-semibold text-[#6da18d]" : "text-xs font-semibold text-white/42"}>
                     {pointLabelsEnabled ? "On" : "Off"}
                   </div>
                 </button>
@@ -3558,7 +3558,7 @@ export default function App() {
                       Legend
                     </div>
                   </div>
-                  <div className={legendVisible ? "text-xs font-semibold text-emerald-300" : "text-xs font-semibold text-white/42"}>
+                  <div className={legendVisible ? "text-xs font-semibold text-[#6da18d]" : "text-xs font-semibold text-white/42"}>
                     {legendVisible ? "On" : "Off"}
                   </div>
                 </button>
@@ -3591,7 +3591,7 @@ export default function App() {
                       Basemap
                     </div>
                   </div>
-                  <div className="text-xs font-semibold text-emerald-300">
+                  <div className="text-xs font-semibold text-[#6da18d]">
                     {basemapMode === "dark" ? "Dark" : "Light"}
                   </div>
                 </button>
