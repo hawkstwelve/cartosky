@@ -185,6 +185,30 @@ export default function Variables() {
         ],
       },
       {
+        id: "snowkuchera",
+        name: "Total Snowfall (Kuchera SLR)",
+        oneLiner: "Snow accumulation derived from QPF using a temperature-dependent Kuchera snow-liquid ratio.",
+        pills: ["Derived", "Kuchera SLR", "Accumulation"],
+        definition:
+          "A derived snow product that applies a variable snow-liquid ratio based on the modeled thermal profile rather than a fixed 10:1 assumption. It is meant to better approximate wetter vs fluffier snow setups.",
+        bestFor: [
+          "Comparing realistic snowfall potential across warmer and colder profiles",
+          "Highlighting where fixed 10:1 may be too low or too high",
+          "Storm-total snow mapping when profile-dependent SLR matters",
+        ],
+        interpretation: [
+          "Kuchera generally increases totals in colder/fluffier setups and lowers them in wetter/heavier snow regimes.",
+          "It is still a derived field from modeled QPF and temperature structure, not a direct forecast of observed snow depth.",
+        ],
+        limitations: [
+          "Still depends on underlying QPF accuracy, so precip placement errors carry directly into the snowfall map.",
+          "Does not fully capture compaction, melting on contact, sleet contamination, or marginal boundary-layer issues.",
+        ],
+        notes: [
+          "Usually more realistic than 10:1 for broad-brush snowfall, but it should still be sanity-checked against surface temperatures and p-type.",
+        ],
+      },
+      {
         id: "wspd10m",
         name: "10m Wind Speed",
         oneLiner: "Sustained wind speed at 10 meters above ground.",
@@ -344,15 +368,7 @@ export default function Variables() {
             <div className="text-[11px] uppercase tracking-wider text-white/55">Candidates</div>
             <div className="text-white/80">
               MSLP, 500 mb heights, CAPE/CIN, PWAT, 700 mb RH, visibility, freezing rain accretion (where supported),
-              dynamic SLR snow, and additional precip-type variants.
-            </div>
-
-            <div className="my-2 h-px bg-white/10" />
-
-            <div className="text-[11px] uppercase tracking-wider text-white/55">Principle</div>
-            <div className="text-white/80">
-              Variables ship only when they’re correctly classified (continuous vs categorical), have clean legends,
-              and animate smoothly across frames.
+              and additional precip-type variants.
             </div>
           </div>
         </GlassCard>
