@@ -752,17 +752,17 @@ export function TwfShareModal({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/65 p-2 backdrop-blur-sm sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Share"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-3xl rounded-2xl border border-white/15 bg-black/85 shadow-[0_20px_52px_rgba(0,0,0,0.72)]"
+        className="my-2 flex max-h-[calc(100dvh-1rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-white/15 bg-black/85 shadow-[0_20px_52px_rgba(0,0,0,0.72)] sm:my-4 sm:max-h-[calc(100dvh-2rem)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
           <div>
             <div className="text-sm font-semibold text-white">Share</div>
             <div className="text-xs text-white/60">Copy link/summary, generate a screenshot, or post to TWF.</div>
@@ -777,7 +777,7 @@ export function TwfShareModal({
           </button>
         </div>
 
-        <div className="space-y-4 px-4 py-4">
+        <div className="min-h-0 space-y-4 overflow-y-auto px-4 py-4">
           <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/65">Share Preview</div>
             <div className="flex flex-wrap items-center gap-2">
@@ -844,7 +844,7 @@ export function TwfShareModal({
                 <img
                   src={screenshotBlobUrl}
                   alt="Screenshot preview"
-                  className="h-auto w-full"
+                  className="max-h-[32dvh] w-full object-contain sm:max-h-[38dvh]"
                 />
               </div>
             ) : (

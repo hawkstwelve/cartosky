@@ -403,9 +403,9 @@ function drawBottomLegend(
       rows.forEach((row, index) => {
         const x = contentX + index * (sectionWidth + gap);
         ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(ctx, row.label.toUpperCase(), x, bandY + 16);
+        drawLegendLabel(ctx, row.label.toUpperCase(), x, bandY + 18);
         ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(ctx, `${formatLegendValue(row.min)}-${formatLegendValue(row.max)}`, x, bandY + 31);
+        drawLegendLabel(ctx, `${formatLegendValue(row.min)}-${formatLegendValue(row.max)}`, x, bandY + 34);
         fillHorizontalGradient(ctx, x, barY, sectionWidth, barHeight, row.colors);
         ctx.strokeStyle = "rgba(255,255,255,0.18)";
         ctx.stroke();
@@ -423,7 +423,7 @@ function drawBottomLegend(
       groups.forEach((group, groupIndex) => {
         const x = contentX + groupIndex * (sectionWidth + gap);
         ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(ctx, group.label.toUpperCase(), x, bandY + 16);
+        drawLegendLabel(ctx, group.label.toUpperCase(), x, bandY + 18);
         const values = group.entries.slice().reverse();
         const swatchCount = Math.min(4, values.length);
         const swatchGap = 5;
@@ -435,7 +435,7 @@ function drawBottomLegend(
           drawRoundedRect(ctx, swatchX, barY, swatchWidth, barHeight, 5);
           ctx.fill();
           ctx.font = "600 10px system-ui, -apple-system, Segoe UI, sans-serif";
-          drawLegendLabel(ctx, formatLegendValue(entry.value), swatchX, bandY + 31);
+          drawLegendLabel(ctx, formatLegendValue(entry.value), swatchX, bandY + 34);
         }
       });
       ctx.restore();
@@ -462,7 +462,7 @@ function drawBottomLegend(
     const ratio = dedupedIndices.length === 1 ? 0 : index / (dedupedIndices.length - 1);
     const labelX = contentX + ratio * contentWidth;
     const align: CanvasTextAlign = index === 0 ? "left" : index === dedupedIndices.length - 1 ? "right" : "center";
-    drawLegendLabel(ctx, formatLegendValue(entry.value), labelX, bandY + 18, align);
+    drawLegendLabel(ctx, formatLegendValue(entry.value), labelX, bandY + 21, align);
   });
   ctx.restore();
 }
