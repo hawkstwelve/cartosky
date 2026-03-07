@@ -113,92 +113,175 @@ export function BottomForecastControls({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-4 pb-5 sm:pb-6">
-        <div className="pointer-events-auto flex w-full max-w-3xl flex-col gap-3 rounded-2xl glass-strong px-5 py-4 sm:flex-row sm:items-center sm:gap-5">
-          <div className="flex shrink-0 items-center gap-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={isPlaying ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setIsPlaying(!isPlaying)}
-                  disabled={disabled || !hasFrames || playDisabled}
-                  aria-label={isPlaying ? "Pause animation" : "Play animation"}
-                  className="h-10 w-10 p-0 transition-all duration-150 hover:scale-105 active:scale-95"
-                >
-                  {isPlaying ? (
-                    <Pause className="h-4 w-4" />
-                  ) : (
-                    <Play className="h-4 w-4 translate-x-px" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {isPlaying ? "Pause" : "Play"} animation
-              </TooltipContent>
-            </Tooltip>
-          </div>
-
-          <div className="flex flex-1 flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-foreground/65">
-                <Clock className="h-3 w-3" />
-                Forecast Hour
-              </span>
-              <span className="font-mono text-xs font-semibold tabular-nums tracking-tight text-foreground/95 transition-all duration-150">
-                {forecastHour}h
-              </span>
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-6">
+        <div className="pointer-events-auto flex w-full max-w-3xl flex-col gap-3 rounded-2xl glass-strong px-3 py-3 sm:px-5 sm:py-4">
+          <div className="sm:hidden">
+            <div className="mb-2 flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-foreground/65">
+                  <Clock className="h-3 w-3" />
+                  Forecast Hour
+                </div>
+                {validTime ? (
+                  <div className="truncate pt-1 text-xs font-semibold text-foreground">{validTime.primary}</div>
+                ) : (
+                  <div className="pt-1 text-[10px] text-muted-foreground">Valid time unavailable</div>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {transientStatus ? (
+                  <div className="flex items-center gap-1 rounded-md border border-border/35 bg-background/35 px-2 py-1 text-[9px] text-foreground/90">
+                    <AlertCircle className="h-3 w-3" />
+                    {transientStatus}
+                  </div>
+                ) : null}
+                <span className="font-mono text-xs font-semibold tabular-nums tracking-tight text-foreground/95">
+                  {forecastHour}h
+                </span>
+              </div>
             </div>
-            <Slider
-              value={[sliderIndex]}
-              onValueChange={([value]) => {
-                const next = availableFrames[Math.round(value ?? 0)];
-                if (Number.isFinite(next)) {
-                  if (!isScrubbing) {
-                    setIsScrubbing(true);
-                  }
-                  setPreviewHour(next);
-                  emitForecastHour(next, false);
-                }
-              }}
-              onValueCommit={([value]) => {
-                const next = availableFrames[Math.round(value ?? 0)];
-                if (Number.isFinite(next)) {
-                  setPreviewHour(null);
-                  setIsScrubbing(false);
-                  emitForecastHour(next, true);
-                }
-              }}
-              min={0}
-              max={Math.max(0, availableFrames.length - 1)}
-              step={1}
-              disabled={disabled || isPlaying || !hasFrames}
-              className="w-full transition-opacity duration-150 [&>*:first-child]:h-2.5 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-[22px] [&>*:nth-child(2)]:w-[22px]"
-            />
+
+            <div className="flex items-center gap-3">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={isPlaying ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setIsPlaying(!isPlaying)}
+                    disabled={disabled || !hasFrames || playDisabled}
+                    aria-label={isPlaying ? "Pause animation" : "Play animation"}
+                    className="h-10 w-10 shrink-0 rounded-xl p-0 transition-all duration-150"
+                  >
+                    {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-px" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {isPlaying ? "Pause" : "Play"} animation
+                </TooltipContent>
+              </Tooltip>
+
+              <div className="min-w-0 flex-1">
+                <Slider
+                  value={[sliderIndex]}
+                  onValueChange={([value]) => {
+                    const next = availableFrames[Math.round(value ?? 0)];
+                    if (Number.isFinite(next)) {
+                      if (!isScrubbing) {
+                        setIsScrubbing(true);
+                      }
+                      setPreviewHour(next);
+                      emitForecastHour(next, false);
+                    }
+                  }}
+                  onValueCommit={([value]) => {
+                    const next = availableFrames[Math.round(value ?? 0)];
+                    if (Number.isFinite(next)) {
+                      setPreviewHour(null);
+                      setIsScrubbing(false);
+                      emitForecastHour(next, true);
+                    }
+                  }}
+                  min={0}
+                  max={Math.max(0, availableFrames.length - 1)}
+                  step={1}
+                  disabled={disabled || isPlaying || !hasFrames}
+                  className="w-full transition-opacity duration-150 [&>*:first-child]:h-2 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-5 [&>*:nth-child(2)]:w-5"
+                />
+                {validTime ? (
+                  <div className="pt-1 text-right text-[10px] font-medium uppercase tracking-wider text-foreground/60">
+                    {validTime.secondary}
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
 
-          <div className="flex shrink-0 flex-col items-end gap-1 border-l border-border/30 pl-5 sm:min-w-[220px]">
-            {transientStatus ? (
-              <div className="flex items-center gap-1.5 rounded-md border border-border/40 bg-background/40 px-2 py-1 text-[10px] text-foreground/90">
-                <AlertCircle className="h-3 w-3" />
-                {transientStatus}
-              </div>
-            ) : null}
-            {validTime ? (
-              <>
-                <span className="text-sm font-semibold leading-tight tracking-tight text-foreground transition-all duration-200">
-                  {validTime.primary}
+          <div className="hidden sm:flex sm:items-center sm:gap-5">
+            <div className="flex shrink-0 items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={isPlaying ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setIsPlaying(!isPlaying)}
+                    disabled={disabled || !hasFrames || playDisabled}
+                    aria-label={isPlaying ? "Pause animation" : "Play animation"}
+                    className="h-10 w-10 p-0 transition-all duration-150 hover:scale-105 active:scale-95"
+                  >
+                    {isPlaying ? (
+                      <Pause className="h-4 w-4" />
+                    ) : (
+                      <Play className="h-4 w-4 translate-x-px" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {isPlaying ? "Pause" : "Play"} animation
+                </TooltipContent>
+              </Tooltip>
+            </div>
+
+            <div className="flex flex-1 flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-foreground/65">
+                  <Clock className="h-3 w-3" />
+                  Forecast Hour
                 </span>
-                <span className="text-[10px] font-medium uppercase tracking-wider text-foreground/65 transition-all duration-200">
-                  {validTime.secondary}
+                <span className="font-mono text-xs font-semibold tabular-nums tracking-tight text-foreground/95 transition-all duration-150">
+                  {forecastHour}h
                 </span>
-              </>
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <AlertCircle className="h-3 w-3 text-muted-foreground" />
-                <span className="text-[10px] text-muted-foreground">Valid time unavailable</span>
               </div>
-            )}
+              <Slider
+                value={[sliderIndex]}
+                onValueChange={([value]) => {
+                  const next = availableFrames[Math.round(value ?? 0)];
+                  if (Number.isFinite(next)) {
+                    if (!isScrubbing) {
+                      setIsScrubbing(true);
+                    }
+                    setPreviewHour(next);
+                    emitForecastHour(next, false);
+                  }
+                }}
+                onValueCommit={([value]) => {
+                  const next = availableFrames[Math.round(value ?? 0)];
+                  if (Number.isFinite(next)) {
+                    setPreviewHour(null);
+                    setIsScrubbing(false);
+                    emitForecastHour(next, true);
+                  }
+                }}
+                min={0}
+                max={Math.max(0, availableFrames.length - 1)}
+                step={1}
+                disabled={disabled || isPlaying || !hasFrames}
+                className="w-full transition-opacity duration-150 [&>*:first-child]:h-2.5 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-[22px] [&>*:nth-child(2)]:w-[22px]"
+              />
+            </div>
+
+            <div className="flex shrink-0 flex-col items-end gap-1 border-l border-border/30 pl-5 sm:min-w-[220px]">
+              {transientStatus ? (
+                <div className="flex items-center gap-1.5 rounded-md border border-border/40 bg-background/40 px-2 py-1 text-[10px] text-foreground/90">
+                  <AlertCircle className="h-3 w-3" />
+                  {transientStatus}
+                </div>
+              ) : null}
+              {validTime ? (
+                <>
+                  <span className="text-sm font-semibold leading-tight tracking-tight text-foreground transition-all duration-200">
+                    {validTime.primary}
+                  </span>
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-foreground/65 transition-all duration-200">
+                    {validTime.secondary}
+                  </span>
+                </>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <AlertCircle className="h-3 w-3 text-muted-foreground" />
+                  <span className="text-[10px] text-muted-foreground">Valid time unavailable</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

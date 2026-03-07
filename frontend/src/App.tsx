@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { AlertCircle, Moon, Sun } from "lucide-react";
+import { AlertCircle, Eye, MapPin, Moon, Sun } from "lucide-react";
 
 import { BottomForecastControls } from "@/components/bottom-forecast-controls";
 import { MapCanvas, type BasemapMode } from "@/components/map-canvas";
@@ -684,6 +684,9 @@ export default function App() {
   const [opacity, setOpacity] = useState(OVERLAY_DEFAULT_OPACITY);
   const [basemapMode, setBasemapMode] = useState<BasemapMode>(() => readBasemapModePreference());
   const [pointLabelsEnabled, setPointLabelsEnabled] = useState(true);
+  const [legendVisible, setLegendVisible] = useState(() =>
+    typeof window === "undefined" ? true : window.innerWidth >= 640
+  );
   const [isPageVisible, setIsPageVisible] = useState(() =>
     typeof document === "undefined" ? true : !document.hidden
   );
@@ -776,6 +779,9 @@ export default function App() {
   const anchorBatchLastAppliedHourRef = useRef<number | null>(null);
   const anchorBatchLastAppliedSelectionKeyRef = useRef("");
   const anchorBatchContextRef = useRef<AnchorBatchRequestContext | null>(null);
+  const wasCompactViewportRef = useRef<boolean>(
+    typeof window === "undefined" ? false : window.innerWidth < 640
+  );
   // Pre-built Set of valid forecast hours, kept in sync with frameHours.
   // updateBufferSnapshot reads from this ref instead of constructing a new Set
   // on every tile event (which fired 20-40×/sec during animation).
@@ -784,6 +790,27 @@ export default function App() {
   useEffect(() => {
     writeBasemapModePreference(basemapMode);
   }, [basemapMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(max-width: 639px)");
+    const updateLegendVisibility = (query: MediaQueryList | MediaQueryListEvent) => {
+      setLegendVisible((current) => {
+        if (query.matches) {
+          wasCompactViewportRef.current = true;
+          return false;
+        }
+        const next = wasCompactViewportRef.current ? true : current;
+        wasCompactViewportRef.current = false;
+        return next;
+      });
+    };
+    updateLegendVisibility(mediaQuery);
+    mediaQuery.addEventListener("change", updateLegendVisibility);
+    return () => mediaQuery.removeEventListener("change", updateLegendVisibility);
+  }, []);
 
   const modelCatalog = capabilities?.model_catalog ?? {};
   const selectedModelCapability: CapabilityModel | null = model ? modelCatalog[model] ?? null : null;
@@ -3390,6 +3417,8 @@ export default function App() {
         disabled={loading || models.length === 0}
         pointLabelsEnabled={pointLabelsEnabled}
         onPointLabelsEnabledChange={setPointLabelsEnabled}
+        legendVisible={legendVisible}
+        onLegendVisibleChange={setLegendVisible}
         onPostToTwf={handleOpenShareModal}
       />
 
@@ -3488,6 +3517,49 @@ export default function App() {
           </div>
         )}
 
+        <div className="glass absolute right-[15rem] top-36 z-40 hidden w-[220px] flex-col gap-3 rounded-2xl px-3 py-3 sm:flex">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48">Map Display</div>
+            <div className="pt-1 text-xs text-white/62">Viewer overlays and reference aids.</div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setPointLabelsEnabled((current) => !current)}
+            aria-pressed={pointLabelsEnabled}
+            className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
+          >
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <MapPin className="h-4 w-4 text-white/72" />
+                City Labels
+              </div>
+              <div className="pt-0.5 text-[11px] text-white/56">Show sampled location labels on the map.</div>
+            </div>
+            <div className={pointLabelsEnabled ? "text-xs font-semibold text-emerald-300" : "text-xs font-semibold text-white/42"}>
+              {pointLabelsEnabled ? "On" : "Off"}
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setLegendVisible((current) => !current)}
+            aria-pressed={legendVisible}
+            className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
+          >
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <Eye className="h-4 w-4 text-white/72" />
+                Legend
+              </div>
+              <div className="pt-0.5 text-[11px] text-white/56">Toggle the color scale and opacity panel.</div>
+            </div>
+            <div className={legendVisible ? "text-xs font-semibold text-emerald-300" : "text-xs font-semibold text-white/42"}>
+              {legendVisible ? "On" : "Off"}
+            </div>
+          </button>
+        </div>
+
         <button
           type="button"
           className="glass absolute bottom-28 right-4 z-40 inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/15 text-white/95 hover:bg-white/10 sm:bottom-24"
@@ -3499,7 +3571,7 @@ export default function App() {
           {basemapMode === "dark" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
         </button>
 
-        <MapLegend legend={legend} onOpacityChange={setOpacity} />
+        {legendVisible ? <MapLegend legend={legend} onOpacityChange={setOpacity} /> : null}
 
         <BottomForecastControls
           forecastHour={forecastHour}
