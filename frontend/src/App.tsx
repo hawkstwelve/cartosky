@@ -3520,7 +3520,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="absolute right-4 bottom-6 z-40 hidden sm:block">
+        <div className="fixed right-4 bottom-6 z-40 hidden sm:block">
           {displayPanelOpen ? (
             <div className="glass mb-3 w-[220px] rounded-2xl px-3 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.35)]">
               <div className="mb-3">
@@ -3533,7 +3533,11 @@ export default function App() {
                   type="button"
                   onClick={() => setPointLabelsEnabled((current) => !current)}
                   aria-pressed={pointLabelsEnabled}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
+                  className={
+                    pointLabelsEnabled
+                      ? "flex w-full items-center justify-between gap-3 rounded-lg border border-[#354d42] bg-[rgba(53,77,66,0.22)] px-3 py-2 text-left transition-all duration-150 hover:bg-[rgba(53,77,66,0.3)]"
+                      : "flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
+                  }
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -3541,7 +3545,7 @@ export default function App() {
                       City Labels
                     </div>
                   </div>
-                  <div className={pointLabelsEnabled ? "text-xs font-semibold text-[#6da18d]" : "text-xs font-semibold text-white/42"}>
+                  <div className={pointLabelsEnabled ? "text-xs font-semibold text-[#354d42]" : "text-xs font-semibold text-white/42"}>
                     {pointLabelsEnabled ? "On" : "Off"}
                   </div>
                 </button>
@@ -3550,7 +3554,11 @@ export default function App() {
                   type="button"
                   onClick={() => setLegendVisible((current) => !current)}
                   aria-pressed={legendVisible}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
+                  className={
+                    legendVisible
+                      ? "flex w-full items-center justify-between gap-3 rounded-lg border border-[#354d42] bg-[rgba(53,77,66,0.22)] px-3 py-2 text-left transition-all duration-150 hover:bg-[rgba(53,77,66,0.3)]"
+                      : "flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
+                  }
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -3558,7 +3566,7 @@ export default function App() {
                       Legend
                     </div>
                   </div>
-                  <div className={legendVisible ? "text-xs font-semibold text-[#6da18d]" : "text-xs font-semibold text-white/42"}>
+                  <div className={legendVisible ? "text-xs font-semibold text-[#354d42]" : "text-xs font-semibold text-white/42"}>
                     {legendVisible ? "On" : "Off"}
                   </div>
                 </button>
@@ -3575,7 +3583,7 @@ export default function App() {
                     step={1}
                     value={Math.round(opacity * 100)}
                     onChange={(event) => setOpacity(Number(event.target.value) / 100)}
-                    className="h-2 w-full cursor-pointer accent-[#6da18d]"
+                    className="h-2 w-full cursor-pointer accent-[#354d42]"
                     aria-label="Overlay opacity"
                   />
                 </div>
@@ -3591,7 +3599,7 @@ export default function App() {
                       Basemap
                     </div>
                   </div>
-                  <div className="text-xs font-semibold text-[#6da18d]">
+                  <div className="text-xs font-semibold text-[#354d42]">
                     {basemapMode === "dark" ? "Dark" : "Light"}
                   </div>
                 </button>
