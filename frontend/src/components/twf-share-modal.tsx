@@ -334,7 +334,6 @@ export function TwfShareModal({
   const [screenshotUploadError, setScreenshotUploadError] = useState<string | null>(null);
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [screenshotKey, setScreenshotKey] = useState<string | null>(null);
-  const [screenshotCopyStatus, setScreenshotCopyStatus] = useState<string | null>(null);
   const [includeScreenshotInPost, setIncludeScreenshotInPost] = useState(false);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
 
@@ -401,6 +400,31 @@ export function TwfShareModal({
   }, [includeScreenshotInPost, screenshotBlobUrl, screenshotBusy, screenshotUploadBusy, screenshotUrl]);
   const canPrepareScreenshot = Boolean(buildScreenshotState);
   const postButtonDisabled = submitBusy || screenshotBusy || screenshotUploadBusy;
+  const currentSummaryPreview = useMemo(() => {
+    const candidate = (hasExpandedMessageEditor ? content : defaultContent).trim();
+    return candidate || defaultContent;
+  }, [content, defaultContent, hasExpandedMessageEditor]);
+  const screenshotStepLabel = useMemo(() => {
+    if (screenshotBusy || screenshotUploadBusy) {
+      return screenshotStatus;
+    }
+    if (screenshotUrl && includeScreenshotInPost) {
+      return "Will be included in your post.";
+    }
+    if (screenshotUrl && !includeScreenshotInPost) {
+      return "Ready, but currently excluded from the post.";
+    }
+    if (screenshotBlobUrl) {
+      return "Generated locally. Upload it to include it.";
+    }
+    return "Optional. Prepare one to include it in your post.";
+  }, [includeScreenshotInPost, screenshotBlobUrl, screenshotBusy, screenshotStatus, screenshotUploadBusy, screenshotUrl]);
+  const destinationStepLabel = useMemo(() => {
+    if (shareMode === "new") {
+      return `New topic in ${selectedForumLabel}`;
+    }
+    return `Replying in ${selectedForumLabel}`;
+  }, [selectedForumLabel, shareMode]);
 
   useEffect(() => {
     if (!open) {
@@ -440,7 +464,6 @@ export function TwfShareModal({
     setScreenshotUploadError(null);
     setScreenshotUrl(null);
     setScreenshotKey(null);
-    setScreenshotCopyStatus(null);
     setIncludeScreenshotInPost(false);
     setShowAdvancedOptions(false);
     setScreenshotBlobUrl((previous) => {
@@ -660,7 +683,6 @@ export function TwfShareModal({
       setScreenshotUploadError(null);
       setScreenshotUrl(null);
       setScreenshotKey(null);
-      setScreenshotCopyStatus(null);
       setIncludeScreenshotInPost(false);
       setScreenshotBlobUrl((previous) => {
         if (previous) {
@@ -720,7 +742,6 @@ export function TwfShareModal({
     setScreenshotUploadError(null);
     setScreenshotUrl(null);
     setScreenshotKey(null);
-    setScreenshotCopyStatus(null);
 
     try {
       const result = await uploadShareMedia({
@@ -774,14 +795,6 @@ export function TwfShareModal({
       filename: generated.filename,
       state: generated.state,
     });
-  };
-
-  const handleCopyImageUrl = async () => {
-    if (!screenshotUrl) {
-      return;
-    }
-    const ok = await writeClipboard(screenshotUrl);
-    setScreenshotCopyStatus(ok ? "Image URL copied" : "Clipboard unavailable");
   };
 
   const handleCopy = async (kind: "link" | "summary") => {
@@ -996,18 +1009,41 @@ export function TwfShareModal({
             ) : (
               <div className="space-y-4">
                 <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="space-y-2">
                     <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-                      <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Posting target</div>
-                      <div className="mt-1 text-sm text-white">{postingTargetSummary}</div>
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-[11px] font-semibold text-emerald-100">
+                          1
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Where to post</div>
+                          <div className="mt-1 text-sm text-white">{postingTargetSummary}</div>
+                          <div className="mt-1 text-xs text-white/55">{destinationStepLabel}</div>
+                        </div>
+                      </div>
                     </div>
                     <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-                      <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Screenshot</div>
-                      <div className="mt-1 text-sm text-white">{screenshotStatus}</div>
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-[11px] font-semibold text-emerald-100">
+                          2
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Screenshot</div>
+                          <div className="mt-1 text-sm text-white">{screenshotStepLabel}</div>
+                        </div>
+                      </div>
                     </div>
                     <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-                      <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Summary</div>
-                      <div className="mt-1 text-sm text-white">Ready</div>
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-[11px] font-semibold text-emerald-100">
+                          3
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Summary</div>
+                          <div className="mt-1 line-clamp-2 text-sm text-white">{currentSummaryPreview}</div>
+                          <div className="mt-1 text-xs text-white/55">Permalink is added automatically below the summary.</div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1035,18 +1071,18 @@ export function TwfShareModal({
                       ) : (
                         <Image className="h-3.5 w-3.5" />
                       )}
-                      {screenshotUrl ? "Screenshot Ready" : "Prepare Screenshot"}
+                      {screenshotUrl ? "Update Screenshot" : "Prepare Screenshot"}
                     </button>
                     <button
                       type="button"
                       onClick={() => setShowAdvancedOptions((current) => !current)}
                       className="inline-flex h-9 items-center rounded-md border border-white/15 bg-black/25 px-3 text-sm font-medium text-white/85 hover:bg-black/35"
                     >
-                      {showAdvancedOptions ? "Hide options" : "Advanced options"}
+                      {showAdvancedOptions ? "Hide Advanced Options" : "Advanced Options"}
                     </button>
                   </div>
                   <div className="mt-2 text-xs text-white/55">
-                    Remembers your last forum/topic. Permalink is added automatically below the summary.
+                    Common path: prepare a screenshot if you want one, then share to TWF. Your last forum/topic choice is remembered.
                   </div>
                 </div>
 
@@ -1069,39 +1105,6 @@ export function TwfShareModal({
                 ) : null}
               </div>
             )}
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Share preview</div>
-                <div className="mt-1 line-clamp-2 text-sm text-white/85">{payload.summary}</div>
-                <div className="mt-1 truncate text-xs text-white/55">{payload.permalink}</div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleCopy("link");
-                  }}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                  Copy link
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleCopy("summary");
-                  }}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                  Copy summary
-                </button>
-              </div>
-            </div>
-            {clipboardStatus ? <div className="mt-2 text-xs text-emerald-200/90">{clipboardStatus}</div> : null}
           </div>
 
           {screenshotBlobUrl ? (
@@ -1146,37 +1149,8 @@ export function TwfShareModal({
                     <CheckCircle2 className="h-4 w-4" />
                     Screenshot uploaded
                   </div>
-                  <a
-                    href={screenshotUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block truncate text-sm text-emerald-50 underline decoration-emerald-200/30 underline-offset-2 hover:text-white"
-                  >
-                    {screenshotUrl}
-                  </a>
-                  {screenshotKey ? <div className="text-[11px] text-emerald-100/80">Key: {screenshotKey}</div> : null}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleCopyImageUrl();
-                      }}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-emerald-200/25 bg-black/20 px-2.5 text-xs font-medium text-emerald-50 hover:bg-black/30"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      Copy Image URL
-                    </button>
-                    <a
-                      href={screenshotUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-emerald-200/25 bg-black/20 px-2.5 text-xs font-medium text-emerald-50 hover:bg-black/30"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      Open Image
-                    </a>
-                    {screenshotCopyStatus ? <span className="text-xs text-emerald-50/90">{screenshotCopyStatus}</span> : null}
-                  </div>
+                  <div className="text-sm text-emerald-50/90">This screenshot is ready to include in your TWF post.</div>
+                  {screenshotKey ? <div className="text-[11px] text-emerald-100/80">Upload complete</div> : null}
                 </div>
               ) : null}
             </div>
@@ -1439,6 +1413,39 @@ export function TwfShareModal({
                 </div>
               </div>
             ) : null}
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Share preview</div>
+                <div className="mt-1 line-clamp-2 text-sm text-white/85">{payload.summary}</div>
+                <div className="mt-1 truncate text-xs text-white/55">{payload.permalink}</div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleCopy("link");
+                  }}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleCopy("summary");
+                  }}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy summary
+                </button>
+              </div>
+            </div>
+            {clipboardStatus ? <div className="mt-2 text-xs text-emerald-200/90">{clipboardStatus}</div> : null}
           </div>
         </div>
       </div>

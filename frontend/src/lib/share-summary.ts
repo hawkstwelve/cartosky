@@ -92,18 +92,6 @@ function variableLabel(variableId: string, preferred?: string | null): string {
   return titleCaseWords(words);
 }
 
-function regionDisplayLabel(regionId: string, regionLabel?: string | null): string {
-  const preferred = typeof regionLabel === "string" ? regionLabel.trim() : "";
-  if (preferred) {
-    return preferred;
-  }
-  const normalized = regionId.trim();
-  if (!normalized) {
-    return "Region";
-  }
-  return normalized.toUpperCase();
-}
-
 function formatCenter(lat: number | null, lon: number | null): string {
   const latValue = Number.isFinite(lat) ? (lat as number).toFixed(2) : "n/a";
   const lonValue = Number.isFinite(lon) ? (lon as number).toFixed(2) : "n/a";
@@ -130,7 +118,6 @@ export function buildShareSummary(input: BuildShareSummaryInput): ShareSummary {
     runLabel(input.runId),
     formatForecastHour(input.forecastHour),
     variableLabel(input.variableId, input.variableDisplayName),
-    regionDisplayLabel(input.regionId, input.regionLabel),
   ].join(" • ");
 
   const detailsSummary = [
@@ -141,4 +128,3 @@ export function buildShareSummary(input: BuildShareSummaryInput): ShareSummary {
 
   return { shortSummary, detailsSummary };
 }
-
