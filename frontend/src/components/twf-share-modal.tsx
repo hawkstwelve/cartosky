@@ -375,7 +375,7 @@ export function TwfShareModal({
     if (screenshotBlobUrl) {
       return "Generated locally. Upload it to include it.";
     }
-    return "Optional. Prepare one to include it in your post.";
+    return "A screenshot will be included by default. Optionally, prepare and preview one now.";
   }, [includeScreenshotInPost, screenshotBlobUrl, screenshotBusy, screenshotStatus, screenshotUploadBusy, screenshotUrl]);
   const destinationStepLabel = useMemo(() => {
     if (shareMode === "new") {
@@ -1168,7 +1168,7 @@ export function TwfShareModal({
                             className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35 disabled:opacity-60 disabled:hover:bg-black/25"
                           >
                             <Download className="h-3.5 w-3.5" />
-                            Download PNG
+                            Download Image
                           </button>
                         </div>
                       ) : null}
@@ -1232,9 +1232,6 @@ export function TwfShareModal({
                       {submitBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                       {submitBusy ? "Posting..." : "Share to TWF"}
                     </button>
-                  </div>
-                  <div className="mt-2 text-xs text-white/55">
-                    Common path: confirm the destination, prepare a screenshot if needed, then share to TWF. Screenshot inclusion is on by default, and Share to TWF will prepare it automatically if needed.
                   </div>
                 </div>
 
