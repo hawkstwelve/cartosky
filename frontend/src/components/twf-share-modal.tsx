@@ -375,7 +375,7 @@ export function TwfShareModal({
     if (screenshotBlobUrl) {
       return "Generated locally. Upload it to include it.";
     }
-    return "Included by default or prepare and preview one now.";
+    return "Included by default, or prepare and preview one now.";
   }, [includeScreenshotInPost, screenshotBlobUrl, screenshotBusy, screenshotStatus, screenshotUploadBusy, screenshotUrl]);
   const destinationStepLabel = useMemo(() => {
     if (shareMode === "new") {

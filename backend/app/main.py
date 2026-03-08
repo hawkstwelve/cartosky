@@ -1183,7 +1183,7 @@ _sample_lock = threading.Lock()
 
 LOOP_MANIFEST_VERSION = 1
 LOOP_MANIFEST_PROJECTION = "EPSG:4326"
-LOOP_MANIFEST_BBOX = [-125.0, 24.0, -66.5, 50.0]
+LOOP_MANIFEST_BBOX = [-130.5, 24.0, -62.0, 54.5]
 
 
 def _run_hour(run_id: str) -> int | None:

@@ -96,7 +96,7 @@ NAM_REGIONS: dict[str, RegionSpec] = {
     "conus": RegionSpec(
         id="conus",
         name="CONUS",
-        bbox_wgs84=(-125.0, 24.0, -66.5, 50.0),
+        bbox_wgs84=(-130.5, 24.0, -62.0, 54.5),
         clip=True,
     ),
     "pnw": RegionSpec(
