@@ -268,7 +268,7 @@ export function MapLegend({
       ref={containerRef}
       className={cn(
         "fixed z-[55] flex flex-col max-h-[70vh] overflow-hidden rounded-xl glass bg-black/34 shadow-[0_6px_22px_rgba(0,0,0,0.3)] transition-all duration-200",
-        showPrecipPtypeRows ? "w-[220px]" : "w-[120px]",
+        showPrecipPtypeRows ? "w-[220px]" : "w-[156px]",
         isSmallScreen ? "right-3 top-40 max-w-[min(72vw,220px)]" : "right-4 top-[4.35rem]"
       )}
       role="complementary"
@@ -287,7 +287,7 @@ export function MapLegend({
         aria-expanded={!collapsed}
         aria-controls="legend-body"
       >
-        <span className="truncate text-sm font-semibold tracking-tight text-foreground/95">
+        <span className="block min-w-0 text-sm font-semibold tracking-tight text-foreground/95">
           {legend.units ? `${legend.title} (${legend.units})` : legend.title}
         </span>
         {collapsed ? (
