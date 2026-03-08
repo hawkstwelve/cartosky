@@ -272,7 +272,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               disabled={disabled}
               placeholder="Run"
               hideLabel
-              triggerClassName="min-w-[126px] max-w-[126px] rounded-full border-white/10 bg-white/8 px-3"
+              triggerClassName="min-w-[142px] max-w-[142px] rounded-full border-white/10 bg-white/8 px-3"
             />
 
             <ToolbarSelect
