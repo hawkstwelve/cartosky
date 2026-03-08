@@ -278,7 +278,7 @@ function screenshotFilename(state: ScreenshotExportState): string {
     sanitizeFilenamePart(state.variable.key || state.variable.label),
     sanitizeFilenamePart(state.region?.id ?? "region"),
   ];
-  return `twf-${parts.join("-")}.png`;
+  return `twm-${parts.join("-")}.png`;
 }
 
 export function TwfShareModal({
@@ -326,7 +326,7 @@ export function TwfShareModal({
   const [screenshotBusy, setScreenshotBusy] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [screenshotBlobUrl, setScreenshotBlobUrl] = useState<string | null>(null);
-  const [screenshotFilenameValue, setScreenshotFilenameValue] = useState("twf-map-screenshot.png");
+  const [screenshotFilenameValue, setScreenshotFilenameValue] = useState("twm-map-screenshot.png");
 
   const parsedTopicIdFromUrl = useMemo(() => parseTopicIdFromUrl(pastedTopicUrl), [pastedTopicUrl]);
   const pastedTopicUrlHasValue = pastedTopicUrl.trim().length > 0;
@@ -391,7 +391,7 @@ export function TwfShareModal({
     setTopicSearch("");
     setScreenshotBusy(false);
     setScreenshotError(null);
-    setScreenshotFilenameValue("twf-map-screenshot.png");
+    setScreenshotFilenameValue("twm-map-screenshot.png");
     setScreenshotBlobUrl((previous) => {
       if (previous) {
         URL.revokeObjectURL(previous);

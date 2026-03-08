@@ -179,13 +179,13 @@ function drawOverlay(
     return;
   }
 
-  const paddingX = 16;
-  const paddingY = 14;
-  const lineHeight = 24;
+  const paddingX = 14;
+  const paddingY = 12;
+  const lineHeight = 21;
   const boxX = 18;
   const boxY = 18;
   const maxWidth = Math.max(280, width * 0.6);
-  const font = "700 18px system-ui, -apple-system, Segoe UI, sans-serif";
+  const font = "700 16px system-ui, -apple-system, Segoe UI, sans-serif";
 
   ctx.save();
   ctx.font = font;
@@ -194,9 +194,9 @@ function drawOverlay(
     textWidth = Math.max(textWidth, ctx.measureText(line).width);
   }
   const boxWidth = Math.min(maxWidth, Math.ceil(textWidth) + paddingX * 2);
-  const boxHeight = cleaned.length * lineHeight + paddingY * 2 - 4;
+  const boxHeight = cleaned.length * lineHeight + paddingY * 2 - 2;
 
-  drawGlassCard(ctx, boxX, boxY, boxWidth, boxHeight, 12);
+  drawGlassCard(ctx, boxX, boxY, boxWidth, boxHeight, 11);
 
   ctx.fillStyle = "rgba(255,255,255,0.96)";
   ctx.textBaseline = "top";
@@ -384,15 +384,15 @@ function drawBottomLegend(
   const outerPadding = 18;
   const isPrecip = isPrecipPtypeLegend(legend);
   const isRadar = isRadarPtypeLegend(legend);
-  const bandHeight = isPrecip || isRadar ? 58 : 42;
+  const bandHeight = isPrecip || isRadar ? 60 : 54;
   const bandX = outerPadding;
   const bandY = height - bottomPadding - bandHeight;
   const bandWidth = width - outerPadding * 2;
   const contentX = bandX + 14;
   const contentWidth = bandWidth - 28;
-  const contentBottom = bandY + bandHeight - 10;
+  const contentBottom = bandY + bandHeight - 12;
   const barHeight = isPrecip || isRadar ? 12 : 14;
-  const barY = contentBottom - barHeight;
+  const barY = isPrecip || isRadar ? bandY + 36 : bandY + 24;
 
   ctx.save();
   drawGlassCard(ctx, bandX, bandY, bandWidth, bandHeight, 12);
@@ -407,7 +407,7 @@ function drawBottomLegend(
         ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
         drawLegendLabel(ctx, row.label.toUpperCase(), x, bandY + 18);
         ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(ctx, `${formatLegendValue(row.min)}-${formatLegendValue(row.max)}`, x, bandY + 34);
+        drawLegendLabel(ctx, `${formatLegendValue(row.min)}-${formatLegendValue(row.max)}`, x, bandY + 30);
         fillHorizontalGradient(ctx, x, barY, sectionWidth, barHeight, row.colors);
         ctx.strokeStyle = "rgba(255,255,255,0.18)";
         ctx.stroke();
@@ -437,7 +437,7 @@ function drawBottomLegend(
           drawRoundedRect(ctx, swatchX, barY, swatchWidth, barHeight, 5);
           ctx.fill();
           ctx.font = "600 10px system-ui, -apple-system, Segoe UI, sans-serif";
-          drawLegendLabel(ctx, formatLegendValue(entry.value), swatchX, bandY + 34);
+          drawLegendLabel(ctx, formatLegendValue(entry.value), swatchX, bandY + 30);
         }
       });
       ctx.restore();
@@ -464,7 +464,7 @@ function drawBottomLegend(
     const ratio = dedupedIndices.length === 1 ? 0 : index / (dedupedIndices.length - 1);
     const labelX = contentX + ratio * contentWidth;
     const align: CanvasTextAlign = index === 0 ? "left" : index === dedupedIndices.length - 1 ? "right" : "center";
-    drawLegendLabel(ctx, formatLegendValue(entry.value), labelX, bandY + 21, align);
+    drawLegendLabel(ctx, formatLegendValue(entry.value), labelX, bandY + 18, align);
   });
   ctx.restore();
 }
@@ -472,19 +472,19 @@ function drawBottomLegend(
 async function drawLogo(ctx: CanvasRenderingContext2D, width: number): Promise<void> {
   const logo = await loadImage(SCREENSHOT_LOGO_SRC);
   const padding = 18;
-  const maxWidth = 180;
-  const maxHeight = 52;
+  const maxWidth = 162;
+  const maxHeight = 46;
   const scale = Math.min(maxWidth / logo.width, maxHeight / logo.height);
   const drawWidth = Math.max(1, Math.round(logo.width * scale));
   const drawHeight = Math.max(1, Math.round(logo.height * scale));
-  const cardPaddingX = 14;
-  const cardPaddingY = 10;
+  const cardPaddingX = 12;
+  const cardPaddingY = 8;
   const cardWidth = drawWidth + cardPaddingX * 2;
   const cardHeight = drawHeight + cardPaddingY * 2;
   const cardX = width - padding - cardWidth;
   const cardY = padding;
 
-  drawGlassCard(ctx, cardX, cardY, cardWidth, cardHeight, 12);
+  drawGlassCard(ctx, cardX, cardY, cardWidth, cardHeight, 11);
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
