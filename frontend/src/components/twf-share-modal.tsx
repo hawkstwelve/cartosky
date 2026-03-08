@@ -4,6 +4,7 @@ import { CheckCircle2, Copy, Download, ExternalLink, Image, Loader2, Send, X } f
 import type { LegendPayload } from "@/components/map-legend";
 import { API_ORIGIN } from "@/lib/config";
 import { exportViewerScreenshotPng, type ScreenshotExportState } from "@/lib/screenshot_export";
+import { uploadShareMedia } from "@/lib/share_media";
 import { getSharePrefs, setSharePrefs, type SharePrefs } from "@/lib/share_prefs";
 
 export type SharePayload = {
@@ -325,8 +326,15 @@ export function TwfShareModal({
   const [contentDirty, setContentDirty] = useState(false);
   const [screenshotBusy, setScreenshotBusy] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  const [screenshotBlob, setScreenshotBlob] = useState<Blob | null>(null);
   const [screenshotBlobUrl, setScreenshotBlobUrl] = useState<string | null>(null);
+  const [screenshotStateSnapshot, setScreenshotStateSnapshot] = useState<ScreenshotExportState | null>(null);
   const [screenshotFilenameValue, setScreenshotFilenameValue] = useState("twm-map-screenshot.png");
+  const [screenshotUploadBusy, setScreenshotUploadBusy] = useState(false);
+  const [screenshotUploadError, setScreenshotUploadError] = useState<string | null>(null);
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
+  const [screenshotKey, setScreenshotKey] = useState<string | null>(null);
+  const [screenshotCopyStatus, setScreenshotCopyStatus] = useState<string | null>(null);
 
   const parsedTopicIdFromUrl = useMemo(() => parseTopicIdFromUrl(pastedTopicUrl), [pastedTopicUrl]);
   const pastedTopicUrlHasValue = pastedTopicUrl.trim().length > 0;
@@ -391,7 +399,14 @@ export function TwfShareModal({
     setTopicSearch("");
     setScreenshotBusy(false);
     setScreenshotError(null);
+    setScreenshotBlob(null);
     setScreenshotFilenameValue("twm-map-screenshot.png");
+    setScreenshotStateSnapshot(null);
+    setScreenshotUploadBusy(false);
+    setScreenshotUploadError(null);
+    setScreenshotUrl(null);
+    setScreenshotKey(null);
+    setScreenshotCopyStatus(null);
     setScreenshotBlobUrl((previous) => {
       if (previous) {
         URL.revokeObjectURL(previous);
@@ -597,7 +612,13 @@ export function TwfShareModal({
         legend: getLegend?.() ?? null,
       });
       const objectUrl = URL.createObjectURL(blob);
+      setScreenshotBlob(blob);
+      setScreenshotStateSnapshot(state);
       setScreenshotFilenameValue(screenshotFilename(state));
+      setScreenshotUploadError(null);
+      setScreenshotUrl(null);
+      setScreenshotKey(null);
+      setScreenshotCopyStatus(null);
       setScreenshotBlobUrl((previous) => {
         if (previous) {
           URL.revokeObjectURL(previous);
@@ -625,6 +646,48 @@ export function TwfShareModal({
     document.body.appendChild(link);
     link.click();
     link.remove();
+  };
+
+  const handleUploadScreenshot = async () => {
+    if (!screenshotBlob) {
+      setScreenshotUploadError("Generate a screenshot before uploading.");
+      return;
+    }
+
+    setScreenshotUploadBusy(true);
+    setScreenshotUploadError(null);
+    setScreenshotUrl(null);
+    setScreenshotKey(null);
+    setScreenshotCopyStatus(null);
+
+    try {
+      const result = await uploadShareMedia({
+        blob: screenshotBlob,
+        filename: screenshotFilenameValue,
+        model: screenshotStateSnapshot?.model ?? null,
+        run: screenshotStateSnapshot?.run ?? null,
+        fh: screenshotStateSnapshot?.fh ?? null,
+        variable: screenshotStateSnapshot?.variable.key || screenshotStateSnapshot?.variable.label || null,
+        region: screenshotStateSnapshot?.region?.id ?? null,
+      });
+      setScreenshotUrl(result.url);
+      setScreenshotKey(result.key);
+    } catch (error) {
+      const message = error instanceof Error && error.message
+        ? error.message
+        : "Screenshot upload failed.";
+      setScreenshotUploadError(message);
+    } finally {
+      setScreenshotUploadBusy(false);
+    }
+  };
+
+  const handleCopyImageUrl = async () => {
+    if (!screenshotUrl) {
+      return;
+    }
+    const ok = await writeClipboard(screenshotUrl);
+    setScreenshotCopyStatus(ok ? "Image URL copied" : "Clipboard unavailable");
   };
 
   const handleCopy = async (kind: "link" | "summary") => {
@@ -825,6 +888,17 @@ export function TwfShareModal({
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  void handleUploadScreenshot();
+                }}
+                disabled={!screenshotBlob || screenshotBusy || screenshotUploadBusy}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35 disabled:opacity-60 disabled:hover:bg-black/25"
+              >
+                {screenshotUploadBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                {screenshotUploadBusy ? "Uploading..." : "Upload Screenshot"}
+              </button>
+              <button
+                type="button"
                 onClick={handleDownloadScreenshot}
                 disabled={!screenshotBlobUrl || screenshotBusy}
                 className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35 disabled:opacity-60 disabled:hover:bg-black/25"
@@ -839,13 +913,59 @@ export function TwfShareModal({
                 {screenshotError}
               </div>
             ) : null}
+            {screenshotUploadError ? (
+              <div className="mt-2 rounded-md border border-red-400/25 bg-red-500/10 px-2 py-1.5 text-xs text-red-100">
+                {screenshotUploadError}
+              </div>
+            ) : null}
             {screenshotBlobUrl ? (
-              <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-black/30">
-                <img
-                  src={screenshotBlobUrl}
-                  alt="Screenshot preview"
-                  className="max-h-[32dvh] w-full object-contain sm:max-h-[38dvh]"
-                />
+              <div className="mt-3 space-y-3">
+                <div className="overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                  <img
+                    src={screenshotBlobUrl}
+                    alt="Screenshot preview"
+                    className="max-h-[32dvh] w-full object-contain sm:max-h-[38dvh]"
+                  />
+                </div>
+                {screenshotUrl ? (
+                  <div className="space-y-2 rounded-lg border border-emerald-300/20 bg-emerald-400/10 px-3 py-3">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-50/90">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Screenshot uploaded
+                    </div>
+                    <a
+                      href={screenshotUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block truncate text-sm text-emerald-50 underline decoration-emerald-200/30 underline-offset-2 hover:text-white"
+                    >
+                      {screenshotUrl}
+                    </a>
+                    {screenshotKey ? <div className="text-[11px] text-emerald-100/80">Key: {screenshotKey}</div> : null}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleCopyImageUrl();
+                        }}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-emerald-200/25 bg-black/20 px-2.5 text-xs font-medium text-emerald-50 hover:bg-black/30"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        Copy Image URL
+                      </button>
+                      <a
+                        href={screenshotUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-emerald-200/25 bg-black/20 px-2.5 text-xs font-medium text-emerald-50 hover:bg-black/30"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Open Image
+                      </a>
+                      {screenshotCopyStatus ? <span className="text-xs text-emerald-50/90">{screenshotCopyStatus}</span> : null}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="mt-2 text-xs text-white/55">Generate a screenshot to preview and download it.</div>

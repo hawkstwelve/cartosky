@@ -9,3 +9,5 @@ pyproj
 Pillow
 httpx
 cryptography
+boto3
+python-multipart

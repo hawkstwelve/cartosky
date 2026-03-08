@@ -23,7 +23,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import numpy as np
 import rasterio
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,6 +46,7 @@ from .services.render_resampling import (
     variable_kind,
     variable_color_map_id,
 )
+from .services import share_media as share_media_service
 from backend.app.auth import twf_oauth
 
 logger = logging.getLogger(__name__)
@@ -558,6 +559,18 @@ def _require_twf_session(request: Request) -> twf_oauth.TwfSession:
         )
     return sess
 
+
+def _share_media_error_response(*, status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "code": code,
+                "message": message,
+            }
+        },
+    )
+
 # ----------------------------
 # TWF OAuth + Share Routes
 # ----------------------------
@@ -995,6 +1008,72 @@ async def twf_share_post(request: Request, body: SharePostIn) -> dict[str, Any]:
         "postUrl": str(post_url),
         "topicId": int(topic_id),
     }
+
+
+@app.post("/api/v4/share/media")
+async def share_media_upload(
+    file: UploadFile | None = File(None),
+    model: str | None = Form(None),
+    run: str | None = Form(None),
+    fh: str | None = Form(None),
+    variable: str | None = Form(None),
+    region: str | None = Form(None),
+) -> JSONResponse:
+    if file is None:
+        return _share_media_error_response(
+            status_code=400,
+            code="MISSING_FILE",
+            message="A PNG file upload is required.",
+        )
+
+    content_type = (file.content_type or "").strip().lower()
+    if content_type != share_media_service.PNG_CONTENT_TYPE:
+        await file.close()
+        return _share_media_error_response(
+            status_code=400,
+            code="INVALID_CONTENT_TYPE",
+            message="Only PNG uploads are supported.",
+        )
+
+    data = await file.read()
+    await file.close()
+
+    if not data:
+        return _share_media_error_response(
+            status_code=400,
+            code="EMPTY_FILE",
+            message="Uploaded file is empty.",
+        )
+
+    if len(data) > share_media_service.MAX_SHARE_PNG_BYTES:
+        return _share_media_error_response(
+            status_code=413,
+            code="FILE_TOO_LARGE",
+            message="PNG upload exceeds the 10 MB limit.",
+        )
+
+    filename_hint = share_media_service.build_share_png_filename_hint(
+        model=model,
+        run=run,
+        fh=fh,
+        variable=variable,
+        region=region,
+    )
+
+    try:
+        result = share_media_service.upload_share_png(
+            data=data,
+            filename_hint=filename_hint,
+            content_type=content_type,
+        )
+    except share_media_service.ShareMediaError as exc:
+        return _share_media_error_response(
+            status_code=exc.status_code,
+            code=exc.code,
+            message=exc.message,
+        )
+
+    return JSONResponse(content={"ok": True, **result})
 
 
 class SampleBatchPointIn(BaseModel):
