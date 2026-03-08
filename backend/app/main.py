@@ -32,7 +32,7 @@ from PIL import Image, ImageFilter
 from pyproj import Transformer
 from rasterio.enums import Resampling
 from rasterio.windows import Window
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config.regions import REGION_PRESETS
 from .models.registry import list_model_capabilities
@@ -46,7 +46,7 @@ from .services.render_resampling import (
     variable_kind,
     variable_color_map_id,
 )
-from .services import share_media as share_media_service
+from .services import admin_telemetry, share_media as share_media_service
 from backend.app.auth import twf_oauth
 
 logger = logging.getLogger(__name__)
@@ -143,6 +143,27 @@ _TWF_ERROR_PATHS = {
     "/twf/share/post",
 }
 _TWF_RATE_PRUNE_INTERVAL_SECONDS = 60.0
+_ADMIN_WINDOW_SECONDS = {
+    "24h": 24 * 60 * 60,
+    "7d": 7 * 24 * 60 * 60,
+    "30d": 30 * 24 * 60 * 60,
+}
+
+
+def _parse_admin_member_ids(raw: str) -> set[int]:
+    member_ids: set[int] = set()
+    for part in raw.split(","):
+        trimmed = part.strip()
+        if not trimmed:
+            continue
+        try:
+            member_ids.add(int(trimmed))
+        except ValueError:
+            logger.warning("Skipping invalid TWM_ADMIN_MEMBER_IDS entry %r", trimmed)
+    return member_ids
+
+
+ADMIN_MEMBER_IDS = _parse_admin_member_ids(os.environ.get("TWM_ADMIN_MEMBER_IDS", ""))
 
 _twf_rate_lock = threading.Lock()
 _twf_ip_windows: dict[str, deque[float]] = {}
@@ -560,6 +581,61 @@ def _require_twf_session(request: Request) -> twf_oauth.TwfSession:
     return sess
 
 
+def _maybe_twf_session(request: Request) -> twf_oauth.TwfSession | None:
+    sid = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
+    if not sid:
+        return None
+    return twf_oauth.get_session(sid)
+
+
+def _is_admin_member(member_id: int) -> bool:
+    return member_id in ADMIN_MEMBER_IDS
+
+
+def _require_admin_session(request: Request) -> twf_oauth.TwfSession:
+    sess = _require_twf_session(request)
+    if not _is_admin_member(sess.member_id):
+        raise TwfApiError(
+            status_code=403,
+            code="TWF_ADMIN_REQUIRED",
+            message="Admin access required",
+        )
+    return sess
+
+
+def _resolve_window_seconds(window: str) -> int:
+    normalized = window.strip().lower()
+    if normalized not in _ADMIN_WINDOW_SECONDS:
+        raise TwfApiError(
+            status_code=400,
+            code="INVALID_WINDOW",
+            message="Window must be one of: 24h, 7d, 30d.",
+        )
+    return _ADMIN_WINDOW_SECONDS[normalized]
+
+
+def _resolve_bucket(window: str, bucket: str) -> str:
+    normalized = bucket.strip().lower()
+    if normalized == "auto":
+        return "hour" if window in {"24h", "7d"} else "day"
+    if normalized not in {"hour", "day"}:
+        raise TwfApiError(
+            status_code=400,
+            code="INVALID_BUCKET",
+            message="Bucket must be one of: auto, hour, day.",
+        )
+    return normalized
+
+
+def _normalize_filter_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    trimmed = value.strip()
+    if not trimmed or trimmed.lower() == "all":
+        return None
+    return trimmed
+
+
 def _share_media_error_response(*, status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -701,20 +777,181 @@ async def twf_callback(
 async def twf_status(request: Request) -> dict[str, Any]:
     sid = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
     if not sid:
-        return {"linked": False}
+        return {"linked": False, "admin": False}
 
     sess = twf_oauth.get_session(sid)
     if not sess:
-        return {"linked": False}
+        return {"linked": False, "admin": False}
 
     payload: dict[str, Any] = {
         "linked": True,
+        "admin": _is_admin_member(sess.member_id),
         "member_id": sess.member_id,
         "display_name": sess.display_name,
     }
     if sess.photo_url:
         payload["photo_url"] = sess.photo_url
     return payload
+
+
+class TelemetryEventBase(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    session_id: str = Field(min_length=1, max_length=128)
+    model_id: str | None = Field(default=None, max_length=32)
+    variable_id: str | None = Field(default=None, max_length=64)
+    run_id: str | None = Field(default=None, max_length=32)
+    region_id: str | None = Field(default=None, max_length=32)
+    forecast_hour: int | None = Field(default=None, ge=0, le=999)
+    device_type: str | None = Field(default=None, max_length=24)
+    viewport_bucket: str | None = Field(default=None, max_length=24)
+    page: str | None = Field(default=None, max_length=120)
+    meta: dict[str, Any] | None = None
+
+
+class PerfTelemetryIn(TelemetryEventBase):
+    event_name: str = Field(min_length=1, max_length=64)
+    duration_ms: float = Field(ge=0, le=600000)
+
+
+class UsageTelemetryIn(TelemetryEventBase):
+    event_name: str = Field(min_length=1, max_length=64)
+
+
+@app.post("/api/v4/telemetry/perf", status_code=204)
+async def post_perf_telemetry(request: Request, payload: PerfTelemetryIn) -> Response:
+    sess = _maybe_twf_session(request)
+    try:
+        admin_telemetry.record_perf_event(payload.model_dump(), member_id=sess.member_id if sess else None)
+    except ValueError as exc:
+        raise TwfApiError(status_code=400, code="INVALID_PERF_EVENT", message=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@app.post("/api/v4/telemetry/usage", status_code=204)
+async def post_usage_telemetry(request: Request, payload: UsageTelemetryIn) -> Response:
+    sess = _maybe_twf_session(request)
+    try:
+        admin_telemetry.record_usage_event(payload.model_dump(), member_id=sess.member_id if sess else None)
+    except ValueError as exc:
+        raise TwfApiError(status_code=400, code="INVALID_USAGE_EVENT", message=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@app.get("/api/v4/admin/performance/summary")
+async def admin_perf_summary(
+    request: Request,
+    window: str = Query("7d"),
+    device: str | None = Query(None),
+    model: str | None = Query(None),
+    variable: str | None = Query(None),
+) -> dict[str, Any]:
+    _require_admin_session(request)
+    normalized_window = window.strip().lower()
+    since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
+    summary = admin_telemetry.get_perf_summary(
+        since_ts=since_ts,
+        device_type=_normalize_filter_value(device),
+        model_id=_normalize_filter_value(model),
+        variable_id=_normalize_filter_value(variable),
+    )
+    return {
+        "window": normalized_window,
+        "filters": {
+            "device": _normalize_filter_value(device),
+            "model": _normalize_filter_value(model),
+            "variable": _normalize_filter_value(variable),
+        },
+        **summary,
+    }
+
+
+@app.get("/api/v4/admin/performance/timeseries")
+async def admin_perf_timeseries(
+    request: Request,
+    metric: str = Query(...),
+    window: str = Query("7d"),
+    bucket: str = Query("auto"),
+    device: str | None = Query(None),
+    model: str | None = Query(None),
+    variable: str | None = Query(None),
+) -> dict[str, Any]:
+    _require_admin_session(request)
+    normalized_window = window.strip().lower()
+    since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
+    resolved_bucket = _resolve_bucket(normalized_window, bucket)
+    try:
+        points = admin_telemetry.get_perf_timeseries(
+            since_ts=since_ts,
+            metric=metric.strip(),
+            bucket=resolved_bucket,
+            device_type=_normalize_filter_value(device),
+            model_id=_normalize_filter_value(model),
+            variable_id=_normalize_filter_value(variable),
+        )
+    except ValueError as exc:
+        raise TwfApiError(status_code=400, code="INVALID_PERF_QUERY", message=str(exc)) from exc
+    return {
+        "metric": metric.strip(),
+        "window": normalized_window,
+        "bucket": resolved_bucket,
+        "filters": {
+            "device": _normalize_filter_value(device),
+            "model": _normalize_filter_value(model),
+            "variable": _normalize_filter_value(variable),
+        },
+        "points": points,
+    }
+
+
+@app.get("/api/v4/admin/performance/breakdown")
+async def admin_perf_breakdown(
+    request: Request,
+    metric: str = Query(...),
+    by: str = Query("model"),
+    window: str = Query("7d"),
+    device: str | None = Query(None),
+    model: str | None = Query(None),
+    variable: str | None = Query(None),
+    limit: int = Query(8, ge=1, le=20),
+) -> dict[str, Any]:
+    _require_admin_session(request)
+    normalized_window = window.strip().lower()
+    since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
+    try:
+        items = admin_telemetry.get_perf_breakdown(
+            since_ts=since_ts,
+            metric=metric.strip(),
+            breakdown_by=by.strip().lower(),
+            limit=limit,
+            device_type=_normalize_filter_value(device),
+            model_id=_normalize_filter_value(model),
+            variable_id=_normalize_filter_value(variable),
+        )
+    except ValueError as exc:
+        raise TwfApiError(status_code=400, code="INVALID_PERF_QUERY", message=str(exc)) from exc
+    return {
+        "metric": metric.strip(),
+        "window": normalized_window,
+        "by": by.strip().lower(),
+        "filters": {
+            "device": _normalize_filter_value(device),
+            "model": _normalize_filter_value(model),
+            "variable": _normalize_filter_value(variable),
+        },
+        "items": items,
+    }
+
+
+@app.get("/api/v4/admin/usage/summary")
+async def admin_usage_summary(request: Request, window: str = Query("30d")) -> dict[str, Any]:
+    _require_admin_session(request)
+    normalized_window = window.strip().lower()
+    since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
+    return {
+        "window": normalized_window,
+        **admin_telemetry.get_usage_summary(since_ts=since_ts),
+    }
 
 
 @app.post("/auth/twf/disconnect")

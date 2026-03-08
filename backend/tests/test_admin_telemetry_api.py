@@ -1,0 +1,143 @@
+import os
+import sys
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+import httpx
+import pytest
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = BACKEND_ROOT.parent
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+os.environ.setdefault("TWF_BASE", "https://example.com")
+os.environ.setdefault("TWF_CLIENT_ID", "client-id")
+os.environ.setdefault("TWF_CLIENT_SECRET", "client-secret")
+os.environ.setdefault("TWF_REDIRECT_URI", "https://example.com/callback")
+os.environ.setdefault("FRONTEND_RETURN", "https://example.com/app")
+os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
+os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+os.environ.setdefault("TWM_ADMIN_MEMBER_IDS", "42")
+
+from app import main as main_module
+
+twf_oauth = main_module.twf_oauth
+admin_telemetry = main_module.admin_telemetry
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+def isolate_databases(tmp_path: Path) -> None:
+    token_db = tmp_path / "tokens.sqlite3"
+    telemetry_db = tmp_path / "telemetry.sqlite3"
+    twf_oauth.TOKEN_DB_PATH = str(token_db)
+    admin_telemetry.TELEMETRY_DB_PATH = telemetry_db
+    admin_telemetry._db_initialized = False
+
+
+@pytest.fixture
+async def client() -> AsyncIterator[httpx.AsyncClient]:
+    transport = httpx.ASGITransport(app=main_module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+        yield test_client
+
+
+def _create_session(*, session_id: str, member_id: int, name: str) -> None:
+    twf_oauth.upsert_session(
+        twf_oauth.TwfSession(
+            session_id=session_id,
+            member_id=member_id,
+            display_name=name,
+            photo_url=None,
+            access_token="access-token",
+            refresh_token="refresh-token",
+            expires_at=2_000_000_000,
+        )
+    )
+
+
+async def test_perf_telemetry_ingest_and_admin_summary(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    response = await client.post(
+        "/api/v4/telemetry/perf",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+        json={
+            "event_name": "frame_change",
+            "duration_ms": 186.4,
+            "session_id": "viewer-session-1",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "run_id": "20260308_00z",
+            "region_id": "conus",
+            "forecast_hour": 18,
+            "device_type": "desktop",
+            "viewport_bucket": "xl",
+            "page": "/viewer",
+            "meta": {"source": "slider"},
+        },
+    )
+
+    assert response.status_code == 204
+
+    summary = await client.get(
+        "/api/v4/admin/performance/summary?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["metrics"]["frame_change"]["count"] == 1
+    assert body["metrics"]["frame_change"]["p95_ms"] == 186.4
+    assert body["metrics"]["frame_change"]["target_ms"] == 250.0
+
+
+async def test_admin_perf_summary_requires_admin_membership(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="normal-session", member_id=99, name="User")
+
+    response = await client.get(
+        "/api/v4/admin/performance/summary?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "normal-session"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "error": {
+            "code": "TWF_ADMIN_REQUIRED",
+            "message": "Admin access required",
+        }
+    }
+
+
+async def test_usage_telemetry_summary_returns_counts(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    response = await client.post(
+        "/api/v4/telemetry/usage",
+        json={
+            "event_name": "model_selected",
+            "session_id": "viewer-session-1",
+            "model_id": "gfs",
+            "variable_id": "tmp2m",
+            "run_id": "20260308_00z",
+            "region_id": "conus",
+            "forecast_hour": 24,
+            "device_type": "desktop",
+            "viewport_bucket": "xl",
+            "page": "/viewer",
+        },
+    )
+
+    assert response.status_code == 204
+
+    summary = await client.get(
+        "/api/v4/admin/usage/summary?window=30d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert summary.status_code == 200
+    assert summary.json()["events"] == [{"event_name": "model_selected", "count": 1}]

@@ -7,8 +7,18 @@
 ## Active routes on api.theweathermodels.com
 - `/models-v3/` → static frontend build output
   - filesystem: `/opt/twf_v3/frontend/dist/`
+  - SPA fallback must also cover admin/viewer routes under the frontend mount, for example:
+    - `/models-v3/admin`
+    - `/models-v3/admin/performance`
+    - `/models-v3/admin/usage`
+    - `/models-v3/viewer`
 - `/api/v4/` → V4 API upstream
   - upstream: `http://127.0.0.1:8200`
+  - includes admin telemetry + dashboard APIs:
+    - `/api/v4/telemetry/perf`
+    - `/api/v4/telemetry/usage`
+    - `/api/v4/admin/performance/*`
+    - `/api/v4/admin/usage/summary`
 - `/tiles/v3/` → V3 tile server upstream
   - upstream: `http://127.0.0.1:8201`
   - includes vector boundary endpoints:

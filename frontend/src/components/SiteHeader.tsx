@@ -9,8 +9,8 @@ type NavItemProps = {
 };
 
 type TwfStatus =
-  | { linked: false }
-  | { linked: true; member_id: number; display_name: string; photo_url?: string | null };
+  | { linked: false; admin?: boolean }
+  | { linked: true; admin?: boolean; member_id: number; display_name: string; photo_url?: string | null };
 
 function getApiBase(): string {
   const fromEnv = (import.meta as any)?.env?.VITE_API_BASE as string | undefined;
@@ -51,6 +51,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
     : "block h-12 w-auto max-w-none";
   const accountLabel = twfStatus.linked ? twfStatus.display_name : "Login";
   const accountPhotoUrl = twfStatus.linked ? twfStatus.photo_url : null;
+  const adminEnabled = twfStatus.admin === true;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -141,6 +142,13 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                 <span>{accountLabel}</span>
               </span>
             </NavLink>
+          </nav>
+        ) : null}
+
+        {isAppVariant ? (
+          <nav className="ml-auto hidden items-center gap-1 md:flex">
+            <NavItem to="/viewer" label="Viewer" />
+            {adminEnabled ? <NavItem to="/admin/performance" label="Admin" /> : null}
           </nav>
         ) : null}
 

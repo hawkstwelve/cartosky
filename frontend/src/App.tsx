@@ -46,6 +46,7 @@ import { type ScreenshotExportState } from "@/lib/screenshot_export";
 import { buildShareSummary } from "@/lib/share-summary";
 import { buildTileUrlFromFrame } from "@/lib/tiles";
 import { buildPermalinkSearch, readPermalink, replaceUrlQuery } from "@/lib/permalink";
+import { trackPerfEvent, trackUsageEvent } from "@/lib/telemetry";
 import { useSampleTooltip } from "@/lib/use-sample-tooltip";
 
 const AUTOPLAY_TICK_MS = 250;
@@ -118,6 +119,28 @@ type ModelEntry = {
   id: string;
   displayName?: string;
   order?: number | null;
+};
+
+type PendingViewerPerfMetric = {
+  eventName: "frame_change" | "scrub_latency";
+  startedAt: number;
+  renderTarget: "tiles" | "loop";
+  expectedTileUrl: string | null;
+  expectedLoopHour: number | null;
+  modelId: string | null;
+  variableId: string | null;
+  runId: string | null;
+  regionId: string | null;
+  forecastHour: number | null;
+};
+
+type PendingLoopStartMetric = {
+  startedAt: number;
+  modelId: string | null;
+  variableId: string | null;
+  runId: string | null;
+  regionId: string | null;
+  forecastHour: number | null;
 };
 
 const BASEMAP_MODE_STORAGE_KEY = "twf.map.basemap_mode";
@@ -770,6 +793,10 @@ export default function App() {
     Number.isFinite(initialPermalink.fh) ? Number(initialPermalink.fh) : null
   );
   const pendingInitialLoopRef = useRef<boolean | undefined>(initialPermalink.loop);
+  const viewerMountedAtRef = useRef(typeof performance === "undefined" ? 0 : performance.now());
+  const firstViewerFrameTrackedRef = useRef(false);
+  const pendingFrameMetricRef = useRef<PendingViewerPerfMetric | null>(null);
+  const pendingLoopStartMetricRef = useRef<PendingLoopStartMetric | null>(null);
   const permalinkHydratedRef = useRef(false);
   const lastSyncedPermalinkSearchRef = useRef("");
   const suppressNextUrlSyncRef = useRef(true);
@@ -1017,6 +1044,7 @@ export default function App() {
     return candidates[0] ?? null;
   }, [run, runManifest, model, capabilities, runs, frameRows]);
   const resolvedRunForRequests = run === "latest" ? (latestRunId ?? "latest") : run;
+  const telemetryRunId = resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null);
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
 
   const runOptions = useMemo<Option[]>(() => {
@@ -1936,8 +1964,70 @@ export default function App() {
     requestGenerationRef.current += 1;
   }, [model, run, variable]);
 
+  const finalizePendingFrameMetric = useCallback((reason: "tile" | "loop") => {
+    const pending = pendingFrameMetricRef.current;
+    if (!pending) {
+      return;
+    }
+    const durationMs = performance.now() - pending.startedAt;
+    pendingFrameMetricRef.current = null;
+    if (!Number.isFinite(durationMs) || durationMs < 0) {
+      return;
+    }
+    trackPerfEvent({
+      event_name: pending.eventName,
+      duration_ms: durationMs,
+      model_id: pending.modelId,
+      variable_id: pending.variableId,
+      run_id: pending.runId,
+      region_id: pending.regionId,
+      forecast_hour: pending.forecastHour,
+      meta: {
+        render_target: pending.renderTarget,
+        completion: reason,
+      },
+    });
+  }, []);
+
+  const startPendingFrameMetric = useCallback(
+    (args: {
+      eventName: "frame_change" | "scrub_latency";
+      renderTarget: "tiles" | "loop";
+      expectedTileUrl?: string | null;
+      expectedLoopHour?: number | null;
+      forecastHour?: number | null;
+    }) => {
+      pendingFrameMetricRef.current = {
+        eventName: args.eventName,
+        startedAt: performance.now(),
+        renderTarget: args.renderTarget,
+        expectedTileUrl: args.expectedTileUrl ?? null,
+        expectedLoopHour: args.expectedLoopHour ?? null,
+        modelId: model || null,
+        variableId: variable || null,
+        runId: telemetryRunId,
+        regionId: region || null,
+        forecastHour: Number.isFinite(args.forecastHour) ? Number(args.forecastHour) : null,
+      };
+    },
+    [model, variable, telemetryRunId, region]
+  );
+
+  const startPendingLoopStartMetric = useCallback(() => {
+    pendingLoopStartMetricRef.current = {
+      startedAt: performance.now(),
+      modelId: model || null,
+      variableId: variable || null,
+      runId: telemetryRunId,
+      regionId: region || null,
+      forecastHour: Number.isFinite(forecastHour) ? forecastHour : null,
+    };
+  }, [model, variable, telemetryRunId, region, forecastHour]);
+
   useEffect(() => {
     datasetGenerationRef.current += 1;
+    pendingFrameMetricRef.current = null;
+    pendingLoopStartMetricRef.current = null;
     readyFramesRef.current.clear();
     inFlightFramesRef.current.clear();
     failedFramesRef.current.clear();
@@ -2113,6 +2203,41 @@ export default function App() {
     forecastHour,
     ensureLoopFrameDecoded,
   ]);
+
+  useEffect(() => {
+    if (!loopDisplayHour) {
+      return;
+    }
+    const pending = pendingFrameMetricRef.current;
+    if (!pending || pending.renderTarget !== "loop" || pending.expectedLoopHour !== loopDisplayHour) {
+      return;
+    }
+    finalizePendingFrameMetric("loop");
+  }, [loopDisplayHour, finalizePendingFrameMetric]);
+
+  useEffect(() => {
+    if (!isPlaying) {
+      return;
+    }
+    const pending = pendingLoopStartMetricRef.current;
+    if (!pending) {
+      return;
+    }
+    const durationMs = performance.now() - pending.startedAt;
+    pendingLoopStartMetricRef.current = null;
+    if (!Number.isFinite(durationMs) || durationMs < 0) {
+      return;
+    }
+    trackPerfEvent({
+      event_name: "loop_start",
+      duration_ms: durationMs,
+      model_id: pending.modelId,
+      variable_id: pending.variableId,
+      run_id: pending.runId,
+      region_id: pending.regionId,
+      forecast_hour: pending.forecastHour,
+    });
+  }, [isPlaying]);
 
   useEffect(() => {
     if (!isLoopDisplayActive || loopFrameHours.length === 0) {
@@ -2325,6 +2450,15 @@ export default function App() {
     (requestedHour: number) => {
       if (!isScrubbing) {
         setScrubRequestedHour(null);
+        const snappedHour = frameHours.length > 0 ? nearestFrame(frameHours, requestedHour) : requestedHour;
+        const nextLoopHour = loopFrameHours.length > 0 ? nearestFrame(loopFrameHours, requestedHour) : snappedHour;
+        startPendingFrameMetric({
+          eventName: "frame_change",
+          renderTarget: isLoopDisplayActive ? "loop" : "tiles",
+          expectedTileUrl: isLoopDisplayActive ? null : tileUrlForHour(snappedHour),
+          expectedLoopHour: isLoopDisplayActive ? nextLoopHour : null,
+          forecastHour: isLoopDisplayActive ? nextLoopHour : snappedHour,
+        });
         setTargetForecastHour(requestedHour);
         return;
       }
@@ -2348,6 +2482,16 @@ export default function App() {
             return;
           }
           const snappedTileHour = nearestFrame(frameHours, requested);
+          const expectedTileHour = useExactScrubSelection
+            ? snappedTileHour
+            : (findNearestReadyTileScrubHour(snappedTileHour) ?? snappedTileHour);
+          startPendingFrameMetric({
+            eventName: "scrub_latency",
+            renderTarget: "tiles",
+            expectedTileUrl: tileUrlForHour(expectedTileHour),
+            expectedLoopHour: null,
+            forecastHour: expectedTileHour,
+          });
           if (useExactScrubSelection) {
             setTargetForecastHour(snappedTileHour);
             return;
@@ -2362,6 +2506,16 @@ export default function App() {
         const nextHour = loopFrameHours.length > 0
           ? nearestFrame(loopFrameHours, requested)
           : requested;
+        const expectedLoopHour = useExactScrubSelection
+          ? nextHour
+          : (findNearestDecodedLoopScrubHour(nextHour, visibleRenderMode) ?? nextHour);
+        startPendingFrameMetric({
+          eventName: "scrub_latency",
+          renderTarget: "loop",
+          expectedTileUrl: null,
+          expectedLoopHour,
+          forecastHour: expectedLoopHour,
+        });
         if (useExactScrubSelection) {
           setTargetForecastHour(nextHour);
           setLoopDisplayHour(nextHour);
@@ -2401,10 +2555,12 @@ export default function App() {
       loopFrameHours,
       frameHours,
       model,
+      tileUrlForHour,
       ensureLoopFrameDecoded,
       visibleRenderMode,
       findNearestReadyTileScrubHour,
       findNearestDecodedLoopScrubHour,
+      startPendingFrameMetric,
     ]
   );
 
@@ -3029,6 +3185,7 @@ export default function App() {
 
   const handleSetIsPlaying = useCallback((value: boolean) => {
     if (!value) {
+      pendingLoopStartMetricRef.current = null;
       setIsPlaying(false);
       setIsLoopAutoplayBuffering(false);
       setIsLoopPreloading(false);
@@ -3036,11 +3193,13 @@ export default function App() {
       return;
     }
     if (loading || frameHours.length === 0) {
+      pendingLoopStartMetricRef.current = null;
       return;
     }
 
     if (renderMode === "tiles") {
       if (canUseLoopPlayback && isHighDetailZoom) {
+        pendingLoopStartMetricRef.current = null;
         setIsPlaying(false);
         setIsLoopAutoplayBuffering(false);
         setIsLoopPreloading(false);
@@ -3049,6 +3208,7 @@ export default function App() {
         return;
       }
       if (!canUseLoopPlayback) {
+        pendingLoopStartMetricRef.current = null;
         setIsPlaying(false);
         setIsLoopAutoplayBuffering(false);
         setIsLoopPreloading(false);
@@ -3057,6 +3217,16 @@ export default function App() {
         return;
       }
     }
+
+    startPendingLoopStartMetric();
+    trackUsageEvent({
+      event_name: "animation_play",
+      model_id: model || null,
+      variable_id: variable || null,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+    });
 
     if (canUseLoopPlayback && webpDefaultEnabled) {
       setLoopBaseForecastHour(forecastHour);
@@ -3099,6 +3269,11 @@ export default function App() {
     webpDefaultEnabled,
     renderMode,
     showTransientFrameStatus,
+    startPendingLoopStartMetric,
+    model,
+    variable,
+    telemetryRunId,
+    region,
   ]);
 
   useEffect(() => {
@@ -3151,6 +3326,25 @@ export default function App() {
   }, []);
 
   const handleTileViewportReady = useCallback((readyTileUrl: string) => {
+    if (!firstViewerFrameTrackedRef.current && readyTileUrl === tileUrl) {
+      firstViewerFrameTrackedRef.current = true;
+      const durationMs = performance.now() - viewerMountedAtRef.current;
+      if (Number.isFinite(durationMs) && durationMs >= 0) {
+        trackPerfEvent({
+          event_name: "viewer_first_frame",
+          duration_ms: durationMs,
+          model_id: model || null,
+          variable_id: variable || null,
+          run_id: telemetryRunId,
+          region_id: region || null,
+          forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+        });
+      }
+    }
+    const pending = pendingFrameMetricRef.current;
+    if (pending?.renderTarget === "tiles" && pending.expectedTileUrl === readyTileUrl) {
+      finalizePendingFrameMetric("tile");
+    }
     if (renderMode !== "tiles") {
       return;
     }
@@ -3162,7 +3356,53 @@ export default function App() {
     }
     lastTileViewportCommitUrlRef.current = readyTileUrl;
     setVisibleRenderMode("tiles");
-  }, [renderMode, tileUrl, visibleRenderMode]);
+  }, [
+    renderMode,
+    tileUrl,
+    visibleRenderMode,
+    model,
+    variable,
+    telemetryRunId,
+    region,
+    forecastHour,
+    finalizePendingFrameMetric,
+  ]);
+
+  const handleRegionChange = useCallback((nextRegion: string) => {
+    setRegion(nextRegion);
+    trackUsageEvent({
+      event_name: "region_selected",
+      model_id: model || null,
+      variable_id: variable || null,
+      run_id: telemetryRunId,
+      region_id: nextRegion,
+      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+    });
+  }, [model, variable, telemetryRunId, forecastHour]);
+
+  const handleModelChange = useCallback((nextModel: string) => {
+    setModel(nextModel);
+    trackUsageEvent({
+      event_name: "model_selected",
+      model_id: nextModel,
+      variable_id: variable || null,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+    });
+  }, [variable, telemetryRunId, region, forecastHour]);
+
+  const handleVariableChange = useCallback((nextVariable: string) => {
+    setVariable(nextVariable);
+    trackUsageEvent({
+      event_name: "variable_selected",
+      model_id: model || null,
+      variable_id: nextVariable,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+    });
+  }, [model, telemetryRunId, region, forecastHour]);
 
   useEffect(() => {
     if (isPlaying && isScrubbing) {
@@ -3410,13 +3650,13 @@ export default function App() {
     <div className="relative flex min-h-svh flex-col">
       <WeatherToolbar
         region={region}
-        onRegionChange={setRegion}
+        onRegionChange={handleRegionChange}
         model={model}
-        onModelChange={setModel}
+        onModelChange={handleModelChange}
         run={run}
         onRunChange={setRun}
         variable={variable}
-        onVariableChange={setVariable}
+        onVariableChange={handleVariableChange}
         regions={regions}
         models={models}
         runs={runOptions}
