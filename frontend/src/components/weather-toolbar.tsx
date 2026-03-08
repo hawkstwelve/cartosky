@@ -243,7 +243,6 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div>
                     <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48">Controls</div>
-                    <div className="pt-1 text-xs text-white/62">Model selection and forecast context.</div>
                   </div>
                   <button
                     type="button"
