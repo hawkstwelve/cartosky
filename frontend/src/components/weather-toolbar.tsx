@@ -240,10 +240,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
           <div className="relative">
             {desktopPanelOpen ? (
               <div className="glass-strong absolute left-0 top-full mt-3 w-[min(560px,calc(100vw-2rem))] rounded-2xl border border-white/12 px-3 py-3 shadow-[0_22px_44px_rgba(0,0,0,0.36)]">
-                <div className="mb-3 flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48">Controls</div>
-                  </div>
+                <div className="mb-3 flex items-start justify-end">
                   <button
                     type="button"
                     onClick={() => setDesktopPanelOpen(false)}
@@ -310,9 +307,8 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 aria-expanded={desktopPanelOpen}
                 aria-label="Open controls"
               >
-                <SlidersHorizontal className="h-4 w-4 text-white/86" />
                 <div className="flex items-center gap-2 text-[12px] text-white/72">
-                  <span className="font-semibold text-white/88">Controls</span>
+                  <span className="rounded-full border border-white/10 bg-white/8 px-2 py-0.5">{region.toUpperCase()}</span>
                   <span className="rounded-full border border-white/10 bg-white/8 px-2 py-0.5">{selectedModelLabel}</span>
                   <span className="rounded-full border border-white/10 bg-white/8 px-2 py-0.5">{selectedRunLabel}</span>
                   <span className="max-w-[240px] truncate rounded-full border border-white/10 bg-white/8 px-2 py-0.5">
