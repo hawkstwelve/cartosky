@@ -113,8 +113,8 @@ export function BottomForecastControls({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-6">
-        <div className="pointer-events-auto flex w-full max-w-3xl flex-col gap-3 rounded-2xl glass-strong px-3 py-3 sm:px-5 sm:py-4">
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
+        <div className="pointer-events-auto flex w-full max-w-3xl flex-col gap-2.5 rounded-2xl glass-strong px-3 py-2.5 sm:px-4 sm:py-3">
           <div className="sm:hidden">
             <div className="mb-2 flex items-start justify-between gap-2">
               <div className="min-w-0">
