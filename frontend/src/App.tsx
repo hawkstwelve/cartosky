@@ -768,6 +768,7 @@ export default function App() {
   const loopPreloadTokenRef = useRef(0);
   const loopReadyHoursRef = useRef<Set<number>>(new Set());
   const loopFailedHoursRef = useRef<Set<number>>(new Set());
+  const forecastHourRef = useRef(forecastHour);
   const mapZoomRef = useRef(MAP_VIEW_DEFAULTS.zoom);
   const renderModeDwellTimerRef = useRef<number | null>(null);
   const transitionTokenRef = useRef(0);
@@ -1288,6 +1289,10 @@ export default function App() {
     const highDetailCutoff = WEBP_RENDER_MODE_THRESHOLDS.tier1Max + WEBP_RENDER_MODE_THRESHOLDS.hysteresis;
     return effectiveZoom > highDetailCutoff;
   }, [mapZoom]);
+
+  useEffect(() => {
+    forecastHourRef.current = forecastHour;
+  }, [forecastHour]);
 
   useEffect(() => {
     mapZoomRef.current = mapZoom;
@@ -2333,7 +2338,10 @@ export default function App() {
       if (cancelled) {
         return;
       }
-      const currentIndex = loopFrameHours.indexOf(forecastHour);
+      // Read from ref so this closure always sees the latest playback position
+      // without causing the effect to restart (which would abort in-flight decodes).
+      const currentHour = forecastHourRef.current;
+      const currentIndex = loopFrameHours.indexOf(currentHour);
       if (currentIndex < 0) {
         return;
       }
@@ -2378,7 +2386,6 @@ export default function App() {
     isLoopDisplayActive,
     visibleRenderMode,
     loopFrameHours,
-    forecastHour,
     ensureLoopFrameDecoded,
     hasDecodedLoopFrame,
   ]);
