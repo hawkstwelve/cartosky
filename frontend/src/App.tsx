@@ -64,7 +64,8 @@ const FRAME_RETRY_BASE_MS = 1200;
 const LOOP_PRELOAD_MIN_READY = 2;
 const LOOP_AHEAD_READY_TARGET = 8;
 const LOOP_MIN_PLAYABLE_AHEAD = 2;
-const MAX_CONCURRENT_DECODES = 1;
+const MAX_CONCURRENT_DECODES = 4;
+const AUTOPLAY_RESUME_POLL_MS = 200;
 const WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES = 256 * 1024 * 1024;
 const WEBP_DECODE_CACHE_BUDGET_MOBILE_BYTES = 128 * 1024 * 1024;
 const EMPTY_TILE_DATA_URL = "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=";
@@ -2222,8 +2223,13 @@ export default function App() {
     const PRELOAD_CONCURRENCY = 4;
     let inFlight = 0;
     let nextIndex = 0;
+    let stopped = false;
 
     const processNext = () => {
+      // Stop launching new decodes once the effect is cleaned up (early start
+      // or unmount). Already-in-flight fetches complete but won't chain further,
+      // preventing runaway cache filling that evicts the frames playback needs.
+      if (stopped) return;
       while (inFlight < PRELOAD_CONCURRENCY && nextIndex < orderedFrames.length) {
         const fh = orderedFrames[nextIndex];
         nextIndex += 1;
@@ -2232,8 +2238,6 @@ export default function App() {
           continue;
         }
         inFlight += 1;
-        // No signal: decode always runs to completion for LRU cache warming;
-        // the token inside mark() gates whether the result is actually applied.
         ensureLoopFrameDecoded(fh, renderMode)
           .then((ready) => mark(fh, ready))
           .catch(() => mark(fh, false))
@@ -2246,6 +2250,7 @@ export default function App() {
     processNext();
 
     return () => {
+      stopped = true;
       loopPreloadTokenRef.current += 1;
       if (progressRafId !== null) {
         window.cancelAnimationFrame(progressRafId);
@@ -2389,16 +2394,6 @@ export default function App() {
         return;
       }
 
-      const remainingAheadFrames = Math.max(0, loopFrameHours.length - currentIndex - 1);
-      const minAheadRequired = Math.min(LOOP_MIN_PLAYABLE_AHEAD, remainingAheadFrames);
-      const aheadReady = countAheadReadyLoopFrames(forecastHour, visibleRenderMode, LOOP_AHEAD_READY_TARGET);
-      if (aheadReady < minAheadRequired) {
-        setIsPlaying(false);
-        setIsLoopAutoplayBuffering(true);
-        showTransientFrameStatus("Buffering");
-        return;
-      }
-
       const nextIndex = currentIndex + 1;
       if (nextIndex >= loopFrameHours.length) {
         setIsPlaying(false);
@@ -2406,14 +2401,16 @@ export default function App() {
         return;
       }
 
-      for (let idx = nextIndex; idx < loopFrameHours.length; idx += 1) {
-        const candidate = loopFrameHours[idx];
-        if (hasDecodedLoopFrame(candidate, visibleRenderMode)) {
-          setTargetForecastHour(candidate);
-          return;
-        }
+      // Only advance to the immediate next frame — never skip ahead. This
+      // prevents the "jumping forward" artefact when non-consecutive frames
+      // happen to be decoded while the next sequential frame is still loading.
+      const nextHour = loopFrameHours[nextIndex];
+      if (hasDecodedLoopFrame(nextHour, visibleRenderMode)) {
+        setTargetForecastHour(nextHour);
+        return;
       }
 
+      // Next sequential frame not decoded yet — pause and buffer.
       setIsPlaying(false);
       setIsLoopAutoplayBuffering(true);
       showTransientFrameStatus("Buffering");
@@ -2427,28 +2424,40 @@ export default function App() {
     forecastHour,
     visibleRenderMode,
     hasDecodedLoopFrame,
-    countAheadReadyLoopFrames,
     showTransientFrameStatus,
   ]);
 
+  // Auto-resume after buffering. Uses a polling interval because decoded frame
+  // changes happen through refs (not state), so a pure dependency-driven effect
+  // would never re-evaluate once it enters the early-return path.
   useEffect(() => {
     if (!isLoopAutoplayBuffering || isPlaying || renderMode === "tiles" || loopFrameHours.length === 0) {
       return;
     }
-    const currentIndex = loopFrameHours.indexOf(forecastHour);
-    if (currentIndex < 0) {
-      return;
-    }
 
-    const remainingAheadFrames = Math.max(0, loopFrameHours.length - currentIndex - 1);
-    const minAheadRequired = Math.min(LOOP_MIN_PLAYABLE_AHEAD, remainingAheadFrames);
-    const aheadReady = countAheadReadyLoopFrames(forecastHour, visibleRenderMode, LOOP_AHEAD_READY_TARGET);
-    if (aheadReady < minAheadRequired) {
-      return;
-    }
+    const tryResume = () => {
+      const currentIndex = loopFrameHours.indexOf(forecastHour);
+      if (currentIndex < 0) {
+        return;
+      }
+      const nextIndex = currentIndex + 1;
+      if (nextIndex >= loopFrameHours.length) {
+        setIsLoopAutoplayBuffering(false);
+        return;
+      }
+      // Resume once the immediate next frame is decoded — mirrors the ticker
+      // logic which only advances to the sequential next frame.
+      if (hasDecodedLoopFrame(loopFrameHours[nextIndex], visibleRenderMode)) {
+        setIsLoopAutoplayBuffering(false);
+        setIsPlaying(true);
+      }
+    };
 
-    setIsLoopAutoplayBuffering(false);
-    setIsPlaying(true);
+    // Check immediately (covers the case where deps changed and buffer is ready).
+    tryResume();
+
+    const interval = window.setInterval(tryResume, AUTOPLAY_RESUME_POLL_MS);
+    return () => window.clearInterval(interval);
   }, [
     isLoopAutoplayBuffering,
     isPlaying,
@@ -2456,7 +2465,7 @@ export default function App() {
     loopFrameHours,
     forecastHour,
     visibleRenderMode,
-    countAheadReadyLoopFrames,
+    hasDecodedLoopFrame,
   ]);
 
   useEffect(() => {
@@ -3054,7 +3063,12 @@ export default function App() {
             }
             const { rows, hasFrameList } = resolveManifestFrames(manifestData, variable);
             if (hasFrameList) {
-              setFrameRows((prevRows) => mergeManifestRowsWithPrevious(rows, prevRows));
+              setFrameRows((prevRows) => {
+                const merged = mergeManifestRowsWithPrevious(rows, prevRows);
+                // If no new frames were added, return the same reference to avoid
+                // cascading through memos and restarting any in-progress preload.
+                return merged.length === prevRows.length ? prevRows : merged;
+              });
               const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
               setForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
               setTargetForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
@@ -3077,7 +3091,11 @@ export default function App() {
           if (cancelled || tickController?.signal.aborted) {
             return;
           }
-          setFrameRows(rows);
+          setFrameRows((prevRows) => {
+            // Only update the reference if new frames actually arrived to avoid
+            // cascading through memos and restarting any in-progress preload.
+            return rows.length === prevRows.length ? prevRows : rows;
+          });
           const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
           setForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
           setTargetForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
