@@ -98,7 +98,7 @@ const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
 const TRANSPARENT_PIXEL_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/ax7n7kAAAAASUVORK5CYII=";
 
-const DEFAULT_LOOP_BBOX: [number, number, number, number] = [-130.5, 24.0, -62.0, 54.5];
+const DEFAULT_LOOP_BBOX: [number, number, number, number] = [-132.5, 24.0, -60.0, 55.0];
 
 type OverlayBuffer = "a" | "b";
 type PlaybackMode = "autoplay" | "scrub";

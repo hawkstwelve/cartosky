@@ -69,7 +69,7 @@ NBM_REGIONS: dict[str, RegionSpec] = {
     "conus": RegionSpec(
         id="conus",
         name="CONUS",
-        bbox_wgs84=(-130.5, 24.0, -62.0, 54.5),
+        bbox_wgs84=(-132.5, 24.0, -60.0, 55.0),
         clip=True,
     ),
     "pnw": RegionSpec(

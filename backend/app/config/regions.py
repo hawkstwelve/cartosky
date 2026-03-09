@@ -3,8 +3,8 @@ from __future__ import annotations
 REGION_PRESETS: dict[str, dict] = {
     "conus": {
         "label": "CONUS",
-        "bbox": [-130.5, 24.0, -62.0, 54.5],
-        "defaultCenter": [-96.25, 39.25],
+        "bbox": [-132.5, 24.0, -60.0, 55.0],
+        "defaultCenter": [-96.25, 39.5],
         "defaultZoom": 4,
         "minZoom": 2,
         "maxZoom": 8,
