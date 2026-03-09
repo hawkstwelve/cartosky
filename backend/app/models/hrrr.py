@@ -57,7 +57,7 @@ class HRRRPlugin(BaseModelPlugin):
 
 
 PNW_BBOX_WGS84 = (-125.5, 41.5, -111.0, 49.5)
-CONUS_BBOX_WGS84 = (-132.5, 24.0, -60.0, 55.0)
+CONUS_BBOX_WGS84 = (-134.0, 24.0, -60.0, 55.0)
 
 HRRR_REGIONS: dict[str, RegionSpec] = {
     "conus": RegionSpec(

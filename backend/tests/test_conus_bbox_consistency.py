@@ -29,8 +29,8 @@ from app.models.nbm import NBM_MODEL
 from app.services.builder.cog_writer import REGION_BBOX_3857, REGION_BBOX_4326
 
 
-EXPECTED_CONUS_BBOX_4326 = (-132.5, 24.0, -60.0, 55.0)
-EXPECTED_CONUS_BBOX_3857 = (-14749832.53, 2753408.11, -6679169.45, 7361866.11)
+EXPECTED_CONUS_BBOX_4326 = (-134.0, 24.0, -60.0, 55.0)
+EXPECTED_CONUS_BBOX_3857 = (-14916811.77, 2753408.11, -6679169.45, 7361866.11)
 
 
 def test_conus_bbox_is_consistent_across_builder_and_metadata() -> None:
