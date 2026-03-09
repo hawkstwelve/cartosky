@@ -1,7 +1,7 @@
 import type { ComponentType } from "react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Activity, AlertCircle, Gauge, RefreshCcw, TimerReset, Zap } from "lucide-react";
+import { Activity, AlertCircle, Gauge, Globe, Layers, PauseCircle, RefreshCcw, TimerReset, Zap } from "lucide-react";
 
 import {
   fetchAdminPerfBreakdown,
@@ -201,11 +201,17 @@ export default function AdminPerformancePage() {
   const [frameTrend, setFrameTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [loopTrend, setLoopTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [firstFrameTrend, setFirstFrameTrend] = useState<PerfTimeseriesPoint[]>([]);
+  const [varSwitchTrend, setVarSwitchTrend] = useState<PerfTimeseriesPoint[]>([]);
+  const [tileFetchTrend, setTileFetchTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [modelBreakdown, setModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [deviceBreakdown, setDeviceBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [loopModelBreakdown, setLoopModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [firstFrameModelBreakdown, setFirstFrameModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [firstFrameDeviceBreakdown, setFirstFrameDeviceBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [scrubModelBreakdown, setScrubModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [frameVariableBreakdown, setFrameVariableBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [varSwitchModelBreakdown, setVarSwitchModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [tileFetchModelBreakdown, setTileFetchModelBreakdown] = useState<PerfBreakdownItem[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -222,16 +228,29 @@ export default function AdminPerformancePage() {
           return;
         }
 
-        const [summaryData, frameSeries, loopSeries, firstFrameSeries, modelData, deviceData, loopModelData, firstFrameModelData, firstFrameDeviceData] = await Promise.all([
+        const [
+          summaryData,
+          frameSeries, loopSeries, firstFrameSeries, varSwitchSeries, tileFetchSeries,
+          modelData, deviceData, loopModelData,
+          firstFrameModelData, firstFrameDeviceData,
+          scrubModelData, frameVariableData,
+          varSwitchModelData, tileFetchModelData,
+        ] = await Promise.all([
           fetchAdminPerfSummary({ window: windowValue, device: deviceValue }),
           fetchAdminPerfTimeseries({ metric: "frame_change", window: windowValue, device: deviceValue }),
           fetchAdminPerfTimeseries({ metric: "loop_start", window: windowValue, device: deviceValue }),
           fetchAdminPerfTimeseries({ metric: "viewer_first_frame", window: windowValue, device: deviceValue }),
+          fetchAdminPerfTimeseries({ metric: "variable_switch", window: windowValue, device: deviceValue }),
+          fetchAdminPerfTimeseries({ metric: "tile_fetch", window: windowValue, device: deviceValue }),
           fetchAdminPerfBreakdown({ metric: "frame_change", by: "model", window: windowValue, device: deviceValue }),
           fetchAdminPerfBreakdown({ metric: "loop_start", by: "device", window: windowValue, device: deviceValue }),
           fetchAdminPerfBreakdown({ metric: "loop_start", by: "model", window: windowValue, device: deviceValue }),
           fetchAdminPerfBreakdown({ metric: "viewer_first_frame", by: "model", window: windowValue, device: deviceValue }),
           fetchAdminPerfBreakdown({ metric: "viewer_first_frame", by: "device", window: windowValue, device: deviceValue }),
+          fetchAdminPerfBreakdown({ metric: "scrub_latency", by: "model", window: windowValue, device: deviceValue }),
+          fetchAdminPerfBreakdown({ metric: "frame_change", by: "variable", window: windowValue, device: deviceValue }),
+          fetchAdminPerfBreakdown({ metric: "variable_switch", by: "model", window: windowValue, device: deviceValue }),
+          fetchAdminPerfBreakdown({ metric: "tile_fetch", by: "model", window: windowValue, device: deviceValue }),
         ]);
         if (cancelled) return;
 
@@ -239,11 +258,17 @@ export default function AdminPerformancePage() {
         setFrameTrend(frameSeries.points);
         setLoopTrend(loopSeries.points);
         setFirstFrameTrend(firstFrameSeries.points);
+        setVarSwitchTrend(varSwitchSeries.points);
+        setTileFetchTrend(tileFetchSeries.points);
         setModelBreakdown(modelData.items);
         setDeviceBreakdown(deviceData.items);
         setLoopModelBreakdown(loopModelData.items);
         setFirstFrameModelBreakdown(firstFrameModelData.items);
         setFirstFrameDeviceBreakdown(firstFrameDeviceData.items);
+        setScrubModelBreakdown(scrubModelData.items);
+        setFrameVariableBreakdown(frameVariableData.items);
+        setVarSwitchModelBreakdown(varSwitchModelData.items);
+        setTileFetchModelBreakdown(tileFetchModelData.items);
       } catch (nextError) {
         if (cancelled) return;
         setError(nextError instanceof Error ? nextError.message : "Failed to load admin dashboard");
@@ -360,6 +385,12 @@ export default function AdminPerformancePage() {
         <MetricCard title="First Viewer Frame" icon={Zap} metric={summary.viewer_first_frame} />
       </div>
 
+      <div className="grid gap-4 xl:grid-cols-3">
+        <MetricCard title="Variable Switch" icon={Layers} metric={summary.variable_switch} />
+        <MetricCard title="Tile Fetch" icon={Globe} metric={summary.tile_fetch} />
+        <MetricCard title="Animation Stall" icon={PauseCircle} metric={summary.animation_stall} />
+      </div>
+
       <div className="grid gap-6 xl:grid-cols-3">
         <TrendChart
           title="Frame Change Trend"
@@ -378,6 +409,21 @@ export default function AdminPerformancePage() {
           subtitle="Time from viewer open to first frame being rendered."
           points={firstFrameTrend}
           lineColor="#f0a575"
+        />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <TrendChart
+          title="Variable Switch Trend"
+          subtitle="Time from variable selector click to first frame of new variable."
+          points={varSwitchTrend}
+          lineColor="#c4a8f5"
+        />
+        <TrendChart
+          title="Tile Fetch Trend"
+          subtitle="Individual weather tile network fetch duration (sampled 1-in-8)."
+          points={tileFetchTrend}
+          lineColor="#f5c842"
         />
       </div>
 
@@ -409,6 +455,32 @@ export default function AdminPerformancePage() {
           title="First Viewer Frame by Device"
           subtitle="Cold-start render latency split by device type."
           items={firstFrameDeviceBreakdown}
+        />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-3">
+        <BreakdownList
+          title="Scrub Latency by Model"
+          subtitle="Scrub response time per model — reveals which datasets are cache-miss prone."
+          items={scrubModelBreakdown}
+        />
+        <BreakdownList
+          title="Frame Change by Variable"
+          subtitle="Frame change latency split by variable — identifies render-heavy variables."
+          items={frameVariableBreakdown}
+        />
+        <BreakdownList
+          title="Variable Switch by Model"
+          subtitle="Time to first frame after a variable selection, per model."
+          items={varSwitchModelBreakdown}
+        />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-1">
+        <BreakdownList
+          title="Tile Fetch by Model"
+          subtitle="Sampled network fetch time per weather tile, split by model."
+          items={tileFetchModelBreakdown}
         />
       </div>
     </div>

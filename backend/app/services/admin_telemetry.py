@@ -16,6 +16,9 @@ ALLOWED_PERF_EVENT_NAMES = {
     "frame_change",
     "loop_start",
     "scrub_latency",
+    "variable_switch",
+    "tile_fetch",
+    "animation_stall",
 }
 
 ALLOWED_USAGE_EVENT_NAMES = {
@@ -30,6 +33,9 @@ PERF_TARGETS_MS = {
     "frame_change": 250.0,
     "loop_start": 1000.0,
     "scrub_latency": 150.0,
+    "variable_switch": 600.0,
+    "tile_fetch": 800.0,
+    "animation_stall": 750.0,
 }
 
 _db_init_lock = threading.Lock()

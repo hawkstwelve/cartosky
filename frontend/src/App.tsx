@@ -142,6 +142,15 @@ type PendingLoopStartMetric = {
   forecastHour: number | null;
 };
 
+type PendingVariableSwitchMetric = {
+  startedAt: number;
+  fromVariableId: string | null;
+  toVariableId: string;
+  modelId: string | null;
+  runId: string | null;
+  regionId: string | null;
+};
+
 const BASEMAP_MODE_STORAGE_KEY = "twf.map.basemap_mode";
 const MODEL_ORDER_BY_ID: Record<string, number> = {
   hrrr: 0,
@@ -797,6 +806,11 @@ export default function App() {
   const firstViewerFrameTrackedRef = useRef(false);
   const pendingFrameMetricRef = useRef<PendingViewerPerfMetric | null>(null);
   const pendingLoopStartMetricRef = useRef<PendingLoopStartMetric | null>(null);
+  const pendingVariableSwitchRef = useRef<PendingVariableSwitchMetric | null>(null);
+  const modelRef = useRef(model);
+  const variableRef = useRef(variable);
+  const lastLoopAdvanceRef = useRef<number | null>(null);
+  const tileFetchSampleCounterRef = useRef(0);
   const permalinkHydratedRef = useRef(false);
   const lastSyncedPermalinkSearchRef = useRef("");
   const suppressNextUrlSyncRef = useRef(true);
@@ -1293,8 +1307,60 @@ export default function App() {
   }, [forecastHour]);
 
   useEffect(() => {
+    modelRef.current = model;
+  }, [model]);
+
+  useEffect(() => {
+    variableRef.current = variable;
+  }, [variable]);
+
+  useEffect(() => {
     mapZoomRef.current = mapZoom;
   }, [mapZoom]);
+
+  // Observe individual weather tile fetch durations via the Performance resource
+  // timing API. Sampled at 1:8 to avoid flooding the telemetry pipeline.
+  useEffect(() => {
+    if (typeof PerformanceObserver === "undefined") {
+      return;
+    }
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (!(entry instanceof PerformanceResourceTiming)) continue;
+        const url = entry.name;
+        // Only track our own weather tile PNG requests.
+        if (!url.includes("/tiles/v3/") || !url.endsWith(".png")) continue;
+        tileFetchSampleCounterRef.current += 1;
+        if (tileFetchSampleCounterRef.current % 8 !== 0) continue;
+        const durationMs = entry.duration;
+        if (!Number.isFinite(durationMs) || durationMs <= 0) continue;
+        // Extract model and variable from the path: /tiles/v3/{model}/{run}/{varKey}/{fh}/...
+        let modelId: string | null = modelRef.current || null;
+        let variableId: string | null = variableRef.current || null;
+        try {
+          const pathMatch = url.match(/\/tiles\/v3\/([^/]+)\/[^/]+\/([^/]+)\//);
+          if (pathMatch) {
+            modelId = decodeURIComponent(pathMatch[1]);
+            variableId = decodeURIComponent(pathMatch[2]);
+          }
+        } catch {
+          // best-effort URL parse; fall through to use ref values
+        }
+        trackPerfEvent({
+          event_name: "tile_fetch",
+          duration_ms: durationMs,
+          model_id: modelId,
+          variable_id: variableId,
+        });
+      }
+    });
+    try {
+      observer.observe({ type: "resource", buffered: false });
+    } catch {
+      return;
+    }
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const targetView = pendingMapViewRef.current;
@@ -2041,6 +2107,7 @@ export default function App() {
     inFlightStartedAtRef.current.clear();
     readyLatencyStatsRef.current = { totalMs: 0, count: 0 };
     autoplayPrimedRef.current = false;
+    pendingVariableSwitchRef.current = null;
     // Cancel any pending coalesced snapshot RAF and reset the equality baseline so
     // the first update after reset is never incorrectly skipped.
     if (bufferSnapshotRafRef.current !== null) {
@@ -2282,6 +2349,32 @@ export default function App() {
     finalizePendingFrameMetric("loop");
   }, [loopDisplayHour, finalizePendingFrameMetric]);
 
+  // Finalize variable_switch in loop mode: fires when the first loop frame for the
+  // new variable becomes displayable.
+  useEffect(() => {
+    if (!loopDisplayHour) {
+      return;
+    }
+    const pendingVarSwitch = pendingVariableSwitchRef.current;
+    if (!pendingVarSwitch) {
+      return;
+    }
+    pendingVariableSwitchRef.current = null;
+    const durationMs = performance.now() - pendingVarSwitch.startedAt;
+    if (!Number.isFinite(durationMs) || durationMs < 0) {
+      return;
+    }
+    trackPerfEvent({
+      event_name: "variable_switch",
+      duration_ms: durationMs,
+      model_id: pendingVarSwitch.modelId,
+      variable_id: pendingVarSwitch.toVariableId,
+      run_id: pendingVarSwitch.runId,
+      region_id: pendingVarSwitch.regionId,
+      meta: { from_variable: pendingVarSwitch.fromVariableId, render_target: "loop" },
+    });
+  }, [loopDisplayHour]);
+
   useEffect(() => {
     if (!isPlaying) {
       return;
@@ -2397,6 +2490,8 @@ export default function App() {
       return;
     }
 
+    lastLoopAdvanceRef.current = Date.now();
+
     const interval = window.setInterval(() => {
       const currentHour = forecastHourRef.current;
       const currentIndex = loopFrameHours.indexOf(currentHour);
@@ -2406,6 +2501,7 @@ export default function App() {
 
       const nextIndex = currentIndex + 1;
       if (nextIndex >= loopFrameHours.length) {
+        lastLoopAdvanceRef.current = null;
         setIsPlaying(false);
         setIsLoopAutoplayBuffering(false);
         return;
@@ -2413,13 +2509,30 @@ export default function App() {
 
       const nextHour = loopFrameHours[nextIndex];
       if (hasDecodedLoopFrame(nextHour, visibleRenderMode)) {
+        lastLoopAdvanceRef.current = Date.now();
         setTargetForecastHour(nextHour);
+      } else {
+        // Frame not yet decoded — detect stall and emit once per stall episode.
+        const now = Date.now();
+        const lastAdvance = lastLoopAdvanceRef.current;
+        if (lastAdvance !== null && now - lastAdvance > AUTOPLAY_TICK_MS * 2) {
+          const stallMs = now - lastAdvance;
+          // Reset the baseline so we emit once per stall episode, not every tick.
+          lastLoopAdvanceRef.current = now;
+          trackPerfEvent({
+            event_name: "animation_stall",
+            duration_ms: stallMs,
+            model_id: modelRef.current || null,
+            variable_id: variableRef.current || null,
+          });
+        }
       }
-      // else: frame not yet decoded — hold current frame, try again next tick.
-      // Background prefetch will decode it; no pause/resume cycle needed.
     }, AUTOPLAY_TICK_MS);
 
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+      lastLoopAdvanceRef.current = null;
+    };
   }, [
     isPlaying,
     renderMode,
@@ -3378,6 +3491,23 @@ export default function App() {
         });
       }
     }
+    // Finalize variable_switch: fires once the first tile for the new variable is viewport-ready.
+    const pendingVarSwitch = pendingVariableSwitchRef.current;
+    if (pendingVarSwitch && readyTileUrl === tileUrl) {
+      pendingVariableSwitchRef.current = null;
+      const durationMs = performance.now() - pendingVarSwitch.startedAt;
+      if (Number.isFinite(durationMs) && durationMs >= 0) {
+        trackPerfEvent({
+          event_name: "variable_switch",
+          duration_ms: durationMs,
+          model_id: pendingVarSwitch.modelId,
+          variable_id: pendingVarSwitch.toVariableId,
+          run_id: pendingVarSwitch.runId,
+          region_id: pendingVarSwitch.regionId,
+          meta: { from_variable: pendingVarSwitch.fromVariableId },
+        });
+      }
+    }
     const pending = pendingFrameMetricRef.current;
     if (pending?.renderTarget === "tiles" && pending.expectedTileUrl === readyTileUrl) {
       finalizePendingFrameMetric("tile");
@@ -3430,6 +3560,14 @@ export default function App() {
   }, [variable, telemetryRunId, region, forecastHour]);
 
   const handleVariableChange = useCallback((nextVariable: string) => {
+    pendingVariableSwitchRef.current = {
+      startedAt: performance.now(),
+      fromVariableId: variable || null,
+      toVariableId: nextVariable,
+      modelId: model || null,
+      runId: telemetryRunId,
+      regionId: region || null,
+    };
     setVariable(nextVariable);
     trackUsageEvent({
       event_name: "variable_selected",
@@ -3439,7 +3577,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, telemetryRunId, region, forecastHour]);
+  }, [model, variable, telemetryRunId, region, forecastHour]);
 
   useEffect(() => {
     if (isPlaying && isScrubbing) {
