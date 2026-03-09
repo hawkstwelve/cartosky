@@ -2107,7 +2107,6 @@ export default function App() {
     inFlightStartedAtRef.current.clear();
     readyLatencyStatsRef.current = { totalMs: 0, count: 0 };
     autoplayPrimedRef.current = false;
-    pendingVariableSwitchRef.current = null;
     // Cancel any pending coalesced snapshot RAF and reset the equality baseline so
     // the first update after reset is never incorrectly skipped.
     if (bufferSnapshotRafRef.current !== null) {
@@ -2157,6 +2156,13 @@ export default function App() {
     resolvedRunForRequests,
     variable,
   ]);
+
+  // Clear any pending variable_switch metric when the model or run changes —
+  // those are full dataset resets where the switch context is no longer valid.
+  // We do NOT clear on variable change because that's what starts the metric.
+  useEffect(() => {
+    pendingVariableSwitchRef.current = null;
+  }, [model, resolvedRunForRequests]);
 
   useEffect(() => {
     if (!isLoopPreloading) {
