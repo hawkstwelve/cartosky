@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Activity, AlertCircle, Gauge, Globe, Layers, PauseCircle, RefreshCcw, TimerReset, Zap } from "lucide-react";
@@ -156,8 +156,7 @@ function TrendChart(props: {
   );
 }
 
-function BreakdownList(props: { title: string; subtitle: string; items: PerfBreakdownItem[] }) {
-  const { title, subtitle, items } = props;
+function BreakdownList(props: { title: string; subtitle: string; items: PerfBreakdownItem[] }) {  const { title, subtitle, items } = props;
 
   return (
     <section className="rounded-[28px] border border-white/12 bg-black/28 p-5 shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
@@ -187,6 +186,21 @@ function BreakdownList(props: { title: string; subtitle: string; items: PerfBrea
         )}
       </div>
     </section>
+  );
+}
+
+function SectionLabel(props: { label: string; description: string; children: ReactNode }) {
+  return (
+    <div className="space-y-4 pt-4">
+      <div className="flex items-center gap-4">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#95b1a2]">{props.label}</div>
+          <p className="mt-0.5 text-sm text-white/48">{props.description}</p>
+        </div>
+        <div className="flex-1 border-t border-white/8" />
+      </div>
+      {props.children}
+    </div>
   );
 }
 
@@ -378,111 +392,126 @@ export default function AdminPerformancePage() {
         ) : null}
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-4">
-        <MetricCard title="Frame Change" icon={Gauge} metric={summary.frame_change} />
-        <MetricCard title="Loop Start" icon={Activity} metric={summary.loop_start} />
-        <MetricCard title="Scrub Latency" icon={TimerReset} metric={summary.scrub_latency} />
-        <MetricCard title="First Viewer Frame" icon={Zap} metric={summary.viewer_first_frame} />
-      </div>
+      <SectionLabel
+        label="Playback & Animation"
+        description="Real-time frame rendering, loop playback, and scrub responsiveness."
+      >
+        <div className="grid gap-4 xl:grid-cols-4">
+          <MetricCard title="Frame Change" icon={Gauge} metric={summary.frame_change} />
+          <MetricCard title="Loop Start" icon={Activity} metric={summary.loop_start} />
+          <MetricCard title="Scrub Latency" icon={TimerReset} metric={summary.scrub_latency} />
+          <MetricCard title="Animation Stall" icon={PauseCircle} metric={summary.animation_stall} />
+        </div>
 
-      <div className="grid gap-4 xl:grid-cols-3">
-        <MetricCard title="Variable Switch" icon={Layers} metric={summary.variable_switch} />
-        <MetricCard title="Tile Fetch" icon={Globe} metric={summary.tile_fetch} />
-        <MetricCard title="Animation Stall" icon={PauseCircle} metric={summary.animation_stall} />
-      </div>
+        <div className="grid gap-6 xl:grid-cols-2">
+          <TrendChart
+            title="Frame Change Trend"
+            subtitle="How quickly the map responds to manual frame changes."
+            points={frameTrend}
+            lineColor="#7ec8ff"
+          />
+          <TrendChart
+            title="Loop Start Trend"
+            subtitle="Time from play action to actual loop playback start."
+            points={loopTrend}
+            lineColor="#b7e38f"
+          />
+        </div>
 
-      <div className="grid gap-6 xl:grid-cols-3">
-        <TrendChart
-          title="Frame Change Trend"
-          subtitle="How quickly the map responds to manual frame changes."
-          points={frameTrend}
-          lineColor="#7ec8ff"
-        />
-        <TrendChart
-          title="Loop Start Trend"
-          subtitle="Time from play action to actual loop playback start."
-          points={loopTrend}
-          lineColor="#b7e38f"
-        />
-        <TrendChart
-          title="First Viewer Frame Trend"
-          subtitle="Time from viewer open to first frame being rendered."
-          points={firstFrameTrend}
-          lineColor="#f0a575"
-        />
-      </div>
+        <div className="grid gap-6 xl:grid-cols-3">
+          <BreakdownList
+            title="Frame Change by Model"
+            subtitle="Most active models ordered by sample count."
+            items={modelBreakdown}
+          />
+          <BreakdownList
+            title="Frame Change by Variable"
+            subtitle="Frame change latency split by variable — identifies render-heavy variables."
+            items={frameVariableBreakdown}
+          />
+          <BreakdownList
+            title="Scrub Latency by Model"
+            subtitle="Scrub response time per model — reveals which datasets are cache-miss prone."
+            items={scrubModelBreakdown}
+          />
+        </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <TrendChart
-          title="Variable Switch Trend"
-          subtitle="Time from variable selector click to first frame of new variable."
-          points={varSwitchTrend}
-          lineColor="#c4a8f5"
-        />
-        <TrendChart
-          title="Tile Fetch Trend"
-          subtitle="Individual weather tile network fetch duration (sampled 1-in-8)."
-          points={tileFetchTrend}
-          lineColor="#f5c842"
-        />
-      </div>
+        <div className="grid gap-6 xl:grid-cols-2">
+          <BreakdownList
+            title="Loop Start by Model"
+            subtitle="Playback startup latency split by model."
+            items={loopModelBreakdown}
+          />
+          <BreakdownList
+            title="Loop Start by Device"
+            subtitle="Quick split of playback startup behavior."
+            items={deviceBreakdown}
+          />
+        </div>
+      </SectionLabel>
 
-      <div className="grid gap-6 xl:grid-cols-3">
-        <BreakdownList
-          title="Frame Change by Model"
-          subtitle="Most active models ordered by sample count."
-          items={modelBreakdown}
-        />
-        <BreakdownList
-          title="Loop Start by Model"
-          subtitle="Playback startup latency split by model."
-          items={loopModelBreakdown}
-        />
-        <BreakdownList
-          title="Loop Start by Device"
-          subtitle="Quick split of playback startup behavior."
-          items={deviceBreakdown}
-        />
-      </div>
+      <SectionLabel
+        label="Cold Start & Navigation"
+        description="Initial viewer load time and variable switching latency."
+      >
+        <div className="grid gap-4 xl:grid-cols-2">
+          <MetricCard title="First Viewer Frame" icon={Zap} metric={summary.viewer_first_frame} />
+          <MetricCard title="Variable Switch" icon={Layers} metric={summary.variable_switch} />
+        </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <BreakdownList
-          title="First Viewer Frame by Model"
-          subtitle="Cold-start render latency per model — identifies slow-loading datasets."
-          items={firstFrameModelBreakdown}
-        />
-        <BreakdownList
-          title="First Viewer Frame by Device"
-          subtitle="Cold-start render latency split by device type."
-          items={firstFrameDeviceBreakdown}
-        />
-      </div>
+        <div className="grid gap-6 xl:grid-cols-2">
+          <TrendChart
+            title="First Viewer Frame Trend"
+            subtitle="Time from viewer open to first frame being rendered."
+            points={firstFrameTrend}
+            lineColor="#f0a575"
+          />
+          <TrendChart
+            title="Variable Switch Trend"
+            subtitle="Time from variable selector click to first frame of new variable."
+            points={varSwitchTrend}
+            lineColor="#c4a8f5"
+          />
+        </div>
 
-      <div className="grid gap-6 xl:grid-cols-3">
-        <BreakdownList
-          title="Scrub Latency by Model"
-          subtitle="Scrub response time per model — reveals which datasets are cache-miss prone."
-          items={scrubModelBreakdown}
-        />
-        <BreakdownList
-          title="Frame Change by Variable"
-          subtitle="Frame change latency split by variable — identifies render-heavy variables."
-          items={frameVariableBreakdown}
-        />
-        <BreakdownList
-          title="Variable Switch by Model"
-          subtitle="Time to first frame after a variable selection, per model."
-          items={varSwitchModelBreakdown}
-        />
-      </div>
+        <div className="grid gap-6 xl:grid-cols-3">
+          <BreakdownList
+            title="First Viewer Frame by Model"
+            subtitle="Cold-start render latency per model — identifies slow-loading datasets."
+            items={firstFrameModelBreakdown}
+          />
+          <BreakdownList
+            title="First Viewer Frame by Device"
+            subtitle="Cold-start render latency split by device type."
+            items={firstFrameDeviceBreakdown}
+          />
+          <BreakdownList
+            title="Variable Switch by Model"
+            subtitle="Time to first frame after a variable selection, per model."
+            items={varSwitchModelBreakdown}
+          />
+        </div>
+      </SectionLabel>
 
-      <div className="grid gap-6 xl:grid-cols-1">
-        <BreakdownList
-          title="Tile Fetch by Model"
-          subtitle="Sampled network fetch time per weather tile, split by model."
-          items={tileFetchModelBreakdown}
-        />
-      </div>
+      <SectionLabel
+        label="Network / Tile Fetch"
+        description="Individual weather tile network fetch latency from the CDN."
+      >
+        <div className="grid gap-6 xl:grid-cols-3">
+          <MetricCard title="Tile Fetch" icon={Globe} metric={summary.tile_fetch} />
+          <TrendChart
+            title="Tile Fetch Trend"
+            subtitle="Individual weather tile network fetch duration (sampled 1-in-8)."
+            points={tileFetchTrend}
+            lineColor="#f5c842"
+          />
+          <BreakdownList
+            title="Tile Fetch by Model"
+            subtitle="Sampled network fetch time per weather tile, split by model."
+            items={tileFetchModelBreakdown}
+          />
+        </div>
+      </SectionLabel>
     </div>
   );
 }
