@@ -2440,17 +2440,22 @@ export default function App() {
       if (currentIndex < 0) {
         return;
       }
-      const nextIndex = currentIndex + 1;
-      if (nextIndex >= loopFrameHours.length) {
+      const remaining = loopFrameHours.length - 1 - currentIndex;
+      if (remaining <= 0) {
         setIsLoopAutoplayBuffering(false);
         return;
       }
-      // Resume once the immediate next frame is decoded — mirrors the ticker
-      // logic which only advances to the sequential next frame.
-      if (hasDecodedLoopFrame(loopFrameHours[nextIndex], visibleRenderMode)) {
-        setIsLoopAutoplayBuffering(false);
-        setIsPlaying(true);
+      // Require a small runway of consecutive decoded frames before resuming,
+      // so playback doesn't immediately re-pause on the next missing frame
+      // (which caused the visible play/pause jitter).
+      const needed = Math.min(LOOP_MIN_PLAYABLE_AHEAD, remaining);
+      for (let i = 1; i <= needed; i++) {
+        if (!hasDecodedLoopFrame(loopFrameHours[currentIndex + i], visibleRenderMode)) {
+          return;
+        }
       }
+      setIsLoopAutoplayBuffering(false);
+      setIsPlaying(true);
     };
 
     // Check immediately (covers the case where deps changed and buffer is ready).
