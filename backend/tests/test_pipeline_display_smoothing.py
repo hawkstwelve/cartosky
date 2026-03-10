@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.services.builder.pipeline import _prepare_display_data_for_colorize
+from app.services.builder.pipeline import _prepare_display_data_for_colorize, _warp_resampling_for_variable
 
 
 def test_gfs_continuous_vars_skip_display_smoothing() -> None:
@@ -45,3 +45,17 @@ def test_discrete_kind_remains_passthrough() -> None:
         var_key="precip_ptype",
     )
     np.testing.assert_array_equal(display, data)
+
+
+def test_precip_and_snow_use_nearest_warp_resampling_across_models() -> None:
+    for model_id in ("hrrr", "nam", "gfs"):
+        assert _warp_resampling_for_variable(
+            model_id=model_id,
+            var_key="snowfall_total",
+            kind="continuous",
+        ) == "nearest"
+        assert _warp_resampling_for_variable(
+            model_id=model_id,
+            var_key="precip_total",
+            kind="continuous",
+        ) == "nearest"

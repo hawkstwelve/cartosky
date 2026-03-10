@@ -117,6 +117,7 @@ type VariableEntry = {
   defaultFh?: number | null;
   buildable?: boolean;
   kind?: string | null;
+  displayResamplingOverride?: string | null;
   group?: string | null;
 };
 
@@ -293,6 +294,8 @@ function normalizeCapabilityVarRows(modelCapability: CapabilityModel | null | un
       defaultFh: variableDefaultFh(entry),
       buildable: entry.buildable !== false,
       kind: typeof entry.kind === "string" ? entry.kind : null,
+      displayResamplingOverride:
+        typeof entry.display_resampling_override === "string" ? entry.display_resampling_override : null,
       group: typeof entry.group === "string" ? entry.group : null,
     }))
     .filter((entry) => Boolean(entry.id) && entry.buildable);
@@ -916,6 +919,8 @@ export default function App() {
   );
   const selectedVariableDefaultFh = selectedCapabilityVarMap.get(variable)?.defaultFh ?? null;
   const selectedVariableKind = selectedCapabilityVarMap.get(variable)?.kind ?? null;
+  const selectedVariableResamplingOverride =
+    selectedCapabilityVarMap.get(variable)?.displayResamplingOverride ?? null;
   const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
   const zoomHintMinZoom = toNumberOrNull(selectedModelConstraints.zoom_hint_min);
   const overlayFadeOutZoom = useMemo(() => {
@@ -3921,6 +3926,7 @@ export default function App() {
           mode={isLoopDisplayActive ? "scrub" : (isPlaying ? "autoplay" : "scrub")}
           variable={variable}
           variableKind={selectedVariableKind}
+          variableResamplingOverride={selectedVariableResamplingOverride}
           overlayFadeOutZoom={overlayFadeOutZoom}
           zoomHintMinZoom={zoomHintMinZoom}
           basemapMode={basemapMode}

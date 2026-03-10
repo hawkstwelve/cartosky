@@ -377,6 +377,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_stops": QPF6H_LEGEND_STOPS,
         "allow_dry_frame": True,
         "transparent_below_min": 0.01,
+        "display_resampling_override": "nearest",
         # "display_smoothing_sigma": 0.8,
     },
     "qpf6h": {
@@ -410,6 +411,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_title": "Total Snowfall (in)",
         "allow_dry_frame": True,
         "transparent_below_min": 0.1,
+        "display_resampling_override": "nearest",
         # "display_smoothing_sigma": 0.8,
     },
     "tmp2m": {

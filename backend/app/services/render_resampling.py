@@ -14,6 +14,7 @@ from typing import Any
 from rasterio.enums import Resampling
 
 from ..models.registry import list_model_capabilities
+from .colormaps import get_color_map_spec
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ _FIXED_LOOP_SIZE_MODEL_ALLOWLIST = {"gfs"}
 _MODEL_GRID_KM_FALLBACK: dict[str, float] = {
     "gfs": 25.0,
 }
+_SUPPORTED_DISPLAY_RESAMPLING = {"nearest", "bilinear"}
 _warned_unknown_kind: set[tuple[str, str]] = set()
 _unknown_kind_hits: dict[tuple[str, str], int] = {}
 _fixed_loop_size_log_lock = threading.Lock()
@@ -98,6 +100,28 @@ def variable_kind(model_id: str, var_key: str) -> str | None:
     return _lookup_kind_from_capabilities(model_norm, var_norm)
 
 
+@lru_cache(maxsize=64)
+def display_resampling_override(model_id: str, var_key: str) -> str | None:
+    model_norm = str(model_id or "").strip().lower()
+    var_norm = str(var_key or "").strip().lower()
+    if not model_norm or not var_norm:
+        return None
+
+    color_map_id = variable_color_map_id(model_norm, var_norm)
+    if not color_map_id:
+        return None
+
+    try:
+        spec = get_color_map_spec(color_map_id)
+    except KeyError:
+        return None
+
+    override = str(spec.get("display_resampling_override") or "").strip().lower()
+    if override in _SUPPORTED_DISPLAY_RESAMPLING:
+        return override
+    return None
+
+
 def resampling_name_for_kind(
     *,
     model_id: str,
@@ -111,6 +135,10 @@ def resampling_name_for_kind(
     """
     model_norm = str(model_id or "").strip().lower()
     var_norm = str(var_key or "").strip().lower()
+    override = display_resampling_override(model_norm, var_norm)
+    if override is not None:
+        return override
+
     resolved_kind = _normalize_kind(kind) or _normalize_kind(variable_kind(model_norm, var_norm))
 
     if resolved_kind in _DISCRETE_KINDS:

@@ -20,6 +20,7 @@ def _set_capabilities(monkeypatch, variable_catalog):
     render_resampling._lookup_kind_from_capabilities.cache_clear()
     render_resampling._lookup_variable_catalog_entry.cache_clear()
     render_resampling._lookup_model_grid_km.cache_clear()
+    render_resampling.display_resampling_override.cache_clear()
     render_resampling._warned_unknown_kind.clear()
     render_resampling._unknown_kind_hits.clear()
 
@@ -27,7 +28,7 @@ def _set_capabilities(monkeypatch, variable_catalog):
 def test_continuous_kind_maps_to_bilinear(monkeypatch):
     _set_capabilities(
         monkeypatch,
-        {"tmp2m": SimpleNamespace(kind="continuous")},
+        {"tmp2m": SimpleNamespace(kind="continuous", color_map_id="tmp2m")},
     )
 
     assert render_resampling.resampling_name_for_kind(model_id="gfs", var_key="tmp2m") == "bilinear"
@@ -40,7 +41,7 @@ def test_continuous_kind_maps_to_bilinear(monkeypatch):
 def test_discrete_kind_maps_to_nearest(monkeypatch):
     _set_capabilities(
         monkeypatch,
-        {"precip_ptype": SimpleNamespace(kind="indexed")},
+        {"precip_ptype": SimpleNamespace(kind="indexed", color_map_id="precip_ptype")},
     )
 
     assert render_resampling.resampling_name_for_kind(model_id="gfs", var_key="precip_ptype") == "nearest"
@@ -50,7 +51,7 @@ def test_discrete_kind_maps_to_nearest(monkeypatch):
 def test_unknown_kind_falls_back_to_bilinear_and_warns(monkeypatch, caplog):
     _set_capabilities(
         monkeypatch,
-        {"tmp2m": SimpleNamespace(kind=None)},
+        {"tmp2m": SimpleNamespace(kind=None, color_map_id="tmp2m")},
     )
 
     caplog.set_level("WARNING")
@@ -133,3 +134,21 @@ def test_loop_fixed_size_not_applied_for_hrrr(monkeypatch):
     assert fixed is False
     assert out_w == src_w
     assert out_h == src_h
+
+
+def test_display_resampling_override_for_precip_and_snow(monkeypatch):
+    _set_capabilities(
+        monkeypatch,
+        {
+            "snowfall_total": SimpleNamespace(kind="continuous", color_map_id="snowfall_total"),
+            "precip_total": SimpleNamespace(kind="continuous", color_map_id="precip_total"),
+        },
+    )
+
+    assert render_resampling.display_resampling_override("hrrr", "snowfall_total") == "nearest"
+    assert render_resampling.display_resampling_override("gfs", "precip_total") == "nearest"
+    assert render_resampling.resampling_name_for_kind(model_id="hrrr", var_key="snowfall_total") == "nearest"
+    assert render_resampling.rio_tiler_resampling_kwargs(model_id="gfs", var_key="precip_total") == {
+        "resampling_method": "nearest",
+        "reproject_method": "nearest",
+    }

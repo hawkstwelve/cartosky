@@ -39,6 +39,7 @@ from .models.registry import list_model_capabilities
 from .services.builder.colorize import float_to_rgba
 from .services.render_resampling import (
     compute_loop_output_shape,
+    display_resampling_override,
     high_quality_loop_resampling,
     log_fixed_loop_size_once,
     rasterio_resampling_for_loop,
@@ -1756,11 +1757,12 @@ def _scan_manifest_runs(model: str) -> list[str]:
     return sorted(set(runs), reverse=True)
 
 
-def _serialize_variable_capability(capability: Any) -> dict[str, Any]:
+def _serialize_variable_capability(model_id: str, capability: Any) -> dict[str, Any]:
     constraints = getattr(capability, "constraints", None)
     constraints_payload = dict(constraints) if isinstance(constraints, dict) else {}
+    var_key = str(getattr(capability, "var_key", ""))
     return {
-        "var_key": str(getattr(capability, "var_key", "")),
+        "var_key": var_key,
         "display_name": str(getattr(capability, "name", "")),
         "kind": getattr(capability, "kind", None),
         "units": getattr(capability, "units", None),
@@ -1769,6 +1771,7 @@ def _serialize_variable_capability(capability: Any) -> dict[str, Any]:
         "default_fh": getattr(capability, "default_fh", None),
         "buildable": bool(getattr(capability, "buildable", False)),
         "color_map_id": getattr(capability, "color_map_id", None),
+        "display_resampling_override": display_resampling_override(model_id, var_key),
         "constraints": constraints_payload,
         "derived": bool(getattr(capability, "derived", False)),
         "derive_strategy_id": getattr(capability, "derive_strategy_id", None),
@@ -1786,7 +1789,7 @@ def _serialize_model_capability(model_id: str, capability: Any) -> dict[str, Any
         ),
     )
     variables_payload = {
-        var_key: _serialize_variable_capability(var_capability)
+        var_key: _serialize_variable_capability(model_id, var_capability)
         for var_key, var_capability in ordered_items
     }
 

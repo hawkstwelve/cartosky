@@ -87,8 +87,10 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
         "var_key",
         "display_name",
         "kind",
+        "display_resampling_override",
         "units",
         "order",
+        "group",
         "default_fh",
         "buildable",
         "color_map_id",
@@ -99,11 +101,15 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["var_key"] == "tmp2m"
     assert tmp2m["kind"] == "continuous"
     assert tmp2m["buildable"] is True
+    assert tmp2m["display_resampling_override"] is None
 
     radar_ptype = payload["variables"]["radar_ptype"]
     assert radar_ptype["buildable"] is True
     assert radar_ptype["derived"] is True
     assert radar_ptype["derive_strategy_id"] == "radar_ptype_combo"
+
+    snowfall_total = payload["variables"]["snowfall_total"]
+    assert snowfall_total["display_resampling_override"] == "nearest"
 
     snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
     assert snowfall_kuchera_total["buildable"] is True

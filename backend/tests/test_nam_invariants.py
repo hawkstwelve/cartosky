@@ -109,6 +109,7 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["constraints"] == {"min_fh": 1}
     assert precip_total["display_name"] == "Total Precip"
     assert precip_total["order"] == 4
+    assert precip_total["display_resampling_override"] == "nearest"
 
     snowfall_total = payload["variables"]["snowfall_total"]
     assert snowfall_total["buildable"] is True
@@ -120,6 +121,7 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["constraints"] == {"min_fh": 1}
     assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
     assert snowfall_total["order"] == 5
+    assert snowfall_total["display_resampling_override"] == "nearest"
 
     snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
     assert snowfall_kuchera_total["buildable"] is True

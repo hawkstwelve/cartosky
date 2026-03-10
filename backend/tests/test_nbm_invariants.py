@@ -78,6 +78,7 @@ def test_nbm_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["constraints"] == {"min_fh": 6}
     assert precip_total["display_name"] == "Total Precip"
     assert precip_total["order"] == 2
+    assert precip_total["display_resampling_override"] == "nearest"
 
     snowfall_total = payload["variables"]["snowfall_total"]
     assert snowfall_total["buildable"] is True
@@ -89,6 +90,7 @@ def test_nbm_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["constraints"] == {"min_fh": 6}
     assert snowfall_total["display_name"] == "Total Snowfall"
     assert snowfall_total["order"] == 3
+    assert snowfall_total["display_resampling_override"] == "nearest"
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["buildable"] is True

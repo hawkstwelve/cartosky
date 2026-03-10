@@ -15,6 +15,7 @@ export type CapabilityVariable = {
   var_key: string;
   display_name?: string;
   kind?: string | null;
+  display_resampling_override?: string | null;
   units?: string | null;
   order?: number | null;
   group?: string | null;

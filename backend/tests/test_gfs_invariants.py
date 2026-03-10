@@ -70,6 +70,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["constraints"]["min_fh"] == 3
     assert precip_total["display_name"] == "Total Precip"
     assert precip_total["order"] == 4
+    assert precip_total["display_resampling_override"] == "nearest"
 
     tmp850 = payload["variables"]["tmp850"]
     assert tmp850["buildable"] is True
@@ -115,6 +116,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["default_fh"] == 6
     assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
     assert snowfall_total["order"] == 5
+    assert snowfall_total["display_resampling_override"] == "nearest"
 
     snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
     assert snowfall_kuchera_total["buildable"] is True

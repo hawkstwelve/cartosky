@@ -52,6 +52,7 @@ from app.services.builder.fetch import (
     product_hour_has_any_idx,
 )
 from app.services.colormaps import get_color_map_spec
+from app.services.render_resampling import resampling_name_for_kind
 
 logger = logging.getLogger(__name__)
 
@@ -84,17 +85,17 @@ def _smooth_display_data(data: np.ndarray, sigma: float) -> np.ndarray:
     return smoothed
 
 
-def _warp_resampling_for_kind(kind: str | None) -> str:
-    """Return warp resampling method from variable kind.
+def _warp_resampling_for_variable(*, model_id: str | None, var_key: str | None, kind: str | None) -> str:
+    """Return warp resampling method for a variable.
 
-    Categorical/indexed/discrete fields must use nearest to avoid
-    interpolation across class boundaries. Continuous fields can use
-    a smoother kernel.
+    Uses the shared display-resampling policy so build-time warping stays
+    aligned with tile extraction and frontend raster display.
     """
-    normalized = str(kind or "").strip().lower()
-    if normalized in {"discrete", "indexed", "categorical"}:
-        return "nearest"
-    return "bilinear"
+    return resampling_name_for_kind(
+        model_id=str(model_id or ""),
+        var_key=str(var_key or ""),
+        kind=kind,
+    )
 
 
 def _prepare_display_data_for_colorize(
@@ -114,6 +115,9 @@ def _prepare_display_data_for_colorize(
     model_norm = str(model_id or "").strip().lower()
     var_norm = str(var_key or "").strip().lower()
     if model_norm == "gfs" and var_norm in {"tmp2m", "dp2m", "tmp850", "wspd10m", "wgst10m", "precip_total", "snowfall_total", "qpf6h"}:
+        return warped_data
+
+    if resampling_name_for_kind(model_id=model_norm, var_key=var_norm, kind=kind) == "nearest":
         return warped_data
 
     sigma_raw = var_spec.get("display_smoothing_sigma")
@@ -853,7 +857,11 @@ def build_frame(
         or var_spec_colormap.get("type", "continuous")
     )
     kind_normalized = str(kind).strip().lower() or "continuous"
-    warp_resampling = _warp_resampling_for_kind(kind_normalized)
+    warp_resampling = _warp_resampling_for_variable(
+        model_id=model,
+        var_key=var_key,
+        kind=kind_normalized,
+    )
     search_patterns = None if getattr(var_spec_model, "derived", False) else _get_search_patterns(var_spec_model)
     required_products = _required_products_for_var(
         default_product=product,
