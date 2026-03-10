@@ -12,7 +12,7 @@
 ### cartosky.com
 
 - `/` → static frontend build output
-  - filesystem: `/opt/twf_v3/frontend/dist/`
+  - filesystem: `/opt/cartosky/frontend/dist/`
   - SPA fallback must cover frontend routes, for example:
   - `/viewer`
   - `/models`
@@ -27,20 +27,18 @@
 - `/twf/*` → API upstream `http://127.0.0.1:8200`
 - `/api/v4/*` → API upstream `http://127.0.0.1:8200`
 - `/api/regions` → API upstream `http://127.0.0.1:8200`
-- `/loop/v3/*` → static loop cache alias `/opt/twf_v3/data/v3/loop_cache/`
+- `/loop/v3/*` → static loop cache alias `/opt/cartosky/data/v3/loop_cache/`
 - `/tiles/v3/*` → tile server upstream `http://127.0.0.1:8201`
 
-## Migration from api.theweathermodels.com to api.cartosky.com
+## Recommended CartoSky layout
 
-You do not need to move the application or systemd paths. Keep these as-is:
+Use these runtime paths for CartoSky:
 
-- `/opt/twf_v3/`
-- `/etc/twf-v3/api.env`
-- `/etc/twf-v3/tile-server.env`
-- `twm-api.service`
-- `twm-tile-server.service`
-
-Only the nginx vhost filename and hostnames change.
+- `/opt/cartosky/`
+- `/etc/cartosky/api.env`
+- `/etc/cartosky/tile-server.env`
+- `csky-api.service`
+- `csky-tile-server.service`
 
 ### Recommended filesystem layout
 
@@ -153,7 +151,7 @@ server {
   }
 
   location ^~ /loop/v3/ {
-    alias /opt/twf_v3/data/v3/loop_cache/;
+    alias /opt/cartosky/data/v3/loop_cache/;
     try_files $uri =404;
 
     add_header Access-Control-Allow-Origin "*" always;
@@ -244,7 +242,7 @@ Serve the frontend from `cartosky.com`, not from the API host.
 
 Recommended behavior:
 
-- `cartosky.com` serves `/opt/twf_v3/frontend/dist`
+- `cartosky.com` serves `/opt/cartosky/frontend/dist`
 - `www.cartosky.com` redirects to `https://cartosky.com$request_uri`
 - all SPA routes fall back to `/index.html`
 
@@ -253,7 +251,7 @@ Example:
 ```nginx
 server {
   server_name cartosky.com;
-  root /opt/twf_v3/frontend/dist;
+  root /opt/cartosky/frontend/dist;
   index index.html;
 
   location / {
@@ -291,22 +289,22 @@ server {
 
 These must also be updated or the new hostnames will not work correctly.
 
-- `/etc/twf-v3/api.env`
-  - `TWF_REDIRECT_URI=https://api.cartosky.com/auth/twf/callback`
+- `/etc/cartosky/api.env`
+  - `CARTOSKY_FORUMS_REDIRECT_URI=https://api.cartosky.com/auth/twf/callback`
   - `FRONTEND_RETURN=https://cartosky.com`
   - `CORS_ORIGINS=https://cartosky.com,https://www.cartosky.com`
   - `R2_PUBLIC_BASE=https://cdn.cartosky.com`
-- `/etc/twf-v3/tile-server.env`
-  - `TWF_V3_TILES_PUBLIC_BASE_URL=https://api.cartosky.com`
+- `/etc/cartosky/tile-server.env`
+  - `CARTOSKY_V3_TILES_PUBLIC_BASE_URL=https://api.cartosky.com`
 
 ### Scheduler env files
 
 Your scheduler env files remain in:
 
-- `/etc/twf-v3/scheduler.env`
-- `/etc/twf-v3/scheduler-gfs.env`
-- `/etc/twf-v3/scheduler-nam.env`
-- `/etc/twf-v3/scheduler-nbm.env`
+- `/etc/cartosky/scheduler.env`
+- `/etc/cartosky/scheduler-gfs.env`
+- `/etc/cartosky/scheduler-nam.env`
+- `/etc/cartosky/scheduler-nbm.env`
 
 For this domain/branding cutover, they usually do not need changes.
 
@@ -362,7 +360,7 @@ If Certbot already inserted CartoSky TLS directives into `/etc/nginx/sites-enabl
 
 ## Verification
 
-- `https://api.cartosky.com/health`
+- `https://api.cartosky.com/api/v4/health`
 - `https://api.cartosky.com/tiles/v3/boundaries/v1/tilejson.json`
 - TWF login round-trip through `https://api.cartosky.com/auth/twf/callback`
 - frontend requests from `https://cartosky.com`

@@ -35,7 +35,7 @@ from app.services.render_resampling import (
 logger = logging.getLogger(__name__)
 
 RUN_ID_RE = re.compile(r"^(?P<day>\d{8})_(?P<hour>\d{2})z$")
-DEFAULT_DATA_ROOT = Path("/opt/twf_v3/data/v3")
+DEFAULT_DATA_ROOT = Path("/opt/cartosky/data/v3")
 DEFAULT_PRIMARY_VAR = "tmp2m"
 DEFAULT_VARS = "tmp2m,tmp850,dp2m,precip_total,snowfall_total,wspd10m,wgst10m,refc,radar_ptype"
 DEFAULT_POLL_SECONDS = 300
@@ -43,32 +43,32 @@ INCOMPLETE_RUN_POLL_SECONDS = 60
 DEFAULT_PROMOTION_FHS = (0, 1, 2)
 DEFAULT_PROBE_VAR = "tmp2m"
 CANONICAL_COVERAGE = "conus"
-ENV_DEFAULT_VARS = "TWF_V3_SCHEDULER_VARS"
-ENV_DEFAULT_PRIMARY_VARS = "TWF_V3_SCHEDULER_PRIMARY_VARS"
-ENV_DEFAULT_POLL_SECONDS = "TWF_V3_SCHEDULER_POLL_SECONDS"
-ENV_DEFAULT_KEEP_RUNS = "TWF_V3_SCHEDULER_KEEP_RUNS"
-ENV_PROBE_VAR = "TWF_V3_SCHEDULER_PROBE_VAR"
-ENV_HERBIE_PRIORITY = "TWF_HERBIE_PRIORITY"
-ENV_HERBIE_SAVE_DIR = "HERBIE_SAVE_DIR"
-ENV_LOOP_PREGENERATE_ENABLED = "TWF_V3_LOOP_PREGENERATE_ENABLED"
-ENV_LOOP_CACHE_ROOT = "TWF_V3_LOOP_CACHE_ROOT"
-ENV_LOOP_PREGENERATE_WORKERS = "TWF_V3_LOOP_PREGENERATE_WORKERS"
-ENV_LOOP_WEBP_QUALITY = "TWF_V3_LOOP_WEBP_QUALITY"
-ENV_LOOP_WEBP_MAX_DIM = "TWF_V3_LOOP_WEBP_MAX_DIM"
-ENV_LOOP_WEBP_TIER1_QUALITY = "TWF_V3_LOOP_WEBP_TIER1_QUALITY"
-ENV_LOOP_WEBP_TIER1_MAX_DIM = "TWF_V3_LOOP_WEBP_TIER1_MAX_DIM"
-ENV_LOOP_WEBP_TIER0_FIXED_W = "TWF_V3_LOOP_WEBP_TIER0_FIXED_W"
-ENV_LOOP_WEBP_TIER1_FIXED_W = "TWF_V3_LOOP_WEBP_TIER1_FIXED_W"
-ENV_LOOP_SHARPEN_ENABLE = "TWF_V3_LOOP_SHARPEN_ENABLE"
-ENV_LOOP_SHARPEN_RADIUS = "TWF_V3_LOOP_SHARPEN_RADIUS"
-ENV_LOOP_SHARPEN_PERCENT = "TWF_V3_LOOP_SHARPEN_PERCENT"
-ENV_LOOP_SHARPEN_THRESHOLD = "TWF_V3_LOOP_SHARPEN_THRESHOLD"
+ENV_DEFAULT_VARS = ("CARTOSKY_V3_SCHEDULER_VARS", "TWF_V3_SCHEDULER_VARS")
+ENV_DEFAULT_PRIMARY_VARS = ("CARTOSKY_V3_SCHEDULER_PRIMARY_VARS", "TWF_V3_SCHEDULER_PRIMARY_VARS")
+ENV_DEFAULT_POLL_SECONDS = ("CARTOSKY_V3_SCHEDULER_POLL_SECONDS", "TWF_V3_SCHEDULER_POLL_SECONDS")
+ENV_DEFAULT_KEEP_RUNS = ("CARTOSKY_V3_SCHEDULER_KEEP_RUNS", "TWF_V3_SCHEDULER_KEEP_RUNS")
+ENV_PROBE_VAR = ("CARTOSKY_V3_SCHEDULER_PROBE_VAR", "TWF_V3_SCHEDULER_PROBE_VAR")
+ENV_HERBIE_PRIORITY = ("CARTOSKY_HERBIE_PRIORITY", "TWF_HERBIE_PRIORITY")
+ENV_HERBIE_SAVE_DIR = ("CARTOSKY_HERBIE_SAVE_DIR", "HERBIE_SAVE_DIR")
+ENV_LOOP_PREGENERATE_ENABLED = ("CARTOSKY_V3_LOOP_PREGENERATE_ENABLED", "TWF_V3_LOOP_PREGENERATE_ENABLED")
+ENV_LOOP_CACHE_ROOT = ("CARTOSKY_V3_LOOP_CACHE_ROOT", "TWF_V3_LOOP_CACHE_ROOT")
+ENV_LOOP_PREGENERATE_WORKERS = ("CARTOSKY_V3_LOOP_PREGENERATE_WORKERS", "TWF_V3_LOOP_PREGENERATE_WORKERS")
+ENV_LOOP_WEBP_QUALITY = ("CARTOSKY_V3_LOOP_WEBP_QUALITY", "TWF_V3_LOOP_WEBP_QUALITY")
+ENV_LOOP_WEBP_MAX_DIM = ("CARTOSKY_V3_LOOP_WEBP_MAX_DIM", "TWF_V3_LOOP_WEBP_MAX_DIM")
+ENV_LOOP_WEBP_TIER1_QUALITY = ("CARTOSKY_V3_LOOP_WEBP_TIER1_QUALITY", "TWF_V3_LOOP_WEBP_TIER1_QUALITY")
+ENV_LOOP_WEBP_TIER1_MAX_DIM = ("CARTOSKY_V3_LOOP_WEBP_TIER1_MAX_DIM", "TWF_V3_LOOP_WEBP_TIER1_MAX_DIM")
+ENV_LOOP_WEBP_TIER0_FIXED_W = ("CARTOSKY_V3_LOOP_WEBP_TIER0_FIXED_W", "TWF_V3_LOOP_WEBP_TIER0_FIXED_W")
+ENV_LOOP_WEBP_TIER1_FIXED_W = ("CARTOSKY_V3_LOOP_WEBP_TIER1_FIXED_W", "TWF_V3_LOOP_WEBP_TIER1_FIXED_W")
+ENV_LOOP_SHARPEN_ENABLE = ("CARTOSKY_V3_LOOP_SHARPEN_ENABLE", "TWF_V3_LOOP_SHARPEN_ENABLE")
+ENV_LOOP_SHARPEN_RADIUS = ("CARTOSKY_V3_LOOP_SHARPEN_RADIUS", "TWF_V3_LOOP_SHARPEN_RADIUS")
+ENV_LOOP_SHARPEN_PERCENT = ("CARTOSKY_V3_LOOP_SHARPEN_PERCENT", "TWF_V3_LOOP_SHARPEN_PERCENT")
+ENV_LOOP_SHARPEN_THRESHOLD = ("CARTOSKY_V3_LOOP_SHARPEN_THRESHOLD", "TWF_V3_LOOP_SHARPEN_THRESHOLD")
 # Optional derived bundle mode. Enable when multiple derived snowfall/liquid
 # products (for example Kuchera + 10:1 + precip total) should share caches.
-ENV_DERIVE_BUNDLE = "TWF_V3_DERIVE_BUNDLE"
+ENV_DERIVE_BUNDLE = ("CARTOSKY_V3_DERIVE_BUNDLE", "TWF_V3_DERIVE_BUNDLE")
 
 DEFAULT_LOOP_PREGENERATE_ENABLED = True
-DEFAULT_LOOP_CACHE_ROOT = Path("/tmp/twf_v3_loop_webp_cache")
+DEFAULT_LOOP_CACHE_ROOT = Path("/tmp/cartosky_loop_webp_cache")
 DEFAULT_LOOP_PREGENERATE_WORKERS = 4
 DEFAULT_LOOP_WEBP_QUALITY = 82
 DEFAULT_LOOP_WEBP_MAX_DIM = 1600
@@ -85,6 +85,15 @@ DEFAULT_DERIVE_BUNDLE = False
 
 class SchedulerConfigError(RuntimeError):
     pass
+
+
+def _env_value(env_name: str | tuple[str, ...], fallback: str = "") -> str:
+    names = (env_name,) if isinstance(env_name, str) else env_name
+    for name in names:
+        value = os.getenv(name)
+        if value is not None and value != "":
+            return value
+    return fallback
 
 
 def _parse_run_id_datetime(run_id: str) -> datetime | None:
@@ -142,13 +151,13 @@ def _path_permission_debug(path: Path) -> str:
 def _data_root(cli_data_root: str | None) -> Path:
     if cli_data_root:
         return Path(cli_data_root).resolve()
-    return Path(os.getenv("TWF_V3_DATA_ROOT", str(DEFAULT_DATA_ROOT))).resolve()
+    return Path(_env_value(("CARTOSKY_V3_DATA_ROOT", "TWF_V3_DATA_ROOT"), str(DEFAULT_DATA_ROOT))).resolve()
 
 
 def _workers(cli_workers: int | None) -> int:
     if cli_workers is not None and cli_workers > 0:
         return cli_workers
-    raw = os.getenv("TWF_V3_WORKERS", "4").strip()
+    raw = _env_value(("CARTOSKY_V3_WORKERS", "TWF_V3_WORKERS"), "4").strip()
     try:
         value = int(raw)
     except ValueError:
@@ -156,8 +165,8 @@ def _workers(cli_workers: int | None) -> int:
     return value if value > 0 else 4
 
 
-def _int_from_env(env_name: str, fallback: int, *, min_value: int) -> int:
-    raw = os.getenv(env_name, "").strip()
+def _int_from_env(env_name: str | tuple[str, ...], fallback: int, *, min_value: int) -> int:
+    raw = _env_value(env_name).strip()
     if not raw:
         return fallback
     try:
@@ -168,8 +177,8 @@ def _int_from_env(env_name: str, fallback: int, *, min_value: int) -> int:
     return parsed if parsed >= min_value else fallback
 
 
-def _float_from_env(env_name: str, fallback: float, *, min_value: float) -> float:
-    raw = os.getenv(env_name, "").strip()
+def _float_from_env(env_name: str | tuple[str, ...], fallback: float, *, min_value: float) -> float:
+    raw = _env_value(env_name).strip()
     if not raw:
         return fallback
     try:
@@ -180,8 +189,8 @@ def _float_from_env(env_name: str, fallback: float, *, min_value: float) -> floa
     return parsed if parsed >= min_value else fallback
 
 
-def _bool_from_env(env_name: str, fallback: bool) -> bool:
-    raw = os.getenv(env_name, "").strip().lower()
+def _bool_from_env(env_name: str | tuple[str, ...], fallback: bool) -> bool:
+    raw = _env_value(env_name).strip().lower()
     if not raw:
         return fallback
     if raw in {"1", "true", "yes", "on"}:
@@ -277,7 +286,7 @@ def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
     from herbie.core import Herbie
 
     search_pattern = _probe_search_pattern(plugin, probe_var)
-    priority_raw = os.getenv(ENV_HERBIE_PRIORITY, "aws,nomads,google,azure,pando,pando2")
+    priority_raw = _env_value(ENV_HERBIE_PRIORITY, "aws,nomads,google,azure,pando,pando2")
     priorities = [item.strip().lower() for item in priority_raw.split(",") if item.strip()]
     if not priorities:
         priorities = ["aws", "nomads", "google", "azure", "pando", "pando2"]
@@ -1533,7 +1542,7 @@ def _process_run(
     _enforce_run_retention(data_root / "staging" / model_id, keep_runs)
     _enforce_run_retention(data_root / "published" / model_id, keep_runs)
     _enforce_run_retention(loop_cache_root / model_id, keep_runs)
-    herbie_save_dir_raw = os.getenv(ENV_HERBIE_SAVE_DIR, "").strip()
+    herbie_save_dir_raw = _env_value(ENV_HERBIE_SAVE_DIR).strip()
     if herbie_save_dir_raw:
         _enforce_herbie_cache_retention(Path(herbie_save_dir_raw).resolve(), model_id, keep_runs)
 
@@ -1663,11 +1672,15 @@ def run_scheduler(
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the V3 model scheduler.")
+    parser = argparse.ArgumentParser(description="Run the CartoSky model scheduler.")
     parser.add_argument("--model", required=True, help="Model id (e.g. hrrr, nam, gfs)")
     parser.add_argument("--vars", default=None, help="Comma-separated vars to build")
     parser.add_argument("--primary-vars", default=None, help="Comma-separated primary vars for promotion")
-    parser.add_argument("--data-root", default=None, help="Override TWF_V3_DATA_ROOT")
+    parser.add_argument(
+        "--data-root",
+        default=None,
+        help="Override CARTOSKY_V3_DATA_ROOT (legacy TWF_V3_DATA_ROOT also supported)",
+    )
     parser.add_argument("--workers", type=int, default=None, help="Parallel frame workers")
     parser.add_argument("--keep-runs", type=int, default=None, help="Retention count for staging/published runs")
     parser.add_argument("--poll-seconds", type=int, default=None, help="Poll interval in loop mode")
@@ -1683,11 +1696,11 @@ def main(argv: list[str] | None = None) -> int:
 
     data_root = _data_root(args.data_root)
     workers = _workers(args.workers)
-    vars_raw = args.vars if isinstance(args.vars, str) and args.vars.strip() else os.getenv(ENV_DEFAULT_VARS, DEFAULT_VARS)
+    vars_raw = args.vars if isinstance(args.vars, str) and args.vars.strip() else _env_value(ENV_DEFAULT_VARS, DEFAULT_VARS)
     primary_raw = (
         args.primary_vars
         if isinstance(args.primary_vars, str) and args.primary_vars.strip()
-        else os.getenv(ENV_DEFAULT_PRIMARY_VARS, DEFAULT_PRIMARY_VAR)
+        else _env_value(ENV_DEFAULT_PRIMARY_VARS, DEFAULT_PRIMARY_VAR)
     )
     poll_seconds = (
         int(args.poll_seconds)
@@ -1703,11 +1716,11 @@ def main(argv: list[str] | None = None) -> int:
     if isinstance(args.probe_var, str) and args.probe_var.strip():
         probe_var = args.probe_var
     else:
-        probe_var_env = os.getenv(ENV_PROBE_VAR, "").strip()
+        probe_var_env = _env_value(ENV_PROBE_VAR).strip()
         if probe_var_env:
             probe_var = probe_var_env
     loop_pregenerate_enabled = _bool_from_env(ENV_LOOP_PREGENERATE_ENABLED, DEFAULT_LOOP_PREGENERATE_ENABLED)
-    loop_cache_root = Path(os.getenv(ENV_LOOP_CACHE_ROOT, str(DEFAULT_LOOP_CACHE_ROOT))).resolve()
+    loop_cache_root = Path(_env_value(ENV_LOOP_CACHE_ROOT, str(DEFAULT_LOOP_CACHE_ROOT))).resolve()
     loop_workers = _int_from_env(
         ENV_LOOP_PREGENERATE_WORKERS,
         DEFAULT_LOOP_PREGENERATE_WORKERS,

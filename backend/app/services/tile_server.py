@@ -32,17 +32,38 @@ from .render_resampling import rio_tiler_resampling_kwargs, use_value_render_for
 
 logger = logging.getLogger(__name__)
 
-DATA_ROOT = Path(os.environ.get("TWF_V3_DATA_ROOT", "./data/v3"))
+def _env_value(*names: str, default: str = "") -> str:
+    for name in names:
+        raw = os.environ.get(name)
+        if raw is not None and raw != "":
+            return raw
+    return default
+
+
+DATA_ROOT = Path(_env_value("CARTOSKY_V3_DATA_ROOT", "TWF_V3_DATA_ROOT", default="./data/v3"))
 PUBLISHED_ROOT = DATA_ROOT / "published"
 BOUNDARIES_MBTILES = Path(
-    os.environ.get(
+    _env_value(
+        "CARTOSKY_V3_BOUNDARIES_MBTILES",
         "TWF_V3_BOUNDARIES_MBTILES",
-        str(DATA_ROOT / "boundaries" / "v1" / "twf_boundaries.mbtiles"),
+        default=str(DATA_ROOT / "boundaries" / "v1" / "twf_boundaries.mbtiles"),
     )
 )
-BOUNDARIES_TILESET_ID = os.environ.get("TWF_V3_BOUNDARIES_TILESET_ID", "twf-boundaries-v1")
-BOUNDARIES_TILESET_NAME = os.environ.get("TWF_V3_BOUNDARIES_TILESET_NAME", "TWF Boundaries v1")
-TILES_PUBLIC_BASE_URL = os.environ.get("TWF_V3_TILES_PUBLIC_BASE_URL", "https://api.cartosky.com").rstrip("/")
+BOUNDARIES_TILESET_ID = _env_value(
+    "CARTOSKY_V3_BOUNDARIES_TILESET_ID",
+    "TWF_V3_BOUNDARIES_TILESET_ID",
+    default="cartosky-boundaries-v1",
+)
+BOUNDARIES_TILESET_NAME = _env_value(
+    "CARTOSKY_V3_BOUNDARIES_TILESET_NAME",
+    "TWF_V3_BOUNDARIES_TILESET_NAME",
+    default="CartoSky Boundaries v1",
+)
+TILES_PUBLIC_BASE_URL = _env_value(
+    "CARTOSKY_V3_TILES_PUBLIC_BASE_URL",
+    "TWF_V3_TILES_PUBLIC_BASE_URL",
+    default="https://api.cartosky.com",
+).rstrip("/")
 
 # Regex to match run IDs like 20260217_20z
 _RUN_ID_RE = re.compile(r"^\d{8}_\d{2}z$")
@@ -183,7 +204,7 @@ def _build_transparent_png_tile(tilesize: int = 512) -> bytes:
 
 TRANSPARENT_PNG_TILE = _build_transparent_png_tile(512)
 
-app = FastAPI(title="TWF V3 Tile Server", version="1.0.0")
+app = FastAPI(title="CartoSky Tile Server", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,

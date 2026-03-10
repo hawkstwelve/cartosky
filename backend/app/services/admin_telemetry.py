@@ -9,7 +9,10 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-TELEMETRY_DB_PATH = Path(os.environ.get("TWM_TELEMETRY_DB_PATH", "./data/admin_telemetry.sqlite3"))
+TELEMETRY_DB_PATH = Path(
+    os.environ.get("CARTOSKY_TELEMETRY_DB_PATH")
+    or os.environ.get("TWM_TELEMETRY_DB_PATH", "./data/admin_telemetry.sqlite3")
+)
 
 ALLOWED_PERF_EVENT_NAMES = {
     "viewer_first_frame",

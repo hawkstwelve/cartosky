@@ -1,4 +1,4 @@
-"""TWF V3 API — canonical discovery + sampling endpoints."""
+"""CartoSky API — canonical discovery + sampling endpoints."""
 
 from __future__ import annotations
 
@@ -51,66 +51,121 @@ from backend.app.auth import twf_oauth
 
 logger = logging.getLogger(__name__)
 
-DATA_ROOT = Path(os.environ.get("TWF_V3_DATA_ROOT", "./data/v3"))
+def _env_value(*names: str, default: str = "") -> str:
+    for name in names:
+        raw = os.environ.get(name)
+        if raw is not None and raw != "":
+            return raw
+    return default
+
+
+DATA_ROOT = Path(_env_value("CARTOSKY_V3_DATA_ROOT", "TWF_V3_DATA_ROOT", default="./data/v3"))
 PUBLISHED_ROOT = DATA_ROOT / "published"
 MANIFESTS_ROOT = DATA_ROOT / "manifests"
-LOOP_CACHE_ROOT = Path(os.environ.get("TWF_V3_LOOP_CACHE_ROOT", "/tmp/twf_v3_loop_webp_cache"))
+LOOP_CACHE_ROOT = Path(
+    _env_value("CARTOSKY_V3_LOOP_CACHE_ROOT", "TWF_V3_LOOP_CACHE_ROOT", default="/tmp/cartosky_loop_webp_cache")
+)
 CAPABILITIES_CONTRACT_VERSION = "v1"
 
 _RUN_ID_RE = re.compile(r"^\d{8}_\d{2}z$")
-_JSON_CACHE_RECHECK_SECONDS = float(os.environ.get("TWF_V3_JSON_CACHE_RECHECK_SECONDS", "1.0"))
+_JSON_CACHE_RECHECK_SECONDS = float(
+    _env_value("CARTOSKY_V3_JSON_CACHE_RECHECK_SECONDS", "TWF_V3_JSON_CACHE_RECHECK_SECONDS", default="1.0")
+)
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.environ.get(name, "").strip().lower()
+def _env_bool(*names: str, default: bool) -> bool:
+    raw = _env_value(*names).strip().lower()
     if not raw:
         return default
     if raw in {"1", "true", "yes", "on"}:
         return True
     if raw in {"0", "false", "no", "off"}:
         return False
-    logger.warning("Invalid %s=%r; using fallback=%s", name, raw, default)
+    logger.warning("Invalid %s=%r; using fallback=%s", "/".join(names), raw, default)
     return default
 
 
-def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
-    raw = os.environ.get(name, "").strip()
+def _env_int(*names: str, default: int, min_value: int = 0) -> int:
+    raw = _env_value(*names).strip()
     if not raw:
         return default
     try:
         parsed = int(raw)
     except ValueError:
-        logger.warning("Invalid %s=%r; using fallback=%d", name, raw, default)
+        logger.warning("Invalid %s=%r; using fallback=%d", "/".join(names), raw, default)
         return default
     return parsed if parsed >= min_value else default
 
 
-def _env_float(name: str, default: float, *, min_value: float = 0.0) -> float:
-    raw = os.environ.get(name, "").strip()
+def _env_float(*names: str, default: float, min_value: float = 0.0) -> float:
+    raw = _env_value(*names).strip()
     if not raw:
         return default
     try:
         parsed = float(raw)
     except ValueError:
-        logger.warning("Invalid %s=%r; using fallback=%s", name, raw, default)
+        logger.warning("Invalid %s=%r; using fallback=%s", "/".join(names), raw, default)
         return default
     return parsed if parsed >= min_value else default
 
 
-LOOP_WEBP_QUALITY = int(os.environ.get("TWF_V3_LOOP_WEBP_QUALITY", "82"))
-LOOP_WEBP_MAX_DIM = int(os.environ.get("TWF_V3_LOOP_WEBP_MAX_DIM", "1600"))
-LOOP_WEBP_TIER1_QUALITY = int(os.environ.get("TWF_V3_LOOP_WEBP_TIER1_QUALITY", "86"))
-LOOP_WEBP_TIER1_MAX_DIM = int(os.environ.get("TWF_V3_LOOP_WEBP_TIER1_MAX_DIM", "2400"))
-LOOP_WEBP_TIER0_FIXED_W = int(os.environ.get("TWF_V3_LOOP_WEBP_TIER0_FIXED_W", "1600"))
-LOOP_WEBP_TIER1_FIXED_W = int(os.environ.get("TWF_V3_LOOP_WEBP_TIER1_FIXED_W", "2400"))
-LOOP_SHARPEN_ENABLE = _env_bool("TWF_V3_LOOP_SHARPEN_ENABLE", True)
-LOOP_SHARPEN_RADIUS = _env_float("TWF_V3_LOOP_SHARPEN_RADIUS", 1.2, min_value=0.0)
-LOOP_SHARPEN_PERCENT = _env_int("TWF_V3_LOOP_SHARPEN_PERCENT", 35, min_value=0)
-LOOP_SHARPEN_THRESHOLD = _env_int("TWF_V3_LOOP_SHARPEN_THRESHOLD", 3, min_value=0)
-SAMPLE_CACHE_TTL_SECONDS = float(os.environ.get("TWF_V3_SAMPLE_CACHE_TTL_SECONDS", "2.0"))
-SAMPLE_INFLIGHT_WAIT_SECONDS = float(os.environ.get("TWF_V3_SAMPLE_INFLIGHT_WAIT_SECONDS", "0.2"))
-SAMPLE_RATE_LIMIT_WINDOW_SECONDS = float(os.environ.get("TWF_V3_SAMPLE_RATE_LIMIT_WINDOW_SECONDS", "1.0"))
-SAMPLE_RATE_LIMIT_MAX_REQUESTS = int(os.environ.get("TWF_V3_SAMPLE_RATE_LIMIT_MAX_REQUESTS", "240"))
+LOOP_WEBP_QUALITY = int(_env_value("CARTOSKY_V3_LOOP_WEBP_QUALITY", "TWF_V3_LOOP_WEBP_QUALITY", default="82"))
+LOOP_WEBP_MAX_DIM = int(_env_value("CARTOSKY_V3_LOOP_WEBP_MAX_DIM", "TWF_V3_LOOP_WEBP_MAX_DIM", default="1600"))
+LOOP_WEBP_TIER1_QUALITY = int(
+    _env_value("CARTOSKY_V3_LOOP_WEBP_TIER1_QUALITY", "TWF_V3_LOOP_WEBP_TIER1_QUALITY", default="86")
+)
+LOOP_WEBP_TIER1_MAX_DIM = int(
+    _env_value("CARTOSKY_V3_LOOP_WEBP_TIER1_MAX_DIM", "TWF_V3_LOOP_WEBP_TIER1_MAX_DIM", default="2400")
+)
+LOOP_WEBP_TIER0_FIXED_W = int(
+    _env_value("CARTOSKY_V3_LOOP_WEBP_TIER0_FIXED_W", "TWF_V3_LOOP_WEBP_TIER0_FIXED_W", default="1600")
+)
+LOOP_WEBP_TIER1_FIXED_W = int(
+    _env_value("CARTOSKY_V3_LOOP_WEBP_TIER1_FIXED_W", "TWF_V3_LOOP_WEBP_TIER1_FIXED_W", default="2400")
+)
+LOOP_SHARPEN_ENABLE = _env_bool("CARTOSKY_V3_LOOP_SHARPEN_ENABLE", "TWF_V3_LOOP_SHARPEN_ENABLE", default=True)
+LOOP_SHARPEN_RADIUS = _env_float(
+    "CARTOSKY_V3_LOOP_SHARPEN_RADIUS",
+    "TWF_V3_LOOP_SHARPEN_RADIUS",
+    default=1.2,
+    min_value=0.0,
+)
+LOOP_SHARPEN_PERCENT = _env_int(
+    "CARTOSKY_V3_LOOP_SHARPEN_PERCENT",
+    "TWF_V3_LOOP_SHARPEN_PERCENT",
+    default=35,
+    min_value=0,
+)
+LOOP_SHARPEN_THRESHOLD = _env_int(
+    "CARTOSKY_V3_LOOP_SHARPEN_THRESHOLD",
+    "TWF_V3_LOOP_SHARPEN_THRESHOLD",
+    default=3,
+    min_value=0,
+)
+SAMPLE_CACHE_TTL_SECONDS = float(
+    _env_value("CARTOSKY_V3_SAMPLE_CACHE_TTL_SECONDS", "TWF_V3_SAMPLE_CACHE_TTL_SECONDS", default="2.0")
+)
+SAMPLE_INFLIGHT_WAIT_SECONDS = float(
+    _env_value(
+        "CARTOSKY_V3_SAMPLE_INFLIGHT_WAIT_SECONDS",
+        "TWF_V3_SAMPLE_INFLIGHT_WAIT_SECONDS",
+        default="0.2",
+    )
+)
+SAMPLE_RATE_LIMIT_WINDOW_SECONDS = float(
+    _env_value(
+        "CARTOSKY_V3_SAMPLE_RATE_LIMIT_WINDOW_SECONDS",
+        "TWF_V3_SAMPLE_RATE_LIMIT_WINDOW_SECONDS",
+        default="1.0",
+    )
+)
+SAMPLE_RATE_LIMIT_MAX_REQUESTS = int(
+    _env_value(
+        "CARTOSKY_V3_SAMPLE_RATE_LIMIT_MAX_REQUESTS",
+        "TWF_V3_SAMPLE_RATE_LIMIT_MAX_REQUESTS",
+        default="240",
+    )
+)
 
 LOOP_TIER_CONFIG: dict[int, dict[str, int]] = {
     0: {
@@ -159,11 +214,11 @@ def _parse_admin_member_ids(raw: str) -> set[int]:
         try:
             member_ids.add(int(trimmed))
         except ValueError:
-            logger.warning("Skipping invalid TWM_ADMIN_MEMBER_IDS entry %r", trimmed)
+            logger.warning("Skipping invalid CARTOSKY_ADMIN_MEMBER_IDS/TWM_ADMIN_MEMBER_IDS entry %r", trimmed)
     return member_ids
 
 
-ADMIN_MEMBER_IDS = _parse_admin_member_ids(os.environ.get("TWM_ADMIN_MEMBER_IDS", ""))
+ADMIN_MEMBER_IDS = _parse_admin_member_ids(_env_value("CARTOSKY_ADMIN_MEMBER_IDS", "TWM_ADMIN_MEMBER_IDS"))
 
 _twf_rate_lock = threading.Lock()
 _twf_ip_windows: dict[str, deque[float]] = {}
@@ -208,7 +263,7 @@ def _maybe_304(request: Request, *, etag: str, cache_control: str) -> Response |
     return None
 
 
-app = FastAPI(title="TWF API", version="4.0.0")
+app = FastAPI(title="CartoSky API", version="4.0.0")
 
 origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 cors_allow_headers = [

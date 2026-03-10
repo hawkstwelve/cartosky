@@ -257,7 +257,7 @@ function screenshotFilename(state: ScreenshotExportState): string {
     sanitizeFilenamePart(state.variable.key || state.variable.label),
     sanitizeFilenamePart(state.region?.id ?? "region"),
   ];
-  return `twm-${parts.join("-")}.png`;
+  return `cartosky-${parts.join("-")}.png`;
 }
 
 export function TwfShareModal({
@@ -303,7 +303,7 @@ export function TwfShareModal({
   const [screenshotBlob, setScreenshotBlob] = useState<Blob | null>(null);
   const [screenshotBlobUrl, setScreenshotBlobUrl] = useState<string | null>(null);
   const [screenshotStateSnapshot, setScreenshotStateSnapshot] = useState<ScreenshotExportState | null>(null);
-  const [screenshotFilenameValue, setScreenshotFilenameValue] = useState("twm-map-screenshot.png");
+  const [screenshotFilenameValue, setScreenshotFilenameValue] = useState("cartosky-map-screenshot.png");
   const [screenshotUploadBusy, setScreenshotUploadBusy] = useState(false);
   const [screenshotUploadError, setScreenshotUploadError] = useState<string | null>(null);
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
@@ -412,7 +412,7 @@ export function TwfShareModal({
     setScreenshotBusy(false);
     setScreenshotError(null);
     setScreenshotBlob(null);
-    setScreenshotFilenameValue("twm-map-screenshot.png");
+    setScreenshotFilenameValue("cartosky-map-screenshot.png");
     setScreenshotStateSnapshot(null);
     setScreenshotUploadBusy(false);
     setScreenshotUploadError(null);

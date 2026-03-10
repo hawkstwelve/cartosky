@@ -24,18 +24,25 @@ logger = logging.getLogger(__name__)
 # Config
 # ----------------------------
 
-def _env(name: str, default: Optional[str] = None) -> str:
-    v = os.getenv(name, default)
-    if v is None or v == "":
-        raise RuntimeError(f"Missing required env var: {name}")
-    return v
+def _env(*names: str, default: Optional[str] = None) -> str:
+    aliases = [name for name in names if name]
+    for name in aliases:
+        value = os.getenv(name)
+        if value is not None and value != "":
+            return value
+    if default is not None:
+        return default
+    primary = aliases[0] if aliases else "env"
+    alias_suffix = f" (aliases: {', '.join(aliases[1:])})" if len(aliases) > 1 else ""
+    raise RuntimeError(f"Missing required env var: {primary}{alias_suffix}")
 
-TWF_BASE = _env("TWF_BASE")
-CLIENT_ID = _env("TWF_CLIENT_ID")
-CLIENT_SECRET = _env("TWF_CLIENT_SECRET")
-REDIRECT_URI = _env("TWF_REDIRECT_URI")
+
+FORUMS_BASE = _env("CARTOSKY_FORUMS_BASE", "TWF_BASE")
+CLIENT_ID = _env("CARTOSKY_FORUMS_CLIENT_ID", "TWF_CLIENT_ID")
+CLIENT_SECRET = _env("CARTOSKY_FORUMS_CLIENT_SECRET", "TWF_CLIENT_SECRET")
+REDIRECT_URI = _env("CARTOSKY_FORUMS_REDIRECT_URI", "TWF_REDIRECT_URI")
 def _resolved_scopes() -> str:
-    raw = _env("TWF_SCOPES", "profile").strip()
+    raw = _env("CARTOSKY_FORUMS_SCOPES", "TWF_SCOPES", default="profile").strip()
     parts = [p for p in raw.split() if p]
     if "forums_posts" not in parts:
         parts.append("forums_posts")
@@ -44,27 +51,49 @@ def _resolved_scopes() -> str:
 SCOPES = _resolved_scopes()
 FRONTEND_RETURN = _env("FRONTEND_RETURN")
 
-SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "twm_session")
-OAUTH_COOKIE_NAME = os.getenv("OAUTH_COOKIE_NAME", "twm_twf_oauth")
+SESSION_COOKIE_NAME = _env("SESSION_COOKIE_NAME", default="cartosky_session")
+OAUTH_COOKIE_NAME = _env("OAUTH_COOKIE_NAME", default="cartosky_forums_oauth")
 
 TOKEN_DB_PATH = _env("TOKEN_DB_PATH")
 TOKEN_ENC_KEY = _env("TOKEN_ENC_KEY")
 FERNET = Fernet(TOKEN_ENC_KEY.encode("utf-8"))
+SESSIONS_TABLE = "cartosky_forums_sessions"
+LEGACY_SESSIONS_TABLE = "twf_sessions"
 
-AUTHORIZE_ENDPOINT = f"{TWF_BASE.rstrip('/')}/oauth/authorize/"
-TOKEN_ENDPOINT = f"{TWF_BASE.rstrip('/')}/oauth/token/"
-API_ME_ENDPOINT = os.getenv("TWF_ME_ENDPOINT", f"{TWF_BASE.rstrip('/')}/api/index.php?/core/me").strip()
-API_CREATE_TOPIC = os.getenv("TWF_TOPICS_ENDPOINT", f"{TWF_BASE.rstrip('/')}/api/index.php?/forums/topics").strip()
-API_LIST_TOPICS = os.getenv("TWF_LIST_TOPICS_ENDPOINT", f"{TWF_BASE.rstrip('/')}/api/index.php?/forums/topics").strip()
-API_LIST_FORUMS = os.getenv("TWF_FORUMS_ENDPOINT", f"{TWF_BASE.rstrip('/')}/api/index.php?/forums/forums").strip()
-API_CREATE_POST = os.getenv("TWF_POSTS_ENDPOINT", f"{TWF_BASE.rstrip('/')}/api/index.php?/forums/posts").strip()
+AUTHORIZE_ENDPOINT = f"{FORUMS_BASE.rstrip('/')}/oauth/authorize/"
+TOKEN_ENDPOINT = f"{FORUMS_BASE.rstrip('/')}/oauth/token/"
+API_ME_ENDPOINT = _env(
+    "CARTOSKY_FORUMS_ME_ENDPOINT",
+    "TWF_ME_ENDPOINT",
+    default=f"{FORUMS_BASE.rstrip('/')}/api/index.php?/core/me",
+).strip()
+API_CREATE_TOPIC = _env(
+    "CARTOSKY_FORUMS_TOPICS_ENDPOINT",
+    "TWF_TOPICS_ENDPOINT",
+    default=f"{FORUMS_BASE.rstrip('/')}/api/index.php?/forums/topics",
+).strip()
+API_LIST_TOPICS = _env(
+    "CARTOSKY_FORUMS_LIST_TOPICS_ENDPOINT",
+    "TWF_LIST_TOPICS_ENDPOINT",
+    default=f"{FORUMS_BASE.rstrip('/')}/api/index.php?/forums/topics",
+).strip()
+API_LIST_FORUMS = _env(
+    "CARTOSKY_FORUMS_FORUMS_ENDPOINT",
+    "TWF_FORUMS_ENDPOINT",
+    default=f"{FORUMS_BASE.rstrip('/')}/api/index.php?/forums/forums",
+).strip()
+API_CREATE_POST = _env(
+    "CARTOSKY_FORUMS_POSTS_ENDPOINT",
+    "TWF_POSTS_ENDPOINT",
+    default=f"{FORUMS_BASE.rstrip('/')}/api/index.php?/forums/posts",
+).strip()
 
-TWF_API_KEY = os.getenv("TWF_API_KEY", "").strip()
+FORUMS_API_KEY = _env("CARTOSKY_FORUMS_API_KEY", "TWF_API_KEY", default="").strip()
 
 def _auth_headers(access_token: str) -> dict[str, str]:
     headers = {"Authorization": f"Bearer {access_token}"}
-    if TWF_API_KEY:
-        headers["X-API-Key"] = TWF_API_KEY
+    if FORUMS_API_KEY:
+        headers["X-API-Key"] = FORUMS_API_KEY
     return headers
 
 
@@ -88,9 +117,15 @@ def pkce_pair() -> Tuple[str, str]:
 def _db() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(TOKEN_DB_PATH), exist_ok=True)
     conn = sqlite3.connect(TOKEN_DB_PATH)
+    _ensure_session_table(conn, SESSIONS_TABLE)
+    _migrate_legacy_sessions(conn)
+    return conn
+
+
+def _ensure_session_table(conn: sqlite3.Connection, table_name: str) -> None:
     conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS twf_sessions (
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
             session_id TEXT PRIMARY KEY,
             member_id INTEGER NOT NULL,
             display_name TEXT NOT NULL,
@@ -103,11 +138,45 @@ def _db() -> sqlite3.Connection:
         )
         """
     )
-    # Backward-compatible migration for existing DBs created before photo_url existed.
-    cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(twf_sessions)").fetchall()}
+    cols = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
     if "photo_url" not in cols:
-        conn.execute("ALTER TABLE twf_sessions ADD COLUMN photo_url TEXT")
-    return conn
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN photo_url TEXT")
+
+
+def _migrate_legacy_sessions(conn: sqlite3.Connection) -> None:
+    tables = {
+        str(row[0])
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    if LEGACY_SESSIONS_TABLE not in tables:
+        return
+    _ensure_session_table(conn, LEGACY_SESSIONS_TABLE)
+    conn.execute(
+        f"""
+        INSERT OR IGNORE INTO {SESSIONS_TABLE}(
+            session_id,
+            member_id,
+            display_name,
+            photo_url,
+            access_token_enc,
+            refresh_token_enc,
+            expires_at,
+            created_at,
+            updated_at
+        )
+        SELECT
+            session_id,
+            member_id,
+            display_name,
+            photo_url,
+            access_token_enc,
+            refresh_token_enc,
+            expires_at,
+            created_at,
+            updated_at
+        FROM {LEGACY_SESSIONS_TABLE}
+        """
+    )
 
 def _enc(s: str) -> bytes:
     return FERNET.encrypt(s.encode("utf-8"))
@@ -300,18 +369,18 @@ def upsert_session(sess: TwfSession) -> None:
     now = int(time.time())
     with _db() as conn:
         conn.execute(
-            """
-            INSERT INTO twf_sessions(session_id, member_id, display_name, photo_url, access_token_enc, refresh_token_enc, expires_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(session_id) DO UPDATE SET
-              member_id=excluded.member_id,
-              display_name=excluded.display_name,
-              photo_url=excluded.photo_url,
-              access_token_enc=excluded.access_token_enc,
-              refresh_token_enc=excluded.refresh_token_enc,
-              expires_at=excluded.expires_at,
-              updated_at=excluded.updated_at
-            """,
+                        f"""
+                        INSERT INTO {SESSIONS_TABLE}(session_id, member_id, display_name, photo_url, access_token_enc, refresh_token_enc, expires_at, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(session_id) DO UPDATE SET
+                            member_id=excluded.member_id,
+                            display_name=excluded.display_name,
+                            photo_url=excluded.photo_url,
+                            access_token_enc=excluded.access_token_enc,
+                            refresh_token_enc=excluded.refresh_token_enc,
+                            expires_at=excluded.expires_at,
+                            updated_at=excluded.updated_at
+                        """,
             (
                 sess.session_id,
                 sess.member_id,
@@ -328,7 +397,7 @@ def upsert_session(sess: TwfSession) -> None:
 def get_session(session_id: str) -> Optional[TwfSession]:
     with _db() as conn:
         row = conn.execute(
-            "SELECT session_id, member_id, display_name, photo_url, access_token_enc, refresh_token_enc, expires_at FROM twf_sessions WHERE session_id=?",
+            f"SELECT session_id, member_id, display_name, photo_url, access_token_enc, refresh_token_enc, expires_at FROM {SESSIONS_TABLE} WHERE session_id=?",
             (session_id,),
         ).fetchone()
     if not row:
@@ -345,7 +414,7 @@ def get_session(session_id: str) -> Optional[TwfSession]:
 
 def delete_session(session_id: str) -> None:
     with _db() as conn:
-        conn.execute("DELETE FROM twf_sessions WHERE session_id=?", (session_id,))
+        conn.execute(f"DELETE FROM {SESSIONS_TABLE} WHERE session_id=?", (session_id,))
 
 
 # ----------------------------

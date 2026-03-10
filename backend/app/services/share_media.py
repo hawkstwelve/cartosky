@@ -76,7 +76,7 @@ def build_share_png_filename_hint(
     variable_part = _slugify(variable)
     region_part = _slugify(region)
 
-    parts = ["twm"]
+    parts = ["cartosky"]
     if model_part:
         parts.append(model_part)
     if run_part:
@@ -150,7 +150,7 @@ def _build_object_name(filename_hint: str | None, *, now: datetime) -> str:
             return f"{stem}_{random_suffix}.png"
 
     timestamp = now.strftime("%Y%m%dT%H%M%SZ").lower()
-    return f"twm_{timestamp}_{random_suffix}.png"
+    return f"cartosky_{timestamp}_{random_suffix}.png"
 
 
 def upload_share_png(

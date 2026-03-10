@@ -39,10 +39,10 @@ Important note:
 
 ### 1. Update API Env File
 
-Edit `/etc/twf-v3/api.env` and set these values:
+Edit `/etc/cartosky/api.env` and set these values:
 
 ```env
-TWF_REDIRECT_URI=https://api.cartosky.com/auth/twf/callback
+CARTOSKY_FORUMS_REDIRECT_URI=https://api.cartosky.com/auth/twf/callback
 FRONTEND_RETURN=https://cartosky.com
 CORS_ORIGINS=https://cartosky.com,https://www.cartosky.com
 R2_PUBLIC_BASE=https://cdn.cartosky.com
@@ -50,15 +50,15 @@ R2_PUBLIC_BASE=https://cdn.cartosky.com
 
 Keep these existing values unless you are intentionally rotating them:
 
-- `TWF_BASE`
-- `TWF_CLIENT_ID`
-- `TWF_CLIENT_SECRET`
+- `CARTOSKY_FORUMS_BASE`
+- `CARTOSKY_FORUMS_CLIENT_ID`
+- `CARTOSKY_FORUMS_CLIENT_SECRET`
 - `TOKEN_DB_PATH`
 - `TOKEN_ENC_KEY`
-- `TWM_TELEMETRY_DB_PATH`
-- `TWM_ADMIN_MEMBER_IDS`
+- `CARTOSKY_TELEMETRY_DB_PATH`
+- `CARTOSKY_ADMIN_MEMBER_IDS`
 
-If R2 credentials are not already present in `/etc/twf-v3/api.env`, add them:
+If R2 credentials are not already present in `/etc/cartosky/api.env`, add them:
 
 ```env
 R2_ENDPOINT=<your-cloudflare-r2-s3-endpoint>
@@ -72,18 +72,18 @@ These are consumed by `backend/app/services/share_media.py`.
 
 ### 2. Update Tile Server Env File
 
-Edit `/etc/twf-v3/tile-server.env` and set:
+Edit `/etc/cartosky/tile-server.env` and set:
 
 ```env
-TWF_V3_TILES_PUBLIC_BASE_URL=https://api.cartosky.com
+CARTOSKY_V3_TILES_PUBLIC_BASE_URL=https://api.cartosky.com
 ```
 
 Leave these unchanged unless your data layout moved:
 
-- `TWF_V3_DATA_ROOT`
-- `TWF_V3_BOUNDARIES_MBTILES`
-- `TWF_V3_BOUNDARIES_TILESET_ID`
-- `TWF_V3_BOUNDARIES_TILESET_NAME`
+- `CARTOSKY_V3_DATA_ROOT`
+- `CARTOSKY_V3_BOUNDARIES_MBTILES`
+- `CARTOSKY_V3_BOUNDARIES_TILESET_ID`
+- `CARTOSKY_V3_BOUNDARIES_TILESET_NAME`
 
 ### 3. Nginx / Reverse Proxy
 
@@ -96,7 +96,7 @@ Configure these hostnames:
 Recommended route layout:
 
 - `cartosky.com` and `www.cartosky.com`
-  - serve frontend build from `/opt/twf_v3/frontend/dist`
+  - serve frontend build from `/opt/cartosky/frontend/dist`
   - SPA fallback to `/index.html`
 - `api.cartosky.com/auth/twf/*`
   - proxy to `http://127.0.0.1:8200`
@@ -120,8 +120,8 @@ After code and env changes are deployed:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart twm-api.service
-sudo systemctl restart twm-tile-server.service
+sudo systemctl restart csky-api.service
+sudo systemctl restart csky-tile-server.service
 ```
 
 Restart scheduler services only if you changed shared environment they depend on.
@@ -154,16 +154,11 @@ Also update documentation and metadata later:
 - `docs/NGINX_V3.md`
 - other public-facing docs that mention The Weather Models
 
-### 3. Decide on Share Filename Branding
+### 3. Share Filename Branding
 
-New share-image filenames currently use a `twm` prefix in `backend/app/services/share_media.py`.
+New share-image filenames now use a `cartosky_*` prefix in `backend/app/services/share_media.py`.
 
-Decide whether to:
-
-- leave `twm_*` filenames as-is for now, or
-- rename new uploads to a `cartosky_*` prefix
-
-This only affects newly generated object names. Old share links should remain valid.
+This only affects newly generated object names. Old share links remain valid.
 
 ### 4. Update Tests
 
@@ -180,14 +175,14 @@ Tests should reflect the new canonical domains once the code defaults are update
 Build the production frontend after code changes:
 
 ```bash
-cd /opt/twf_v3/frontend
+cd /opt/cartosky/frontend
 npm install
 npm run build
 ```
 
 The output should land in:
 
-- `/opt/twf_v3/frontend/dist`
+- `/opt/cartosky/frontend/dist`
 
 ## External / Non-Code Tasks
 
@@ -239,7 +234,7 @@ Run these checks immediately after deployment.
 
 ### API
 
-- [ ] `https://api.cartosky.com/health` responds successfully
+- [ ] `https://api.cartosky.com/api/v4/health` responds successfully
 - [ ] `https://api.cartosky.com/api/v4/...` endpoints respond successfully
 - [ ] CORS works from `https://cartosky.com`
 - [ ] CORS works from `https://www.cartosky.com`
@@ -274,20 +269,11 @@ Run these checks immediately after deployment.
 If something fails during cutover:
 
 1. Revert nginx host routing to the old domains.
-2. Revert `/etc/twf-v3/api.env` values for `FRONTEND_RETURN`, `CORS_ORIGINS`, and `R2_PUBLIC_BASE` if needed.
-3. Revert `/etc/twf-v3/tile-server.env` value for `TWF_V3_TILES_PUBLIC_BASE_URL`.
+2. Revert `/etc/cartosky/api.env` values for `FRONTEND_RETURN`, `CORS_ORIGINS`, and `R2_PUBLIC_BASE` if needed.
+3. Revert `/etc/cartosky/tile-server.env` value for `CARTOSKY_V3_TILES_PUBLIC_BASE_URL`.
 4. Rebuild and redeploy the previous frontend bundle if the branding/domain code changes caused issues.
-5. Restart `twm-api.service` and `twm-tile-server.service`.
+5. Restart `csky-api.service` and `csky-tile-server.service`.
 
 ## Deferred Cleanup
 
-Do not treat these as part of day-one cutover unless you explicitly want extra risk:
-
-- renaming internal `twf` env vars
-- renaming internal `twm` service names
-- renaming `/opt/twf_v3` paths
-- renaming `/etc/twf-v3` config directories
-- renaming cookie names
-- renaming repository/package identifiers
-
-Those can be handled later as a separate internal cleanup project.
+Residual internal `twf` references still exist in forum-integration routes, module names, and a few legacy env fallbacks. Those are compatibility shims now, not the primary CartoSky runtime path.

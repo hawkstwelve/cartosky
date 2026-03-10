@@ -116,78 +116,78 @@ Set `VITE_TWF_V3_WEBP_DEFAULT_ENABLED=1` to enable adaptive WebP rendering (on b
 
 ## Environment Variables
 
-### API server (`/etc/twf-v3/api.env`)
+### API server (`/etc/cartosky/api.env`)
 
 | Variable | Default | Description |
 |---|---|---|
-| `TWF_V3_DATA_ROOT` | `./data/v3` | Root data directory |
-| `TWF_V3_LOOP_CACHE_ROOT` | `/tmp/twf_v3_loop_webp_cache` | Loop WebP cache directory |
-| `TWF_V3_LOOP_URL_PREFIX` | `/loop/v3` | URL prefix emitted in loop manifests |
-| `TWF_V3_LOOP_WEBP_QUALITY` | `82` | Tier 0 WebP quality (0–100) |
-| `TWF_V3_LOOP_WEBP_MAX_DIM` | `1600` | Tier 0 max dimension (px) |
-| `TWF_V3_LOOP_WEBP_TIER1_QUALITY` | `86` | Tier 1 (high-res) WebP quality |
-| `TWF_V3_LOOP_WEBP_TIER1_MAX_DIM` | `2400` | Tier 1 max dimension (px) |
-| `TWF_V3_JSON_CACHE_RECHECK_SECONDS` | `1.0` | Filesystem recheck interval for cached JSON |
-| `TWF_V3_SAMPLE_CACHE_TTL_SECONDS` | `2.0` | Point-sample result cache TTL |
-| `TWF_V3_SAMPLE_RATE_LIMIT_WINDOW_SECONDS` | `1.0` | Sampling rate-limit window (seconds) |
-| `TWF_V3_SAMPLE_RATE_LIMIT_MAX_REQUESTS` | `240` | Max sampling requests per window |
+| `CARTOSKY_V3_DATA_ROOT` | `./data/v3` | Root data directory |
+| `CARTOSKY_V3_LOOP_CACHE_ROOT` | `/tmp/cartosky_loop_webp_cache` | Loop WebP cache directory |
+| `CARTOSKY_V3_LOOP_URL_PREFIX` | `/loop/v3` | URL prefix emitted in loop manifests |
+| `CARTOSKY_V3_LOOP_WEBP_QUALITY` | `82` | Tier 0 WebP quality (0–100) |
+| `CARTOSKY_V3_LOOP_WEBP_MAX_DIM` | `1600` | Tier 0 max dimension (px) |
+| `CARTOSKY_V3_LOOP_WEBP_TIER1_QUALITY` | `86` | Tier 1 (high-res) WebP quality |
+| `CARTOSKY_V3_LOOP_WEBP_TIER1_MAX_DIM` | `2400` | Tier 1 max dimension (px) |
+| `CARTOSKY_V3_JSON_CACHE_RECHECK_SECONDS` | `1.0` | Filesystem recheck interval for cached JSON |
+| `CARTOSKY_V3_SAMPLE_CACHE_TTL_SECONDS` | `2.0` | Point-sample result cache TTL |
+| `CARTOSKY_V3_SAMPLE_RATE_LIMIT_WINDOW_SECONDS` | `1.0` | Sampling rate-limit window (seconds) |
+| `CARTOSKY_V3_SAMPLE_RATE_LIMIT_MAX_REQUESTS` | `240` | Max sampling requests per window |
 
-### Tile server (`/etc/twf-v3/tile-server.env`)
-
-| Variable | Default | Description |
-|---|---|---|
-| `TWF_V3_DATA_ROOT` | `./data/v3` | Root data directory |
-| `TWF_V3_BOUNDARIES_MBTILES` | — | Path to boundaries MBTiles file |
-| `TWF_V3_BOUNDARIES_TILESET_ID` | `twf-boundaries-v1` | TileJSON id |
-| `TWF_V3_BOUNDARIES_TILESET_NAME` | `TWF Boundaries v1` | TileJSON name |
-| `TWF_V3_TILES_PUBLIC_BASE_URL` | — | Public base URL for tile URL templates |
-
-### Scheduler (`/etc/twf-v3/scheduler.env`)
+### Tile server (`/etc/cartosky/tile-server.env`)
 
 | Variable | Default | Description |
 |---|---|---|
-| `TWF_V3_DATA_ROOT` | `./data/v3` | Root data directory |
-| `TWF_V3_WORKERS` | — | Parallel frame build workers |
-| `TWF_V3_SCHEDULER_VARS` | `tmp2m,tmp850,dp2m,…` | Variables to build each run |
-| `TWF_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Variables built first (probe for availability) |
-| `TWF_V3_SCHEDULER_POLL_SECONDS` | `300` | Idle poll interval |
-| `TWF_V3_SCHEDULER_KEEP_RUNS` | `4` | Number of completed runs to retain |
-| `TWF_V3_LOOP_PREGENERATE_ENABLED` | `0` | Enable post-publish loop WebP generation |
-| `TWF_V3_LOOP_CACHE_ROOT` | — | Loop WebP output dir (keep in sync with API) |
-| `TWF_V3_LOOP_PREGENERATE_WORKERS` | — | Parallel WebP encoding workers |
-| `TWF_HERBIE_PRIORITY` | `aws,nomads,…` | Herbie data source priority order |
+| `CARTOSKY_V3_DATA_ROOT` | `./data/v3` | Root data directory |
+| `CARTOSKY_V3_BOUNDARIES_MBTILES` | — | Path to boundaries MBTiles file |
+| `CARTOSKY_V3_BOUNDARIES_TILESET_ID` | `cartosky-boundaries-v1` | TileJSON id |
+| `CARTOSKY_V3_BOUNDARIES_TILESET_NAME` | `CartoSky Boundaries v1` | TileJSON name |
+| `CARTOSKY_V3_TILES_PUBLIC_BASE_URL` | — | Public base URL for tile URL templates |
+
+### Scheduler (`/etc/cartosky/scheduler.env`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `CARTOSKY_V3_DATA_ROOT` | `./data/v3` | Root data directory |
+| `CARTOSKY_V3_WORKERS` | — | Parallel frame build workers |
+| `CARTOSKY_V3_SCHEDULER_VARS` | `tmp2m,tmp850,dp2m,…` | Variables to build each run |
+| `CARTOSKY_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Variables built first (probe for availability) |
+| `CARTOSKY_V3_SCHEDULER_POLL_SECONDS` | `300` | Idle poll interval |
+| `CARTOSKY_V3_SCHEDULER_KEEP_RUNS` | `4` | Number of completed runs to retain |
+| `CARTOSKY_V3_LOOP_PREGENERATE_ENABLED` | `0` | Enable post-publish loop WebP generation |
+| `CARTOSKY_V3_LOOP_CACHE_ROOT` | — | Loop WebP output dir (keep in sync with API) |
+| `CARTOSKY_V3_LOOP_PREGENERATE_WORKERS` | — | Parallel WebP encoding workers |
+| `CARTOSKY_HERBIE_PRIORITY` | `aws,nomads,…` | Herbie data source priority order |
 | `TWF_HERBIE_SUBSET_RETRIES` | `4` | GRIB subset download retries |
-| `HERBIE_SAVE_DIR` | — | Herbie GRIB cache directory |
+| `CARTOSKY_HERBIE_SAVE_DIR` | — | Herbie GRIB cache directory |
 
-### GFS Scheduler Rollout (`/etc/twf-v3/scheduler-gfs.env`)
+### GFS Scheduler Rollout (`/etc/cartosky/scheduler-gfs.env`)
 
 Use a dedicated env file for GFS so HRRR remains isolated. Initial rollout should use only:
 
 | Variable | Recommended value | Description |
 |---|---|---|
-| `TWF_V3_SCHEDULER_VARS` | `tmp2m,dp2m,tmp850,wspd10m,wgst10m,precip_total,snowfall_total,precip_ptype` | Core rollout vars for GFS |
-| `TWF_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
-| `TWF_V3_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
+| `CARTOSKY_V3_SCHEDULER_VARS` | `tmp2m,dp2m,tmp850,wspd10m,wgst10m,precip_total,snowfall_total,precip_ptype` | Core rollout vars for GFS |
+| `CARTOSKY_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
+| `CARTOSKY_V3_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
 
-### NAM Scheduler Rollout (`/etc/twf-v3/scheduler-nam.env`)
+### NAM Scheduler Rollout (`/etc/cartosky/scheduler-nam.env`)
 
 Use a dedicated env file for NAM so rollout scope stays isolated:
 
 | Variable | Recommended value | Description |
 |---|---|---|
-| `TWF_V3_SCHEDULER_VARS` | `tmp2m,dp2m,tmp850,wspd10m,wgst10m,precip_total,snowfall_total,radar_ptype` | Initial NAM rollout vars |
-| `TWF_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
-| `TWF_V3_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
+| `CARTOSKY_V3_SCHEDULER_VARS` | `tmp2m,dp2m,tmp850,wspd10m,wgst10m,precip_total,snowfall_total,radar_ptype` | Initial NAM rollout vars |
+| `CARTOSKY_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
+| `CARTOSKY_V3_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
 
-### NBM Scheduler Rollout (`/etc/twf-v3/scheduler-nbm.env`)
+### NBM Scheduler Rollout (`/etc/cartosky/scheduler-nbm.env`)
 
 Use a dedicated env file for NBM so rollout scope stays isolated:
 
 | Variable | Recommended value | Description |
 |---|---|---|
-| `TWF_V3_SCHEDULER_VARS` | `tmp2m,precip_total,snowfall_total,wspd10m` | Initial NBM rollout vars |
-| `TWF_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
-| `TWF_V3_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
+| `CARTOSKY_V3_SCHEDULER_VARS` | `tmp2m,precip_total,snowfall_total,wspd10m` | Initial NBM rollout vars |
+| `CARTOSKY_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
+| `CARTOSKY_V3_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
 
 ### Frontend
 
@@ -198,6 +198,8 @@ Use a dedicated env file for NBM so rollout scope stays isolated:
 ## API Reference
 
 Base: `/api/v4`
+
+Example: the health endpoint is `GET /api/v4/health`.
 
 | Method | Path | Description |
 |---|---|---|
@@ -251,20 +253,20 @@ Mode switching uses configurable score thresholds with hysteresis to avoid flapp
 Systemd unit files are in `deployment/systemd/`. Copy the example env files and adjust paths:
 
 ```bash
-cp deployment/systemd/api.env.example          /etc/twf-v3/api.env
-cp deployment/systemd/scheduler.env.example    /etc/twf-v3/scheduler.env
-cp deployment/systemd/scheduler-gfs.env.example /etc/twf-v3/scheduler-gfs.env
-cp deployment/systemd/scheduler-nam.env.example /etc/twf-v3/scheduler-nam.env
-cp deployment/systemd/scheduler-nbm.env.example /etc/twf-v3/scheduler-nbm.env
-cp deployment/systemd/tile-server.env.example  /etc/twf-v3/tile-server.env
+cp deployment/systemd/api.env.example           /etc/cartosky/api.env
+cp deployment/systemd/scheduler.env.example     /etc/cartosky/scheduler.env
+cp deployment/systemd/scheduler-gfs.env.example /etc/cartosky/scheduler-gfs.env
+cp deployment/systemd/scheduler-nam.env.example /etc/cartosky/scheduler-nam.env
+cp deployment/systemd/scheduler-nbm.env.example /etc/cartosky/scheduler-nbm.env
+cp deployment/systemd/tile-server.env.example   /etc/cartosky/tile-server.env
 ```
 
-Services expect the virtualenv at `/opt/twf_v3/.venv` and the project at `/opt/twf_v3/`. The tile server should sit behind an nginx reverse proxy; see `docs/NGINX_V3.md` for a recommended configuration.
+Services expect the virtualenv at `/opt/cartosky/.venv` and the project at `/opt/cartosky/`. The tile server should sit behind an nginx reverse proxy; see `docs/NGINX_V3.md` for a recommended configuration.
 
 For model schedulers, deploy both units and keep env files isolated per model:
 
 ```bash
-sudo systemctl enable twm-hrrr-scheduler twm-gfs-scheduler twm-nam-scheduler twm-nbm-scheduler twm-api twm-tile-server
+sudo systemctl enable csky-hrrr-scheduler csky-gfs-scheduler csky-nam-scheduler csky-nbm-scheduler csky-api csky-tile-server
 ```
 
 ## Adding a New Model

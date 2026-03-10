@@ -46,8 +46,8 @@ async def test_share_media_upload_accepts_valid_png(
         captured["filename_hint"] = filename_hint
         captured["content_type"] = content_type
         return {
-            "key": "share/2026/03/07/twm_hrrr_20260304_03z_fh1_radar-ptype_conus_deadbeef.png",
-            "url": "https://cdn.theweathermodels.com/share/2026/03/07/twm_hrrr_20260304_03z_fh1_radar-ptype_conus_deadbeef.png",
+            "key": "share/2026/03/07/cartosky_hrrr_20260304_03z_fh1_radar-ptype_conus_deadbeef.png",
+            "url": "https://cdn.cartosky.com/share/2026/03/07/cartosky_hrrr_20260304_03z_fh1_radar-ptype_conus_deadbeef.png",
         }
 
     monkeypatch.setattr(main_module.share_media_service, "upload_share_png", fake_upload_share_png)
@@ -67,12 +67,12 @@ async def test_share_media_upload_accepts_valid_png(
     assert response.status_code == 200
     assert response.json() == {
         "ok": True,
-        "key": "share/2026/03/07/twm_hrrr_20260304_03z_fh1_radar-ptype_conus_deadbeef.png",
-        "url": "https://cdn.theweathermodels.com/share/2026/03/07/twm_hrrr_20260304_03z_fh1_radar-ptype_conus_deadbeef.png",
+        "key": "share/2026/03/07/cartosky_hrrr_20260304_03z_fh1_radar-ptype_conus_deadbeef.png",
+        "url": "https://cdn.cartosky.com/share/2026/03/07/cartosky_hrrr_20260304_03z_fh1_radar-ptype_conus_deadbeef.png",
     }
     assert captured["data"] == PNG_BYTES
     assert captured["content_type"] == "image/png"
-    assert captured["filename_hint"] == "twm_hrrr_20260304_03z_fh1_radar-ptype_conus.png"
+    assert captured["filename_hint"] == "cartosky_hrrr_20260304_03z_fh1_radar-ptype_conus.png"
 
 
 async def test_share_media_upload_rejects_invalid_content_type(client: httpx.AsyncClient) -> None:

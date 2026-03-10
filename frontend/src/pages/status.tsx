@@ -340,10 +340,10 @@ export default function Status() {
 
         <GlassCard title="Schedulers" desc="Ingest is scheduler-driven">
           <div className="text-sm text-white/75 space-y-1">
-            <div>twm-hrrr-scheduler</div>
-            <div>twm-gfs-scheduler</div>
-            <div>twm-nam-scheduler</div>
-            <div>twm-nbm-scheduler</div>
+            <div>csky-hrrr-scheduler</div>
+            <div>csky-gfs-scheduler</div>
+            <div>csky-nam-scheduler</div>
+            <div>csky-nbm-scheduler</div>
           </div>
           <div className="mt-3 text-xs text-white/55">
             Service health isn’t probed directly here; readiness is inferred from manifests.

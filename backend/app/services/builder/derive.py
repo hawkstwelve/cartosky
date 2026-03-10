@@ -240,7 +240,7 @@ def _kuchera_load_prior_cumulative(
 
     data_root_raw = getattr(ctx, "data_root", None) if ctx is not None else None
     if data_root_raw is None:
-        data_root_raw = os.getenv("TWF_V3_DATA_ROOT", "./data/v3")
+        data_root_raw = os.getenv("CARTOSKY_V3_DATA_ROOT") or os.getenv("TWF_V3_DATA_ROOT", "./data/v3")
     try:
         data_root = Path(str(data_root_raw))
     except Exception:
@@ -408,7 +408,7 @@ def _record_derive_quality(
 # ---------------------------------------------------------------------------
 
 _PREFETCH_DEFAULT_WORKERS = 6
-_PREFETCH_ENV_WORKERS = "TWF_V3_DERIVE_PREFETCH_WORKERS"
+_PREFETCH_ENV_WORKERS = ("CARTOSKY_V3_DERIVE_PREFETCH_WORKERS", "TWF_V3_DERIVE_PREFETCH_WORKERS")
 # If this fraction of prefetch tasks fail, stop launching new ones.
 _PREFETCH_FAIL_ABORT_RATIO = 0.5
 # Minimum tasks that must have completed before the abort ratio is evaluated.
@@ -419,7 +419,11 @@ _PREFETCH_BACKOFF_SECONDS = 0.3
 
 def _prefetch_max_workers() -> int:
     """Resolve bounded worker count from env or default."""
-    raw = os.getenv(_PREFETCH_ENV_WORKERS, "").strip()
+    raw = ""
+    for env_name in _PREFETCH_ENV_WORKERS:
+        raw = os.getenv(env_name, "").strip()
+        if raw:
+            break
     if raw:
         try:
             return max(1, min(int(raw), 12))
@@ -643,7 +647,7 @@ def _apcp_exact_window_pattern(start_fh: int, end_fh: int) -> str:
 
 
 def _kuchera_primary_herbie_priority() -> str:
-    raw = os.getenv("TWF_HERBIE_PRIORITY", "aws")
+    raw = os.getenv("CARTOSKY_HERBIE_PRIORITY") or os.getenv("TWF_HERBIE_PRIORITY", "aws")
     for token in str(raw).split(","):
         candidate = token.strip()
         if candidate:

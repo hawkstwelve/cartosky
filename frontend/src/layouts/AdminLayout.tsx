@@ -48,7 +48,7 @@ export default function AdminLayout() {
         <aside className="glass h-fit rounded-[28px] border border-white/12 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.38)]">
           <div className="px-2 pb-4">
             <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#95b1a2]">
-              TWM Admin
+              CartoSky Admin
             </div>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">Command Center</h1>
             <p className="mt-2 text-sm leading-6 text-white/62">
