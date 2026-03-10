@@ -102,8 +102,15 @@ Recommended route layout:
   - proxy to `http://127.0.0.1:8200`
 - `api.cartosky.com/api/v4/*`
   - proxy to `http://127.0.0.1:8200`
+- `api.cartosky.com/loop/*`
+  - serve static loop cache from `/opt/cartosky/data/loop_cache/`
 - `api.cartosky.com/tiles/v3/*`
   - proxy to `http://127.0.0.1:8201`
+
+Important:
+
+- WebP loop playback uses `/loop/...` asset URLs via `api.cartosky.com`.
+- If `/loop/` is missing from the API vhost, the frontend will fall back to tiles and loop/WebP playback will appear broken even though tiles still render.
 
 ### 4. TLS / Cloudflare
 
@@ -251,6 +258,8 @@ Run these checks immediately after deployment.
 - [ ] `https://api.cartosky.com/tiles/v3/boundaries/v1/tilejson.json` returns successfully
 - [ ] TileJSON contains `api.cartosky.com` tile URLs
 - [ ] Viewer tiles render normally
+- [ ] One `https://api.cartosky.com/loop/...` WebP URL returns successfully
+- [ ] Loop/WebP playback appears on the frontend instead of falling back to tiles-only
 
 ### Share Media
 
