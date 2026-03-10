@@ -42,7 +42,7 @@ Important note:
 Edit `/etc/cartosky/api.env` and set these values:
 
 ```env
-CARTOSKY_FORUMS_REDIRECT_URI=https://api.cartosky.com/auth/twf/callback
+TWF_REDIRECT_URI=https://api.cartosky.com/auth/twf/callback
 FRONTEND_RETURN=https://cartosky.com
 CORS_ORIGINS=https://cartosky.com,https://www.cartosky.com
 R2_PUBLIC_BASE=https://cdn.cartosky.com
@@ -50,9 +50,9 @@ R2_PUBLIC_BASE=https://cdn.cartosky.com
 
 Keep these existing values unless you are intentionally rotating them:
 
-- `CARTOSKY_FORUMS_BASE`
-- `CARTOSKY_FORUMS_CLIENT_ID`
-- `CARTOSKY_FORUMS_CLIENT_SECRET`
+- `TWF_BASE`
+- `TWF_CLIENT_ID`
+- `TWF_CLIENT_SECRET`
 - `TOKEN_DB_PATH`
 - `TOKEN_ENC_KEY`
 - `CARTOSKY_TELEMETRY_DB_PATH`
@@ -75,15 +75,15 @@ These are consumed by `backend/app/services/share_media.py`.
 Edit `/etc/cartosky/tile-server.env` and set:
 
 ```env
-CARTOSKY_V3_TILES_PUBLIC_BASE_URL=https://api.cartosky.com
+CARTOSKY_TILES_PUBLIC_BASE_URL=https://api.cartosky.com
 ```
 
 Leave these unchanged unless your data layout moved:
 
-- `CARTOSKY_V3_DATA_ROOT`
-- `CARTOSKY_V3_BOUNDARIES_MBTILES`
-- `CARTOSKY_V3_BOUNDARIES_TILESET_ID`
-- `CARTOSKY_V3_BOUNDARIES_TILESET_NAME`
+- `CARTOSKY_DATA_ROOT`
+- `CARTOSKY_BOUNDARIES_MBTILES`
+- `CARTOSKY_BOUNDARIES_TILESET_ID`
+- `CARTOSKY_BOUNDARIES_TILESET_NAME`
 
 ### 3. Nginx / Reverse Proxy
 
@@ -270,7 +270,7 @@ If something fails during cutover:
 
 1. Revert nginx host routing to the old domains.
 2. Revert `/etc/cartosky/api.env` values for `FRONTEND_RETURN`, `CORS_ORIGINS`, and `R2_PUBLIC_BASE` if needed.
-3. Revert `/etc/cartosky/tile-server.env` value for `CARTOSKY_V3_TILES_PUBLIC_BASE_URL`.
+3. Revert `/etc/cartosky/tile-server.env` value for `CARTOSKY_TILES_PUBLIC_BASE_URL`.
 4. Rebuild and redeploy the previous frontend bundle if the branding/domain code changes caused issues.
 5. Restart `csky-api.service` and `csky-tile-server.service`.
 

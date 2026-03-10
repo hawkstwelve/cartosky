@@ -3,7 +3,7 @@
 
 Usage:
     PYTHONPATH=backend .venv/bin/python backend/scripts/generate_loop_webp.py \
-      --model hrrr --run 20260223_14z --data-root ./data/v3
+    --model hrrr --run 20260223_14z --data-root ./data
 
 Optional:
     --var tmp2m          # only one variable
@@ -37,12 +37,17 @@ def _env_value(*names: str, default: str = "") -> str:
     return default
 
 
-DEFAULT_WEBP_QUALITY = int(_env_value("CARTOSKY_V3_LOOP_WEBP_QUALITY", "TWF_V3_LOOP_WEBP_QUALITY", default="82"))
-DEFAULT_WEBP_MAX_DIM = int(_env_value("CARTOSKY_V3_LOOP_WEBP_MAX_DIM", "TWF_V3_LOOP_WEBP_MAX_DIM", default="1600"))
+DEFAULT_WEBP_QUALITY = int(
+    _env_value("CARTOSKY_LOOP_WEBP_QUALITY", "CARTOSKY_V3_LOOP_WEBP_QUALITY", "TWF_V3_LOOP_WEBP_QUALITY", default="82")
+)
+DEFAULT_WEBP_MAX_DIM = int(
+    _env_value("CARTOSKY_LOOP_WEBP_MAX_DIM", "CARTOSKY_V3_LOOP_WEBP_MAX_DIM", "TWF_V3_LOOP_WEBP_MAX_DIM", default="1600")
+)
 DEFAULT_LOOP_OUTPUT_ROOT = _env_value(
+    "CARTOSKY_LOOP_CACHE_ROOT",
     "CARTOSKY_V3_LOOP_CACHE_ROOT",
     "TWF_V3_LOOP_CACHE_ROOT",
-    default="/tmp/cartosky_loop_webp_cache",
+    default="./data/loop_cache",
 )
 
 
@@ -61,8 +66,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--var", dest="variable", default=None, help="Optional variable filter (e.g. tmp2m)")
     parser.add_argument(
         "--data-root",
-        default=_env_value("CARTOSKY_V3_DATA_ROOT", "TWF_V3_DATA_ROOT", default="./data/v3"),
-        help="Data root containing published/ (default: env CARTOSKY_V3_DATA_ROOT or ./data/v3)",
+        default=_env_value("CARTOSKY_DATA_ROOT", "CARTOSKY_V3_DATA_ROOT", "TWF_V3_DATA_ROOT", default="./data"),
+        help="Data root containing published/ (default: env CARTOSKY_DATA_ROOT or ./data)",
     )
     parser.add_argument("--quality", type=int, default=DEFAULT_WEBP_QUALITY, help="WebP quality (default: 82)")
     parser.add_argument(
@@ -75,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-root",
         default=DEFAULT_LOOP_OUTPUT_ROOT,
-        help="Directory to write loop WebP cache (default: env CARTOSKY_V3_LOOP_CACHE_ROOT or /tmp/cartosky_loop_webp_cache)",
+        help="Directory to write loop WebP cache (default: env CARTOSKY_LOOP_CACHE_ROOT or ./data/loop_cache)",
     )
     parser.add_argument("--overwrite", action="store_true", help="Regenerate existing .loop.webp files")
     return parser.parse_args()

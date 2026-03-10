@@ -240,7 +240,11 @@ def _kuchera_load_prior_cumulative(
 
     data_root_raw = getattr(ctx, "data_root", None) if ctx is not None else None
     if data_root_raw is None:
-        data_root_raw = os.getenv("CARTOSKY_V3_DATA_ROOT") or os.getenv("TWF_V3_DATA_ROOT", "./data/v3")
+        data_root_raw = (
+            os.getenv("CARTOSKY_DATA_ROOT")
+            or os.getenv("CARTOSKY_V3_DATA_ROOT")
+            or os.getenv("TWF_V3_DATA_ROOT", "./data")
+        )
     try:
         data_root = Path(str(data_root_raw))
     except Exception:
@@ -408,7 +412,11 @@ def _record_derive_quality(
 # ---------------------------------------------------------------------------
 
 _PREFETCH_DEFAULT_WORKERS = 6
-_PREFETCH_ENV_WORKERS = ("CARTOSKY_V3_DERIVE_PREFETCH_WORKERS", "TWF_V3_DERIVE_PREFETCH_WORKERS")
+_PREFETCH_ENV_WORKERS = (
+    "CARTOSKY_DERIVE_PREFETCH_WORKERS",
+    "CARTOSKY_V3_DERIVE_PREFETCH_WORKERS",
+    "TWF_V3_DERIVE_PREFETCH_WORKERS",
+)
 # If this fraction of prefetch tasks fail, stop launching new ones.
 _PREFETCH_FAIL_ABORT_RATIO = 0.5
 # Minimum tasks that must have completed before the abort ratio is evaluated.

@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -10,6 +11,15 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+os.environ.setdefault("TWF_BASE", "https://example.com")
+os.environ.setdefault("TWF_CLIENT_ID", "client-id")
+os.environ.setdefault("TWF_CLIENT_SECRET", "client-secret")
+os.environ.setdefault("TWF_REDIRECT_URI", "https://example.com/callback")
+os.environ.setdefault("FRONTEND_RETURN", "https://example.com/app")
+os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
+os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+os.environ.setdefault("TWM_ADMIN_MEMBER_IDS", "42")
+
 from app import main as main_module
 
 pytestmark = pytest.mark.anyio
@@ -17,7 +27,7 @@ pytestmark = pytest.mark.anyio
 
 @pytest.fixture
 async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncClient]:
-    data_root = tmp_path / "data" / "v3"
+    data_root = tmp_path / "data"
     manifests_root = data_root / "manifests"
     published_root = data_root / "published"
     loop_cache_root = tmp_path / "loop-cache"
@@ -158,21 +168,21 @@ async def test_frames_incomplete_historical_cache_control_is_short(client: httpx
     assert response.headers.get("etag")
 
 
-async def test_frame_loop_urls_emit_v4_runtime_paths(client: httpx.AsyncClient) -> None:
+async def test_frame_loop_urls_emit_static_cache_paths_when_pregenerated(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v4/hrrr/latest/radar_ptype/frames")
 
     assert response.status_code == 200
     rows = response.json()
     assert isinstance(rows, list) and rows
     first = rows[0]
-    assert first["loop_webp_url"].startswith("/api/v4/hrrr/")
-    assert "/loop.webp?tier=0" in first["loop_webp_url"]
-    assert first["loop_webp_tier0_url"].startswith("/api/v4/hrrr/")
+    assert first["loop_webp_url"].startswith("/loop/hrrr/")
+    assert "/tier0/fh000.loop.webp?v=" in first["loop_webp_url"]
+    assert first["loop_webp_tier0_url"].startswith("/loop/hrrr/")
 
     tier1_row = next((row for row in rows if row.get("loop_webp_tier1_url")), None)
     assert tier1_row is not None
-    assert tier1_row["loop_webp_tier1_url"].startswith("/api/v4/hrrr/")
-    assert "/loop.webp?tier=1" in tier1_row["loop_webp_tier1_url"]
+    assert tier1_row["loop_webp_tier1_url"].startswith("/loop/hrrr/")
+    assert "/tier1/fh000.loop.webp?v=" in tier1_row["loop_webp_tier1_url"]
 
 
 async def test_frame_loop_urls_include_tier0_runtime_fallback_without_pregenerated_cache(

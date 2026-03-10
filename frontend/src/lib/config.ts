@@ -63,7 +63,11 @@ export function getPlaybackBufferPolicy(params: {
 }
 
 export function isWebpDefaultRenderEnabled(): boolean {
-  const envValue = String(import.meta.env.VITE_TWF_V3_WEBP_DEFAULT_ENABLED ?? "").trim().toLowerCase();
+  const envValue = String(
+    import.meta.env.VITE_CARTOSKY_WEBP_DEFAULT_ENABLED ?? import.meta.env.VITE_TWF_V3_WEBP_DEFAULT_ENABLED ?? "",
+  )
+    .trim()
+    .toLowerCase();
   if (envValue === "1" || envValue === "true" || envValue === "yes" || envValue === "on") {
     return true;
   }

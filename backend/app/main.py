@@ -59,17 +59,38 @@ def _env_value(*names: str, default: str = "") -> str:
     return default
 
 
-DATA_ROOT = Path(_env_value("CARTOSKY_V3_DATA_ROOT", "TWF_V3_DATA_ROOT", default="./data/v3"))
+def _normalized_path_prefix(value: str, *, default: str) -> str:
+    raw = (value or default).strip()
+    if not raw:
+        raw = default
+    return f"/{raw.strip('/')}/"
+
+
+DATA_ROOT = Path(_env_value("CARTOSKY_DATA_ROOT", "CARTOSKY_V3_DATA_ROOT", "TWF_V3_DATA_ROOT", default="./data"))
 PUBLISHED_ROOT = DATA_ROOT / "published"
 MANIFESTS_ROOT = DATA_ROOT / "manifests"
 LOOP_CACHE_ROOT = Path(
-    _env_value("CARTOSKY_V3_LOOP_CACHE_ROOT", "TWF_V3_LOOP_CACHE_ROOT", default="/tmp/cartosky_loop_webp_cache")
+    _env_value(
+        "CARTOSKY_LOOP_CACHE_ROOT",
+        "CARTOSKY_V3_LOOP_CACHE_ROOT",
+        "TWF_V3_LOOP_CACHE_ROOT",
+        default=str(DATA_ROOT / "loop_cache"),
+    )
+)
+LOOP_URL_PREFIX = _normalized_path_prefix(
+    _env_value("CARTOSKY_LOOP_URL_PREFIX", "CARTOSKY_V3_LOOP_URL_PREFIX", "TWF_V3_LOOP_URL_PREFIX", default="/loop/"),
+    default="/loop/",
 )
 CAPABILITIES_CONTRACT_VERSION = "v1"
 
 _RUN_ID_RE = re.compile(r"^\d{8}_\d{2}z$")
 _JSON_CACHE_RECHECK_SECONDS = float(
-    _env_value("CARTOSKY_V3_JSON_CACHE_RECHECK_SECONDS", "TWF_V3_JSON_CACHE_RECHECK_SECONDS", default="1.0")
+    _env_value(
+        "CARTOSKY_JSON_CACHE_RECHECK_SECONDS",
+        "CARTOSKY_V3_JSON_CACHE_RECHECK_SECONDS",
+        "TWF_V3_JSON_CACHE_RECHECK_SECONDS",
+        default="1.0",
+    )
 )
 
 
@@ -109,44 +130,82 @@ def _env_float(*names: str, default: float, min_value: float = 0.0) -> float:
     return parsed if parsed >= min_value else default
 
 
-LOOP_WEBP_QUALITY = int(_env_value("CARTOSKY_V3_LOOP_WEBP_QUALITY", "TWF_V3_LOOP_WEBP_QUALITY", default="82"))
-LOOP_WEBP_MAX_DIM = int(_env_value("CARTOSKY_V3_LOOP_WEBP_MAX_DIM", "TWF_V3_LOOP_WEBP_MAX_DIM", default="1600"))
+LOOP_WEBP_QUALITY = int(
+    _env_value("CARTOSKY_LOOP_WEBP_QUALITY", "CARTOSKY_V3_LOOP_WEBP_QUALITY", "TWF_V3_LOOP_WEBP_QUALITY", default="82")
+)
+LOOP_WEBP_MAX_DIM = int(
+    _env_value("CARTOSKY_LOOP_WEBP_MAX_DIM", "CARTOSKY_V3_LOOP_WEBP_MAX_DIM", "TWF_V3_LOOP_WEBP_MAX_DIM", default="1600")
+)
 LOOP_WEBP_TIER1_QUALITY = int(
-    _env_value("CARTOSKY_V3_LOOP_WEBP_TIER1_QUALITY", "TWF_V3_LOOP_WEBP_TIER1_QUALITY", default="86")
+    _env_value(
+        "CARTOSKY_LOOP_WEBP_TIER1_QUALITY",
+        "CARTOSKY_V3_LOOP_WEBP_TIER1_QUALITY",
+        "TWF_V3_LOOP_WEBP_TIER1_QUALITY",
+        default="86",
+    )
 )
 LOOP_WEBP_TIER1_MAX_DIM = int(
-    _env_value("CARTOSKY_V3_LOOP_WEBP_TIER1_MAX_DIM", "TWF_V3_LOOP_WEBP_TIER1_MAX_DIM", default="2400")
+    _env_value(
+        "CARTOSKY_LOOP_WEBP_TIER1_MAX_DIM",
+        "CARTOSKY_V3_LOOP_WEBP_TIER1_MAX_DIM",
+        "TWF_V3_LOOP_WEBP_TIER1_MAX_DIM",
+        default="2400",
+    )
 )
 LOOP_WEBP_TIER0_FIXED_W = int(
-    _env_value("CARTOSKY_V3_LOOP_WEBP_TIER0_FIXED_W", "TWF_V3_LOOP_WEBP_TIER0_FIXED_W", default="1600")
+    _env_value(
+        "CARTOSKY_LOOP_WEBP_TIER0_FIXED_W",
+        "CARTOSKY_V3_LOOP_WEBP_TIER0_FIXED_W",
+        "TWF_V3_LOOP_WEBP_TIER0_FIXED_W",
+        default="1600",
+    )
 )
 LOOP_WEBP_TIER1_FIXED_W = int(
-    _env_value("CARTOSKY_V3_LOOP_WEBP_TIER1_FIXED_W", "TWF_V3_LOOP_WEBP_TIER1_FIXED_W", default="2400")
+    _env_value(
+        "CARTOSKY_LOOP_WEBP_TIER1_FIXED_W",
+        "CARTOSKY_V3_LOOP_WEBP_TIER1_FIXED_W",
+        "TWF_V3_LOOP_WEBP_TIER1_FIXED_W",
+        default="2400",
+    )
 )
-LOOP_SHARPEN_ENABLE = _env_bool("CARTOSKY_V3_LOOP_SHARPEN_ENABLE", "TWF_V3_LOOP_SHARPEN_ENABLE", default=True)
+LOOP_SHARPEN_ENABLE = _env_bool(
+    "CARTOSKY_LOOP_SHARPEN_ENABLE",
+    "CARTOSKY_V3_LOOP_SHARPEN_ENABLE",
+    "TWF_V3_LOOP_SHARPEN_ENABLE",
+    default=True,
+)
 LOOP_SHARPEN_RADIUS = _env_float(
+    "CARTOSKY_LOOP_SHARPEN_RADIUS",
     "CARTOSKY_V3_LOOP_SHARPEN_RADIUS",
     "TWF_V3_LOOP_SHARPEN_RADIUS",
     default=1.2,
     min_value=0.0,
 )
 LOOP_SHARPEN_PERCENT = _env_int(
+    "CARTOSKY_LOOP_SHARPEN_PERCENT",
     "CARTOSKY_V3_LOOP_SHARPEN_PERCENT",
     "TWF_V3_LOOP_SHARPEN_PERCENT",
     default=35,
     min_value=0,
 )
 LOOP_SHARPEN_THRESHOLD = _env_int(
+    "CARTOSKY_LOOP_SHARPEN_THRESHOLD",
     "CARTOSKY_V3_LOOP_SHARPEN_THRESHOLD",
     "TWF_V3_LOOP_SHARPEN_THRESHOLD",
     default=3,
     min_value=0,
 )
 SAMPLE_CACHE_TTL_SECONDS = float(
-    _env_value("CARTOSKY_V3_SAMPLE_CACHE_TTL_SECONDS", "TWF_V3_SAMPLE_CACHE_TTL_SECONDS", default="2.0")
+    _env_value(
+        "CARTOSKY_SAMPLE_CACHE_TTL_SECONDS",
+        "CARTOSKY_V3_SAMPLE_CACHE_TTL_SECONDS",
+        "TWF_V3_SAMPLE_CACHE_TTL_SECONDS",
+        default="2.0",
+    )
 )
 SAMPLE_INFLIGHT_WAIT_SECONDS = float(
     _env_value(
+        "CARTOSKY_SAMPLE_INFLIGHT_WAIT_SECONDS",
         "CARTOSKY_V3_SAMPLE_INFLIGHT_WAIT_SECONDS",
         "TWF_V3_SAMPLE_INFLIGHT_WAIT_SECONDS",
         default="0.2",
@@ -154,6 +213,7 @@ SAMPLE_INFLIGHT_WAIT_SECONDS = float(
 )
 SAMPLE_RATE_LIMIT_WINDOW_SECONDS = float(
     _env_value(
+        "CARTOSKY_SAMPLE_RATE_LIMIT_WINDOW_SECONDS",
         "CARTOSKY_V3_SAMPLE_RATE_LIMIT_WINDOW_SECONDS",
         "TWF_V3_SAMPLE_RATE_LIMIT_WINDOW_SECONDS",
         default="1.0",
@@ -161,6 +221,7 @@ SAMPLE_RATE_LIMIT_WINDOW_SECONDS = float(
 )
 SAMPLE_RATE_LIMIT_MAX_REQUESTS = int(
     _env_value(
+        "CARTOSKY_SAMPLE_RATE_LIMIT_MAX_REQUESTS",
         "CARTOSKY_V3_SAMPLE_RATE_LIMIT_MAX_REQUESTS",
         "TWF_V3_SAMPLE_RATE_LIMIT_MAX_REQUESTS",
         default="240",
@@ -1524,6 +1585,11 @@ def _loop_webp_url(model: str, run: str, var: str, fh: int, *, tier: int, versio
     return f"{base}?tier={tier}&v={version_token}"
 
 
+def _static_loop_webp_url(model: str, run: str, var: str, fh: int, *, tier: int, version_token: str) -> str:
+    base = LOOP_URL_PREFIX.rstrip("/")
+    return f"{base}/{model}/{run}/{var}/tier{tier}/fh{fh:03d}.loop.webp?v={version_token}"
+
+
 def _legacy_loop_webp_url(model: str, run: str, var: str, fh: int, *, version_token: str) -> str:
     return _loop_webp_url(model, run, var, fh, tier=0, version_token=version_token)
 
@@ -1541,7 +1607,7 @@ def _resolve_existing_loop_urls(
 
     tier0_path = _loop_webp_path(model, run, var, fh, tier=0)
     if tier0_path is not None and tier0_path.is_file():
-        tier0_url = _loop_webp_url(model, run, var, fh, tier=0, version_token=version_token)
+        tier0_url = _static_loop_webp_url(model, run, var, fh, tier=0, version_token=version_token)
     else:
         legacy_path = _legacy_loop_webp_path(model, run, var, fh, tier=0)
         if legacy_path is not None and legacy_path.is_file():
@@ -1549,7 +1615,7 @@ def _resolve_existing_loop_urls(
 
     tier1_path = _loop_webp_path(model, run, var, fh, tier=1)
     if tier1_path is not None and tier1_path.is_file():
-        tier1_url = _loop_webp_url(model, run, var, fh, tier=1, version_token=version_token)
+        tier1_url = _static_loop_webp_url(model, run, var, fh, tier=1, version_token=version_token)
 
     return tier0_url, tier1_url
 

@@ -27,7 +27,7 @@
 - `/twf/*` → API upstream `http://127.0.0.1:8200`
 - `/api/v4/*` → API upstream `http://127.0.0.1:8200`
 - `/api/regions` → API upstream `http://127.0.0.1:8200`
-- `/loop/v3/*` → static loop cache alias `/opt/cartosky/data/v3/loop_cache/`
+- `/loop/*` → static loop cache alias `/opt/cartosky/data/loop_cache/`
 - `/tiles/v3/*` → tile server upstream `http://127.0.0.1:8201`
 
 ## Recommended CartoSky layout
@@ -150,8 +150,8 @@ server {
     add_header Cross-Origin-Resource-Policy "cross-origin" always;
   }
 
-  location ^~ /loop/v3/ {
-    alias /opt/cartosky/data/v3/loop_cache/;
+  location ^~ /loop/ {
+    alias /opt/cartosky/data/loop_cache/;
     try_files $uri =404;
 
     add_header Access-Control-Allow-Origin "*" always;
@@ -290,12 +290,12 @@ server {
 These must also be updated or the new hostnames will not work correctly.
 
 - `/etc/cartosky/api.env`
-  - `CARTOSKY_FORUMS_REDIRECT_URI=https://api.cartosky.com/auth/twf/callback`
+  - `TWF_REDIRECT_URI=https://api.cartosky.com/auth/twf/callback`
   - `FRONTEND_RETURN=https://cartosky.com`
   - `CORS_ORIGINS=https://cartosky.com,https://www.cartosky.com`
   - `R2_PUBLIC_BASE=https://cdn.cartosky.com`
 - `/etc/cartosky/tile-server.env`
-  - `CARTOSKY_V3_TILES_PUBLIC_BASE_URL=https://api.cartosky.com`
+  - `CARTOSKY_TILES_PUBLIC_BASE_URL=https://api.cartosky.com`
 
 ### Scheduler env files
 

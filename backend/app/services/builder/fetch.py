@@ -43,16 +43,36 @@ import requests
 logger = logging.getLogger(__name__)
 
 DEFAULT_HERBIE_PRIORITY = ["aws", "nomads", "google", "azure", "pando", "pando2"]
-ENV_HERBIE_PRIORITY = "TWF_HERBIE_PRIORITY"
-ENV_HERBIE_RETRIES = "TWF_HERBIE_SUBSET_RETRIES"
-ENV_HERBIE_RETRY_SLEEP = "TWF_HERBIE_RETRY_SLEEP_SECONDS"
-ENV_HERBIE_IDX_NEGATIVE_CACHE_INITIAL_TTL = "TWF_HERBIE_IDX_NEGATIVE_CACHE_INITIAL_TTL_SECONDS"
-ENV_HERBIE_IDX_NEGATIVE_CACHE_MAX_TTL = "TWF_HERBIE_IDX_NEGATIVE_CACHE_MAX_TTL_SECONDS"
-ENV_HERBIE_INVENTORY_CACHE_TTL = "TWF_HERBIE_INVENTORY_CACHE_TTL_SECONDS"
-ENV_HERBIE_FETCH_CACHE_MAX_ENTRIES = "TWF_HERBIE_FETCH_CACHE_MAX_ENTRIES"
-ENV_HERBIE_FETCH_CACHE_MAX_BYTES = "TWF_HERBIE_FETCH_CACHE_MAX_BYTES"
-ENV_HERBIE_FETCH_CACHE_MAX_CACHEABLE_BYTES = "TWF_HERBIE_FETCH_CACHE_MAX_CACHEABLE_BYTES"
-ENV_GRIB_DISK_CACHE_LOCK = "TWF_V3_GRIB_DISK_CACHE_LOCK"
+ENV_HERBIE_PRIORITY = ("CARTOSKY_HERBIE_PRIORITY", "TWF_HERBIE_PRIORITY")
+ENV_HERBIE_RETRIES = ("CARTOSKY_HERBIE_SUBSET_RETRIES", "TWF_HERBIE_SUBSET_RETRIES")
+ENV_HERBIE_RETRY_SLEEP = ("CARTOSKY_HERBIE_RETRY_SLEEP_SECONDS", "TWF_HERBIE_RETRY_SLEEP_SECONDS")
+ENV_HERBIE_IDX_NEGATIVE_CACHE_INITIAL_TTL = (
+    "CARTOSKY_HERBIE_IDX_NEGATIVE_CACHE_INITIAL_TTL_SECONDS",
+    "TWF_HERBIE_IDX_NEGATIVE_CACHE_INITIAL_TTL_SECONDS",
+)
+ENV_HERBIE_IDX_NEGATIVE_CACHE_MAX_TTL = (
+    "CARTOSKY_HERBIE_IDX_NEGATIVE_CACHE_MAX_TTL_SECONDS",
+    "TWF_HERBIE_IDX_NEGATIVE_CACHE_MAX_TTL_SECONDS",
+)
+ENV_HERBIE_INVENTORY_CACHE_TTL = (
+    "CARTOSKY_HERBIE_INVENTORY_CACHE_TTL_SECONDS",
+    "TWF_HERBIE_INVENTORY_CACHE_TTL_SECONDS",
+)
+ENV_HERBIE_FETCH_CACHE_MAX_ENTRIES = (
+    "CARTOSKY_HERBIE_FETCH_CACHE_MAX_ENTRIES",
+    "TWF_HERBIE_FETCH_CACHE_MAX_ENTRIES",
+)
+ENV_HERBIE_FETCH_CACHE_MAX_BYTES = ("CARTOSKY_HERBIE_FETCH_CACHE_MAX_BYTES", "TWF_HERBIE_FETCH_CACHE_MAX_BYTES")
+ENV_HERBIE_FETCH_CACHE_MAX_CACHEABLE_BYTES = (
+    "CARTOSKY_HERBIE_FETCH_CACHE_MAX_CACHEABLE_BYTES",
+    "TWF_HERBIE_FETCH_CACHE_MAX_CACHEABLE_BYTES",
+)
+ENV_GRIB_DISK_CACHE_LOCK = (
+    "CARTOSKY_GRIB_DISK_CACHE_LOCK",
+    "CARTOSKY_V3_GRIB_DISK_CACHE_LOCK",
+    "TWF_V3_GRIB_DISK_CACHE_LOCK",
+    "TWF_V3_DISK_CACHE_LOCK",
+)
 DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS = 8.0
 DEFAULT_GRIB_DISK_LOCK_POLL_SECONDS = 0.1
 DEFAULT_IDX_NEGATIVE_INITIAL_TTL_SECONDS = 60.0
@@ -239,12 +259,21 @@ _FETCH_RUNTIME_TIMERS_MS: dict[str, _TimerAggregate] = {}
 _FETCH_RUNTIME_METRICS_LOCK = threading.Lock()
 
 
+def _env_value(name: str | tuple[str, ...], default: str = "") -> str:
+    names = (name,) if isinstance(name, str) else name
+    for env_name in names:
+        raw = os.getenv(env_name, "").strip()
+        if raw:
+            return raw
+    return default
+
+
 def _priority_candidates(herbie_kwargs: dict[str, Any] | None) -> list[str]:
     if herbie_kwargs and herbie_kwargs.get("priority"):
         return [str(herbie_kwargs["priority"]).strip()]
 
-    raw = os.getenv(ENV_HERBIE_PRIORITY, "")
-    if raw.strip():
+    raw = _env_value(ENV_HERBIE_PRIORITY)
+    if raw:
         parsed = [item.strip().lower() for item in raw.split(",") if item.strip()]
         if parsed:
             return parsed
@@ -299,7 +328,7 @@ def _log_source_fallback(
 
 
 def _retry_count() -> int:
-    raw = os.getenv(ENV_HERBIE_RETRIES, "2").strip()
+    raw = _env_value(ENV_HERBIE_RETRIES, "2")
     try:
         count = int(raw)
     except ValueError:
@@ -308,7 +337,7 @@ def _retry_count() -> int:
 
 
 def _retry_sleep_seconds() -> float:
-    raw = os.getenv(ENV_HERBIE_RETRY_SLEEP, "0.6").strip()
+    raw = _env_value(ENV_HERBIE_RETRY_SLEEP, "0.6")
     try:
         value = float(raw)
     except ValueError:
@@ -316,8 +345,8 @@ def _retry_sleep_seconds() -> float:
     return max(0.0, value)
 
 
-def _float_from_env(name: str, default: float, *, minimum: float = 0.0) -> float:
-    raw = os.getenv(name, "").strip()
+def _float_from_env(name: str | tuple[str, ...], default: float, *, minimum: float = 0.0) -> float:
+    raw = _env_value(name)
     if not raw:
         return max(minimum, default)
     try:
@@ -327,8 +356,8 @@ def _float_from_env(name: str, default: float, *, minimum: float = 0.0) -> float
     return max(minimum, parsed)
 
 
-def _int_from_env(name: str, default: int, *, minimum: int = 1) -> int:
-    raw = os.getenv(name, "").strip()
+def _int_from_env(name: str | tuple[str, ...], default: int, *, minimum: int = 1) -> int:
+    raw = _env_value(name)
     if not raw:
         return max(minimum, int(default))
     try:
@@ -1060,8 +1089,8 @@ def _parse_float_tag(value: Any) -> float | None:
     return parsed
 
 
-def _bool_from_env(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name, "").strip().lower()
+def _bool_from_env(name: str | tuple[str, ...], default: bool = False) -> bool:
+    raw = _env_value(name).lower()
     if not raw:
         return default
     if raw in {"1", "true", "yes", "on"}:

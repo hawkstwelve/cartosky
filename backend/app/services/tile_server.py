@@ -1,4 +1,4 @@
-"""TWF V3 Tile Server — PNG tile responses from published artifacts.
+"""CartoSky tile server — PNG tile responses from published artifacts.
 
 Default path serves pre-styled 4-band RGBA COGs.
 Coarse-model continuous fields may be value-rendered at request time:
@@ -40,26 +40,30 @@ def _env_value(*names: str, default: str = "") -> str:
     return default
 
 
-DATA_ROOT = Path(_env_value("CARTOSKY_V3_DATA_ROOT", "TWF_V3_DATA_ROOT", default="./data/v3"))
+DATA_ROOT = Path(_env_value("CARTOSKY_DATA_ROOT", "CARTOSKY_V3_DATA_ROOT", "TWF_V3_DATA_ROOT", default="./data"))
 PUBLISHED_ROOT = DATA_ROOT / "published"
 BOUNDARIES_MBTILES = Path(
     _env_value(
+        "CARTOSKY_BOUNDARIES_MBTILES",
         "CARTOSKY_V3_BOUNDARIES_MBTILES",
         "TWF_V3_BOUNDARIES_MBTILES",
         default=str(DATA_ROOT / "boundaries" / "v1" / "twf_boundaries.mbtiles"),
     )
 )
 BOUNDARIES_TILESET_ID = _env_value(
+    "CARTOSKY_BOUNDARIES_TILESET_ID",
     "CARTOSKY_V3_BOUNDARIES_TILESET_ID",
     "TWF_V3_BOUNDARIES_TILESET_ID",
     default="cartosky-boundaries-v1",
 )
 BOUNDARIES_TILESET_NAME = _env_value(
+    "CARTOSKY_BOUNDARIES_TILESET_NAME",
     "CARTOSKY_V3_BOUNDARIES_TILESET_NAME",
     "TWF_V3_BOUNDARIES_TILESET_NAME",
     default="CartoSky Boundaries v1",
 )
 TILES_PUBLIC_BASE_URL = _env_value(
+    "CARTOSKY_TILES_PUBLIC_BASE_URL",
     "CARTOSKY_V3_TILES_PUBLIC_BASE_URL",
     "TWF_V3_TILES_PUBLIC_BASE_URL",
     default="https://api.cartosky.com",

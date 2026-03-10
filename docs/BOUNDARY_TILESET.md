@@ -64,8 +64,7 @@ Set tile server env vars in:
 
 - `deployment/systemd/tile-server.env.example`
 
-Important for browsers: set `TWF_V3_TILES_PUBLIC_BASE_URL` so TileJSON emits absolute tile URLs (not relative `/tiles/...`).
-Important for browsers: set `CARTOSKY_V3_TILES_PUBLIC_BASE_URL` so TileJSON emits absolute tile URLs (not relative `/tiles/...`).
+Important for browsers: set `CARTOSKY_TILES_PUBLIC_BASE_URL` so TileJSON emits absolute tile URLs (not relative `/tiles/...`).
 
 Then restart tile server unit:
 

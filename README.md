@@ -48,7 +48,7 @@ Cycle hours 0 / 6 / 12 / 18 Z produce 48 forecast hours; all other cycles produc
 
 ## Artifact Contract
 
-Each published run contains per-forecast-hour files in `$TWF_V3_DATA_ROOT/published/{model}/{region}/{run_id}/`:
+Each published run contains per-forecast-hour files in `$CARTOSKY_DATA_ROOT/published/{model}/{region}/{run_id}/`:
 
 | File | Format | Description |
 |---|---|---|
@@ -56,7 +56,7 @@ Each published run contains per-forecast-hour files in `$TWF_V3_DATA_ROOT/publis
 | `fhNNN.val.cog.tif` | 1-band float32 COG, 4× downsampled | Raw values for hover sampling |
 | `fhNNN.json` | JSON sidecar | `contract_version`, `model`, `region`, `run`, `var`, `fh`, `valid_time`, `units`, `kind` |
 
-Run manifests live at `$TWF_V3_DATA_ROOT/manifests/{model}/{region}/{run_id}.json`.
+Run manifests live at `$CARTOSKY_DATA_ROOT/manifests/{model}/{region}/{run_id}.json`.
 
 ## Prerequisites
 
@@ -82,7 +82,7 @@ pip install -r backend/requirements-dev.txt
 ## Running the Services
 
 > [!NOTE]
-> All three processes read from the same `TWF_V3_DATA_ROOT`. Point them at the same data directory.
+> All three processes read from the same `CARTOSKY_DATA_ROOT`. Point them at the same data directory.
 
 **API server:**
 
@@ -112,7 +112,7 @@ npm run dev        # dev server on :5173
 npm run build      # production build → frontend/dist/
 ```
 
-Set `VITE_TWF_V3_WEBP_DEFAULT_ENABLED=1` to enable adaptive WebP rendering (on by default).
+Set `VITE_CARTOSKY_WEBP_DEFAULT_ENABLED=1` to enable adaptive WebP rendering (on by default).
 
 ## Environment Variables
 
@@ -120,44 +120,44 @@ Set `VITE_TWF_V3_WEBP_DEFAULT_ENABLED=1` to enable adaptive WebP rendering (on b
 
 | Variable | Default | Description |
 |---|---|---|
-| `CARTOSKY_V3_DATA_ROOT` | `./data/v3` | Root data directory |
-| `CARTOSKY_V3_LOOP_CACHE_ROOT` | `/tmp/cartosky_loop_webp_cache` | Loop WebP cache directory |
-| `CARTOSKY_V3_LOOP_URL_PREFIX` | `/loop/v3` | URL prefix emitted in loop manifests |
-| `CARTOSKY_V3_LOOP_WEBP_QUALITY` | `82` | Tier 0 WebP quality (0–100) |
-| `CARTOSKY_V3_LOOP_WEBP_MAX_DIM` | `1600` | Tier 0 max dimension (px) |
-| `CARTOSKY_V3_LOOP_WEBP_TIER1_QUALITY` | `86` | Tier 1 (high-res) WebP quality |
-| `CARTOSKY_V3_LOOP_WEBP_TIER1_MAX_DIM` | `2400` | Tier 1 max dimension (px) |
-| `CARTOSKY_V3_JSON_CACHE_RECHECK_SECONDS` | `1.0` | Filesystem recheck interval for cached JSON |
-| `CARTOSKY_V3_SAMPLE_CACHE_TTL_SECONDS` | `2.0` | Point-sample result cache TTL |
-| `CARTOSKY_V3_SAMPLE_RATE_LIMIT_WINDOW_SECONDS` | `1.0` | Sampling rate-limit window (seconds) |
-| `CARTOSKY_V3_SAMPLE_RATE_LIMIT_MAX_REQUESTS` | `240` | Max sampling requests per window |
+| `CARTOSKY_DATA_ROOT` | `./data` | Root data directory |
+| `CARTOSKY_LOOP_CACHE_ROOT` | `./data/loop_cache` | Loop WebP cache directory |
+| `CARTOSKY_LOOP_URL_PREFIX` | `/loop/` | URL prefix emitted for pre-generated loop assets |
+| `CARTOSKY_LOOP_WEBP_QUALITY` | `82` | Tier 0 WebP quality (0–100) |
+| `CARTOSKY_LOOP_WEBP_MAX_DIM` | `1600` | Tier 0 max dimension (px) |
+| `CARTOSKY_LOOP_WEBP_TIER1_QUALITY` | `86` | Tier 1 (high-res) WebP quality |
+| `CARTOSKY_LOOP_WEBP_TIER1_MAX_DIM` | `2400` | Tier 1 max dimension (px) |
+| `CARTOSKY_JSON_CACHE_RECHECK_SECONDS` | `1.0` | Filesystem recheck interval for cached JSON |
+| `CARTOSKY_SAMPLE_CACHE_TTL_SECONDS` | `2.0` | Point-sample result cache TTL |
+| `CARTOSKY_SAMPLE_RATE_LIMIT_WINDOW_SECONDS` | `1.0` | Sampling rate-limit window (seconds) |
+| `CARTOSKY_SAMPLE_RATE_LIMIT_MAX_REQUESTS` | `240` | Max sampling requests per window |
 
 ### Tile server (`/etc/cartosky/tile-server.env`)
 
 | Variable | Default | Description |
 |---|---|---|
-| `CARTOSKY_V3_DATA_ROOT` | `./data/v3` | Root data directory |
-| `CARTOSKY_V3_BOUNDARIES_MBTILES` | — | Path to boundaries MBTiles file |
-| `CARTOSKY_V3_BOUNDARIES_TILESET_ID` | `cartosky-boundaries-v1` | TileJSON id |
-| `CARTOSKY_V3_BOUNDARIES_TILESET_NAME` | `CartoSky Boundaries v1` | TileJSON name |
-| `CARTOSKY_V3_TILES_PUBLIC_BASE_URL` | — | Public base URL for tile URL templates |
+| `CARTOSKY_DATA_ROOT` | `./data` | Root data directory |
+| `CARTOSKY_BOUNDARIES_MBTILES` | — | Path to boundaries MBTiles file |
+| `CARTOSKY_BOUNDARIES_TILESET_ID` | `cartosky-boundaries-v1` | TileJSON id |
+| `CARTOSKY_BOUNDARIES_TILESET_NAME` | `CartoSky Boundaries v1` | TileJSON name |
+| `CARTOSKY_TILES_PUBLIC_BASE_URL` | — | Public base URL for tile URL templates |
 
 ### Scheduler (`/etc/cartosky/scheduler.env`)
 
 | Variable | Default | Description |
 |---|---|---|
-| `CARTOSKY_V3_DATA_ROOT` | `./data/v3` | Root data directory |
-| `CARTOSKY_V3_WORKERS` | — | Parallel frame build workers |
-| `CARTOSKY_V3_SCHEDULER_VARS` | `tmp2m,tmp850,dp2m,…` | Variables to build each run |
-| `CARTOSKY_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Variables built first (probe for availability) |
-| `CARTOSKY_V3_SCHEDULER_POLL_SECONDS` | `300` | Idle poll interval |
-| `CARTOSKY_V3_SCHEDULER_KEEP_RUNS` | `4` | Number of completed runs to retain |
-| `CARTOSKY_V3_LOOP_PREGENERATE_ENABLED` | `0` | Enable post-publish loop WebP generation |
-| `CARTOSKY_V3_LOOP_CACHE_ROOT` | — | Loop WebP output dir (keep in sync with API) |
-| `CARTOSKY_V3_LOOP_PREGENERATE_WORKERS` | — | Parallel WebP encoding workers |
+| `CARTOSKY_DATA_ROOT` | `./data` | Root data directory |
+| `CARTOSKY_WORKERS` | — | Parallel frame build workers |
+| `CARTOSKY_SCHEDULER_VARS` | `tmp2m,tmp850,dp2m,…` | Variables to build each run |
+| `CARTOSKY_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Variables built first (probe for availability) |
+| `CARTOSKY_SCHEDULER_POLL_SECONDS` | `300` | Idle poll interval |
+| `CARTOSKY_SCHEDULER_KEEP_RUNS` | `4` | Number of completed runs to retain |
+| `CARTOSKY_LOOP_PREGENERATE_ENABLED` | `0` | Enable post-publish loop WebP generation |
+| `CARTOSKY_LOOP_CACHE_ROOT` | — | Loop WebP output dir (keep in sync with API) |
+| `CARTOSKY_LOOP_PREGENERATE_WORKERS` | — | Parallel WebP encoding workers |
 | `CARTOSKY_HERBIE_PRIORITY` | `aws,nomads,…` | Herbie data source priority order |
-| `TWF_HERBIE_SUBSET_RETRIES` | `4` | GRIB subset download retries |
-| `CARTOSKY_HERBIE_SAVE_DIR` | — | Herbie GRIB cache directory |
+| `CARTOSKY_HERBIE_SUBSET_RETRIES` | `4` | GRIB subset download retries |
+| `HERBIE_SAVE_DIR` | — | Herbie GRIB cache directory |
 
 ### GFS Scheduler Rollout (`/etc/cartosky/scheduler-gfs.env`)
 
@@ -165,9 +165,9 @@ Use a dedicated env file for GFS so HRRR remains isolated. Initial rollout shoul
 
 | Variable | Recommended value | Description |
 |---|---|---|
-| `CARTOSKY_V3_SCHEDULER_VARS` | `tmp2m,dp2m,tmp850,wspd10m,wgst10m,precip_total,snowfall_total,precip_ptype` | Core rollout vars for GFS |
-| `CARTOSKY_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
-| `CARTOSKY_V3_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
+| `CARTOSKY_SCHEDULER_VARS` | `tmp2m,dp2m,tmp850,wspd10m,wgst10m,precip_total,snowfall_total,precip_ptype` | Core rollout vars for GFS |
+| `CARTOSKY_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
+| `CARTOSKY_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
 
 ### NAM Scheduler Rollout (`/etc/cartosky/scheduler-nam.env`)
 
@@ -175,9 +175,9 @@ Use a dedicated env file for NAM so rollout scope stays isolated:
 
 | Variable | Recommended value | Description |
 |---|---|---|
-| `CARTOSKY_V3_SCHEDULER_VARS` | `tmp2m,dp2m,tmp850,wspd10m,wgst10m,precip_total,snowfall_total,radar_ptype` | Initial NAM rollout vars |
-| `CARTOSKY_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
-| `CARTOSKY_V3_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
+| `CARTOSKY_SCHEDULER_VARS` | `tmp2m,dp2m,tmp850,wspd10m,wgst10m,precip_total,snowfall_total,radar_ptype` | Initial NAM rollout vars |
+| `CARTOSKY_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
+| `CARTOSKY_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
 
 ### NBM Scheduler Rollout (`/etc/cartosky/scheduler-nbm.env`)
 
@@ -185,15 +185,15 @@ Use a dedicated env file for NBM so rollout scope stays isolated:
 
 | Variable | Recommended value | Description |
 |---|---|---|
-| `CARTOSKY_V3_SCHEDULER_VARS` | `tmp2m,precip_total,snowfall_total,wspd10m` | Initial NBM rollout vars |
-| `CARTOSKY_V3_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
-| `CARTOSKY_V3_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
+| `CARTOSKY_SCHEDULER_VARS` | `tmp2m,precip_total,snowfall_total,wspd10m` | Initial NBM rollout vars |
+| `CARTOSKY_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
+| `CARTOSKY_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
 
 ### Frontend
 
 | Variable | Default | Description |
 |---|---|---|
-| `VITE_TWF_V3_WEBP_DEFAULT_ENABLED` | `true` | Enable adaptive WebP render mode |
+| `VITE_CARTOSKY_WEBP_DEFAULT_ENABLED` | `true` | Enable adaptive WebP render mode |
 
 ## API Reference
 
@@ -414,7 +414,7 @@ cd backend
 python -m app.services.scheduler --model mymodel
 ```
 
-Configure which variables to build via `TWF_V3_SCHEDULER_VARS` in the scheduler env file.
+Configure which variables to build via `CARTOSKY_SCHEDULER_VARS` in the scheduler env file.
 
 ## Building Vector Boundaries
 
@@ -422,21 +422,21 @@ Configure which variables to build via `TWF_V3_SCHEDULER_VARS` in the scheduler 
 bash scripts/build_boundaries_tileset.sh
 ```
 
-Produces the MBTiles file referenced by `TWF_V3_BOUNDARIES_MBTILES`.
+Produces the MBTiles file referenced by `CARTOSKY_BOUNDARIES_MBTILES`.
 
 ## Pre-generate Loop WebP Frames
 
-The scheduler pre-generates loop frames automatically when `TWF_V3_LOOP_PREGENERATE_ENABLED=1`. To generate manually:
+The scheduler pre-generates loop frames automatically when `CARTOSKY_LOOP_PREGENERATE_ENABLED=1`. To generate manually:
 
 ```bash
 PYTHONPATH=backend .venv/bin/python backend/scripts/generate_loop_webp.py \
   --model hrrr \
   --run 20260223_14z \
-  --data-root ./data/v3 \
-  --output-root /tmp/twf_v3_loop_webp_cache \
+    --data-root ./data \
+    --output-root ./data/loop_cache \
   --workers 6
 ```
 
 Optional flags: `--var tmp2m` (single variable), `--overwrite`, `--quality`, `--max-dim`.
 
-By default files are written to `TWF_V3_LOOP_CACHE_ROOT` so `published/` can remain read-only.
+By default files are written to `CARTOSKY_LOOP_CACHE_ROOT` so `published/` can remain read-only.

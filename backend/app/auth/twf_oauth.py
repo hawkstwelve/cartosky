@@ -37,12 +37,12 @@ def _env(*names: str, default: Optional[str] = None) -> str:
     raise RuntimeError(f"Missing required env var: {primary}{alias_suffix}")
 
 
-FORUMS_BASE = _env("CARTOSKY_FORUMS_BASE", "TWF_BASE")
-CLIENT_ID = _env("CARTOSKY_FORUMS_CLIENT_ID", "TWF_CLIENT_ID")
-CLIENT_SECRET = _env("CARTOSKY_FORUMS_CLIENT_SECRET", "TWF_CLIENT_SECRET")
-REDIRECT_URI = _env("CARTOSKY_FORUMS_REDIRECT_URI", "TWF_REDIRECT_URI")
+FORUMS_BASE = _env("TWF_BASE")
+CLIENT_ID = _env("TWF_CLIENT_ID")
+CLIENT_SECRET = _env("TWF_CLIENT_SECRET")
+REDIRECT_URI = _env("TWF_REDIRECT_URI")
 def _resolved_scopes() -> str:
-    raw = _env("CARTOSKY_FORUMS_SCOPES", "TWF_SCOPES", default="profile").strip()
+    raw = _env("TWF_SCOPES", default="profile").strip()
     parts = [p for p in raw.split() if p]
     if "forums_posts" not in parts:
         parts.append("forums_posts")
@@ -52,7 +52,7 @@ SCOPES = _resolved_scopes()
 FRONTEND_RETURN = _env("FRONTEND_RETURN")
 
 SESSION_COOKIE_NAME = _env("SESSION_COOKIE_NAME", default="cartosky_session")
-OAUTH_COOKIE_NAME = _env("OAUTH_COOKIE_NAME", default="cartosky_forums_oauth")
+OAUTH_COOKIE_NAME = _env("OAUTH_COOKIE_NAME", default="cartosky_twf_oauth")
 
 TOKEN_DB_PATH = _env("TOKEN_DB_PATH")
 TOKEN_ENC_KEY = _env("TOKEN_ENC_KEY")
@@ -63,32 +63,27 @@ LEGACY_SESSIONS_TABLE = "twf_sessions"
 AUTHORIZE_ENDPOINT = f"{FORUMS_BASE.rstrip('/')}/oauth/authorize/"
 TOKEN_ENDPOINT = f"{FORUMS_BASE.rstrip('/')}/oauth/token/"
 API_ME_ENDPOINT = _env(
-    "CARTOSKY_FORUMS_ME_ENDPOINT",
     "TWF_ME_ENDPOINT",
     default=f"{FORUMS_BASE.rstrip('/')}/api/index.php?/core/me",
 ).strip()
 API_CREATE_TOPIC = _env(
-    "CARTOSKY_FORUMS_TOPICS_ENDPOINT",
     "TWF_TOPICS_ENDPOINT",
     default=f"{FORUMS_BASE.rstrip('/')}/api/index.php?/forums/topics",
 ).strip()
 API_LIST_TOPICS = _env(
-    "CARTOSKY_FORUMS_LIST_TOPICS_ENDPOINT",
     "TWF_LIST_TOPICS_ENDPOINT",
     default=f"{FORUMS_BASE.rstrip('/')}/api/index.php?/forums/topics",
 ).strip()
 API_LIST_FORUMS = _env(
-    "CARTOSKY_FORUMS_FORUMS_ENDPOINT",
     "TWF_FORUMS_ENDPOINT",
     default=f"{FORUMS_BASE.rstrip('/')}/api/index.php?/forums/forums",
 ).strip()
 API_CREATE_POST = _env(
-    "CARTOSKY_FORUMS_POSTS_ENDPOINT",
     "TWF_POSTS_ENDPOINT",
     default=f"{FORUMS_BASE.rstrip('/')}/api/index.php?/forums/posts",
 ).strip()
 
-FORUMS_API_KEY = _env("CARTOSKY_FORUMS_API_KEY", "TWF_API_KEY", default="").strip()
+FORUMS_API_KEY = _env("TWF_API_KEY", default="").strip()
 
 def _auth_headers(access_token: str) -> dict[str, str]:
     headers = {"Authorization": f"Bearer {access_token}"}

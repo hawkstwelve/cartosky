@@ -8,7 +8,7 @@ This document is execution-gated (not calendar-based).
 
 ## Feature Flag and Rollback
 
-- Single top-level flag: `TWF_V3_WEBP_DEFAULT_ENABLED`.
+- Single top-level flag: `VITE_CARTOSKY_WEBP_DEFAULT_ENABLED`.
 - Flag **on**: enable state machine routing (`webp_tier0 | webp_tier1 | tiles`), WebP tier manifests, WebP playback engine, and mode telemetry.
 - Flag **off**: force current tile-first behavior; app functions without loop endpoints or tier manifests.
 - Telemetry for this feature is also gated by the same flag.
