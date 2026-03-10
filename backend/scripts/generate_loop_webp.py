@@ -30,6 +30,7 @@ from app.services.builder.colorize import float_to_rgba
 from app.services.render_resampling import (
     compute_loop_output_shape,
     high_quality_loop_resampling,
+    loop_fixed_width_for_tier,
     rasterio_resampling_for_loop,
     use_value_render_for_variable,
     variable_color_map_id,
@@ -137,13 +138,19 @@ def convert_job(job: Job, model_id: str, quality: int, max_dim: int) -> tuple[Jo
         with rasterio.open(job.cog_path) as ds:
             src_h = int(ds.height)
             src_w = int(ds.width)
+            fixed_width = loop_fixed_width_for_tier(
+                model_id=model_id,
+                var_key=job.variable,
+                tier=0,
+                default_width=max_dim,
+            )
             out_h, out_w, _fixed = compute_loop_output_shape(
                 model_id=model_id,
                 var_key=job.variable,
                 src_h=src_h,
                 src_w=src_w,
                 max_dim=max_dim,
-                fixed_width=max_dim,
+                fixed_width=fixed_width,
             )
             if out_h <= 0 or out_w <= 0:
                 return (job, False, "invalid source dimensions")

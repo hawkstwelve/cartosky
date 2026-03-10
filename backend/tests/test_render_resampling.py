@@ -109,6 +109,40 @@ def test_targeted_accumulations_use_value_render_for_hrrr_nam_and_nbm(monkeypatc
             assert render_resampling.render_resampling_name(model_id=model_id, var_key=var_key) == "bilinear"
 
 
+def test_targeted_accumulations_use_larger_loop_widths(monkeypatch):
+    _set_capabilities(
+        monkeypatch,
+        {
+            "snowfall_total": SimpleNamespace(kind="continuous", color_map_id="snowfall_total"),
+            "snowfall_kuchera_total": SimpleNamespace(kind="continuous", color_map_id="snowfall_total"),
+            "precip_total": SimpleNamespace(kind="continuous", color_map_id="precip_total"),
+            "tmp2m": SimpleNamespace(kind="continuous", color_map_id="tmp2m"),
+        },
+    )
+
+    for model_id in ("hrrr", "nam", "nbm"):
+        for var_key in ("snowfall_total", "snowfall_kuchera_total", "precip_total"):
+            assert render_resampling.loop_fixed_width_for_tier(
+                model_id=model_id,
+                var_key=var_key,
+                tier=0,
+                default_width=1600,
+            ) == 2300
+            assert render_resampling.loop_fixed_width_for_tier(
+                model_id=model_id,
+                var_key=var_key,
+                tier=1,
+                default_width=2400,
+            ) == 3400
+
+    assert render_resampling.loop_fixed_width_for_tier(
+        model_id="gfs",
+        var_key="tmp2m",
+        tier=0,
+        default_width=1600,
+    ) == 1600
+
+
 def test_loop_fixed_size_applied_for_all_continuous_models(monkeypatch):
     _set_capabilities(
         monkeypatch,

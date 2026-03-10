@@ -26,6 +26,7 @@ from app.services.render_resampling import (
     compute_loop_output_shape,
     high_quality_loop_resampling,
     log_fixed_loop_size_once,
+    loop_fixed_width_for_tier,
     rasterio_resampling_for_loop,
     use_value_render_for_variable,
     variable_kind,
@@ -1105,13 +1106,19 @@ def _convert_rgba_cog_to_loop_webp(
         with rasterio.open(cog_path) as ds:
             src_h = int(ds.height)
             src_w = int(ds.width)
+            resolved_fixed_width = loop_fixed_width_for_tier(
+                model_id=model_id,
+                var_key=var_key,
+                tier=tier,
+                default_width=fixed_width,
+            )
             out_h, out_w, fixed_applied = compute_loop_output_shape(
                 model_id=model_id,
                 var_key=var_key,
                 src_h=src_h,
                 src_w=src_w,
                 max_dim=max_dim,
-                fixed_width=fixed_width,
+                fixed_width=resolved_fixed_width,
             )
             if out_h <= 0 or out_w <= 0:
                 return False, mode_used

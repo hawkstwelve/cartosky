@@ -42,6 +42,7 @@ from .services.render_resampling import (
     display_resampling_override,
     high_quality_loop_resampling,
     log_fixed_loop_size_once,
+    loop_fixed_width_for_tier,
     rasterio_resampling_for_loop,
     use_value_render_for_variable,
     variable_kind,
@@ -2217,7 +2218,12 @@ def _ensure_loop_webp(
         return False
 
     max_dim_cfg = max(1, int(tier_cfg.get("max_dim", LOOP_WEBP_MAX_DIM)))
-    fixed_w_cfg = max(1, int(tier_cfg.get("fixed_w", max_dim_cfg)))
+    fixed_w_cfg = loop_fixed_width_for_tier(
+        model_id=model_id,
+        var_key=var_key,
+        tier=tier,
+        default_width=int(tier_cfg.get("fixed_w", max_dim_cfg)),
+    )
     quality_cfg = max(1, min(100, int(tier_cfg.get("quality", LOOP_WEBP_QUALITY))))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2295,7 +2301,12 @@ def _render_loop_webp_bytes(
         return None
 
     max_dim_cfg = max(1, int(tier_cfg.get("max_dim", LOOP_WEBP_MAX_DIM)))
-    fixed_w_cfg = max(1, int(tier_cfg.get("fixed_w", max_dim_cfg)))
+    fixed_w_cfg = loop_fixed_width_for_tier(
+        model_id=model_id,
+        var_key=var_key,
+        tier=tier,
+        default_width=int(tier_cfg.get("fixed_w", max_dim_cfg)),
+    )
     quality_cfg = max(1, min(100, int(tier_cfg.get("quality", LOOP_WEBP_QUALITY))))
 
     try:

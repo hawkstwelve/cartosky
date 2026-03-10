@@ -23,6 +23,10 @@ _VALUE_RENDER_MIN_MODEL_KM = 10.0
 _VALUE_RENDER_MODEL_ALLOWLIST = {"gfs"}
 _TARGETED_VALUE_RENDER_MODELS = {"hrrr", "nam", "nbm"}
 _TARGETED_VALUE_RENDER_VARS = {"snowfall_total", "snowfall_kuchera_total", "precip_total"}
+_TARGETED_LOOP_FIXED_WIDTHS: dict[int, int] = {
+    0: 2300,
+    1: 3400,
+}
 _MODEL_GRID_KM_FALLBACK: dict[str, float] = {
     "gfs": 25.0,
 }
@@ -266,6 +270,27 @@ def compute_loop_output_shape(
     out_h = max(1, int(round(src_h * scale)))
     out_w = max(1, int(round(src_w * scale)))
     return out_h, out_w, False
+
+
+def loop_fixed_width_for_tier(
+    *,
+    model_id: str,
+    var_key: str,
+    tier: int,
+    default_width: int,
+) -> int:
+    model_norm = str(model_id or "").strip().lower()
+    var_norm = str(var_key or "").strip().lower()
+    try:
+        tier_int = int(tier)
+    except (TypeError, ValueError):
+        tier_int = 0
+
+    if model_norm in _TARGETED_VALUE_RENDER_MODELS and var_norm in _TARGETED_VALUE_RENDER_VARS:
+        override = _TARGETED_LOOP_FIXED_WIDTHS.get(tier_int)
+        if override is not None:
+            return max(1, int(override))
+    return max(1, int(default_width))
 
 
 def log_fixed_loop_size_once(
