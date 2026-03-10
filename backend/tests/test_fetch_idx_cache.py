@@ -501,3 +501,82 @@ def test_inventory_cache_fetch_error_does_not_poison_cache(monkeypatch: pytest.M
     metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
     assert metrics["counters"].get("idx_cache_error", 0) >= 1
     assert metrics["counters"].get("idx_cache_store", 0) == 1
+
+
+def test_invalid_cached_subset_is_deleted_and_refetched(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    pattern = ":TMP:2 m above ground:"
+    cached_subset = tmp_path / "cached_invalid.grib2"
+    cached_subset.write_bytes(b"not-grib")
+
+    class _FakeHerbie:
+        download_calls = 0
+
+        def __init__(self, date: datetime, **kwargs):
+            del date, kwargs
+            self.idx = "https://aws.example/gfs.idx"
+            self.grib = "https://aws.example/gfs.grib2"
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([{"search_this": pattern, "start_byte": 0, "end_byte": 99}])
+
+        def get_localFilePath(self, search_pattern: str) -> str:
+            assert search_pattern == pattern
+            return str(cached_subset)
+
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False):
+            del errors, overwrite
+            assert search_pattern == pattern
+            type(self).download_calls += 1
+            cached_subset.write_bytes(b"grib")
+            return str(cached_subset)
+
+    class _FakeDataset:
+        crs = "EPSG:4326"
+        transform = fetch_module.rasterio.transform.Affine.identity()
+        nodata = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        def read(self, _band: int, masked: bool = True):
+            del masked
+            return np.ma.array([[1.0]], mask=[[False]], dtype=np.float32)
+
+        def tags(self, *_args):
+            return {}
+
+    def _fake_rasterio_open(path: str | Path):
+        payload = Path(path).read_bytes()
+        if payload != b"grib":
+            raise fetch_module.rasterio.errors.RasterioIOError(
+                f"{path!s} not recognized as being in a supported file format."
+            )
+        return _FakeDataset()
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    monkeypatch.setattr(fetch_module, "_download_subset_with_inventory_byte_range", lambda *args, **kwargs: None)
+    monkeypatch.setattr(fetch_module.rasterio, "open", _fake_rasterio_open)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "aws")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+    monkeypatch.setenv("TWF_HERBIE_RETRY_SLEEP_SECONDS", "0")
+    monkeypatch.setenv("TWF_V3_GRIB_DISK_CACHE_LOCK", "1")
+
+    data, crs, transform = fetch_module.fetch_variable(
+        model_id="gfs",
+        product="pgrb2.0p25",
+        search_pattern=pattern,
+        run_date=datetime(2026, 3, 10, 12, 0),
+        fh=57,
+    )
+
+    assert np.allclose(data, np.array([[1.0]], dtype=np.float32))
+    assert crs == "EPSG:4326"
+    assert transform == fetch_module.rasterio.transform.Affine.identity()
+    assert _FakeHerbie.download_calls == 1
+    assert cached_subset.read_bytes() == b"grib"

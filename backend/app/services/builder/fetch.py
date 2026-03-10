@@ -1074,6 +1074,11 @@ def _is_missing_file_error(exc: Exception) -> bool:
     return "no such file or directory" in text
 
 
+def _is_unsupported_file_format_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "not recognized as being in a supported file format" in text
+
+
 def _is_grib_not_found_error(exc: Exception) -> bool:
     text = str(exc).lower()
     return "grib2 file not found" in text
@@ -1710,6 +1715,7 @@ def fetch_variable(
     herbie_kwargs: dict[str, Any] | None = None,
     bundle_fetch_cache: BundleFetchCache | None = None,
     return_meta: bool = False,
+    _retry_on_invalid_subset: bool = True,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]:
     """Fetch a single GRIB variable via Herbie and return its data.
 
@@ -2178,6 +2184,31 @@ def fetch_variable(
                 f"Herbie subset file disappeared before open for {model_id} fh{fh:03d} "
                 f"pattern={search_pattern!r} path={grib_path}"
             ) from exc
+        if _retry_on_invalid_subset and _is_unsupported_file_format_error(exc):
+            subset_path = Path(grib_path)
+            try:
+                if subset_path.exists():
+                    subset_path.unlink()
+                    logger.warning(
+                        "Deleted unreadable cached GRIB subset and retrying (%s fh%03d %s): %s",
+                        model_id,
+                        fh,
+                        search_pattern,
+                        subset_path,
+                    )
+                    return fetch_variable(
+                        model_id=model_id,
+                        product=product,
+                        search_pattern=search_pattern,
+                        run_date=run_date,
+                        fh=fh,
+                        herbie_kwargs=herbie_kwargs,
+                        bundle_fetch_cache=None,
+                        return_meta=return_meta,
+                        _retry_on_invalid_subset=False,
+                    )
+            except OSError:
+                pass
         raise
 
     logger.debug(
