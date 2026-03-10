@@ -78,10 +78,11 @@ def test_kuchera_apcp_tries_exact_pattern_first(monkeypatch) -> None:
     ):
         del model_id, product, run_date, fh, herbie_kwargs
         pattern = str(search_pattern)
+        pattern_no_anchor = pattern[:-1] if pattern.endswith("$") else pattern
         calls.append(pattern)
-        if pattern == exact_pattern:
+        if pattern == exact_pattern or pattern_no_anchor == exact_pattern.rstrip("$"):
             data = np.full((2, 2), 1.25, dtype=np.float32)
-            meta = {"inventory_line": exact_pattern, "search_pattern": pattern}
+            meta = {"inventory_line": pattern_no_anchor, "search_pattern": pattern}
             return (data, crs, transform, meta) if return_meta else (data, crs, transform)
         if pattern == _APCP_SELECTOR_REGEX:
             raise AssertionError("selector regex fallback should not be used when exact APCP succeeds")
@@ -139,8 +140,9 @@ def test_kuchera_apcp_falls_back_once_when_exact_has_no_inventory(monkeypatch, c
     ):
         del model_id, product, run_date, fh, herbie_kwargs
         pattern = str(search_pattern)
+        pattern_no_anchor = pattern[:-1] if pattern.endswith("$") else pattern
         calls.append(pattern)
-        if pattern == exact_pattern:
+        if pattern == exact_pattern or pattern_no_anchor == exact_pattern.rstrip("$"):
             # Force selector fallback: exact payload with empty inventory metadata.
             data = np.full((2, 2), 1.0, dtype=np.float32)
             meta = {"inventory_line": "", "search_pattern": pattern}

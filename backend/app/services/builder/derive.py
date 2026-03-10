@@ -48,7 +48,14 @@ _KUCHERA_RATIO_CLAMP_MAX = np.float32(30.0)
 _KUCHERA_INCREMENTAL_WINDOW_DEFAULT = 6
 _KUCHERA_SIMPLIFIED_PROFILE_MAX_LEVELS = 4
 _KUCHERA_SFC_PRESSURE_MARGIN_PA_DEFAULT = np.float32(2500.0)
-_APCP_ACCUM_WINDOW_RE = re.compile(r":APCP:surface:(\d+)-(\d+)\s*hour acc(?:\s*fcst|@\([^)]*\))", re.IGNORECASE)
+_APCP_ACCUM_HOUR_WINDOW_RE = re.compile(
+    r":APCP:surface:(\d+)-(\d+)\s*hour acc(?:\s*fcst|@\([^)]*\))",
+    re.IGNORECASE,
+)
+_APCP_ACCUM_DAY_WINDOW_RE = re.compile(
+    r":APCP:surface:(\d+)-(\d+)\s*day acc(?:\s*fcst|@\([^)]*\))",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -618,17 +625,44 @@ def _resolve_component_cache_identity(model_plugin: Any, var_key: str) -> tuple[
 def _parse_apcp_accum_window_hours(inventory_line: str | None) -> tuple[int, int] | None:
     if not inventory_line:
         return None
-    match = _APCP_ACCUM_WINDOW_RE.search(str(inventory_line))
-    if match is None:
-        return None
-    try:
-        start_hour = int(match.group(1))
-        end_hour = int(match.group(2))
-    except (TypeError, ValueError):
-        return None
+    line = str(inventory_line)
+    match = _APCP_ACCUM_HOUR_WINDOW_RE.search(line)
+    if match is not None:
+        try:
+            start_hour = int(match.group(1))
+            end_hour = int(match.group(2))
+        except (TypeError, ValueError):
+            return None
+    else:
+        match = _APCP_ACCUM_DAY_WINDOW_RE.search(line)
+        if match is None:
+            return None
+        try:
+            start_hour = int(match.group(1)) * 24
+            end_hour = int(match.group(2)) * 24
+        except (TypeError, ValueError):
+            return None
     if start_hour < 0 or end_hour < 0:
         return None
     return start_hour, end_hour
+
+
+def _is_probabilistic_apcp_inventory_line(inventory_line: str | None) -> bool:
+    line = str(inventory_line or "").strip().lower()
+    if not line:
+        return False
+    return "probability" in line or ":prob " in line
+
+
+def _apcp_inventory_search_pattern(inventory_line: str | None) -> str:
+    line = str(inventory_line or "").strip()
+    marker = line.find(":APCP:")
+    if marker < 0:
+        return ""
+    message = line[marker:]
+    if message.endswith("$"):
+        return message
+    return message + "$"
 
 
 def _classify_apcp_mode_for_kuchera(
@@ -637,21 +671,27 @@ def _classify_apcp_mode_for_kuchera(
     step_fh: int,
     expected_start_fh: int,
 ) -> str:
+    if _is_probabilistic_apcp_inventory_line(inventory_line):
+        return "invalid"
     window = _parse_apcp_accum_window_hours(inventory_line)
     if window is None:
-        return "unknown"
+        return "invalid"
     start_hour, end_hour = window
     if end_hour != int(step_fh):
-        return "unknown"
+        return "invalid"
+    if start_hour > int(expected_start_fh):
+        return "invalid"
     if start_hour == int(expected_start_fh):
-        return "step"
+        return "exact_step"
     if start_hour == 0 and int(expected_start_fh) > 0:
-        return "cumulative"
-    return "unknown"
+        return "cumulative_from_zero"
+    if 0 <= start_hour < int(expected_start_fh):
+        return "overlap_window"
+    return "invalid"
 
 
 def _apcp_exact_window_pattern(start_fh: int, end_fh: int) -> str:
-    return f":APCP:surface:{int(start_fh)}-{int(end_fh)} hour acc fcst:"
+    return f":APCP:surface:{int(start_fh)}-{int(end_fh)} hour acc fcst:$"
 
 
 def _kuchera_primary_herbie_priority() -> str:
@@ -685,47 +725,51 @@ def _kuchera_inventory_lines(
         return []
 
 
-def _kuchera_inventory_contains_exact_guess(
-    *,
-    inventory_lines: list[str],
-    exact_guess: str,
-) -> bool:
-    needle = " ".join(str(exact_guess).split()).strip()
-    if not needle:
-        return False
-    for line in inventory_lines:
-        if needle in str(line):
-            return True
-    return False
-
-
 def _kuchera_select_apcp_window_from_inventory(
     *,
     inventory_lines: list[str],
     step_fh: int,
+    expected_start_fh: int,
 ) -> dict[str, Any] | None:
-    best: tuple[int, int, str] | None = None
+    exact: dict[str, Any] | None = None
+    cumulative: dict[str, Any] | None = None
+    overlap: dict[str, Any] | None = None
     for line in inventory_lines:
         window = _parse_apcp_accum_window_hours(line)
         if window is None:
             continue
         start_hour, end_hour = window
-        if end_hour != int(step_fh):
+        mode = _classify_apcp_mode_for_kuchera(
+            inventory_line=line,
+            step_fh=step_fh,
+            expected_start_fh=expected_start_fh,
+        )
+        if mode == "invalid":
             continue
-        if best is None or start_hour > best[0]:
-            best = (start_hour, end_hour, line)
+        candidate = {
+            "start_hour": int(start_hour),
+            "end_hour": int(end_hour),
+            "selected_window": f"{int(start_hour)}-{int(end_hour)}",
+            "inventory_line": str(line),
+            "search_pattern": _apcp_inventory_search_pattern(line),
+            "mode": mode,
+        }
+        if mode == "exact_step":
+            exact = candidate
+            break
+        if mode == "cumulative_from_zero":
+            cumulative = candidate
+            continue
+        if mode == "overlap_window" and (
+            overlap is None or int(start_hour) > int(overlap["start_hour"])
+        ):
+            overlap = candidate
 
-    if best is None:
-        return None
-
-    start_hour, end_hour, inventory_line = best
-    return {
-        "start_hour": int(start_hour),
-        "end_hour": int(end_hour),
-        "selected_window": f"{int(start_hour)}-{int(end_hour)}",
-        "inventory_line": str(inventory_line),
-        "search_pattern": _apcp_exact_window_pattern(start_hour, end_hour),
-    }
+    if exact is not None:
+        return exact
+    if cumulative is not None:
+        return cumulative
+    return overlap
 
 
 def _normalize_ptype_probability(data: np.ndarray) -> np.ndarray:
@@ -1164,6 +1208,8 @@ def _is_valid_apcp_exact_result(data: Any, meta: dict[str, Any] | None) -> bool:
     inventory_line = str((meta or {}).get("inventory_line", "")).strip()
     if not inventory_line:
         return False
+    if _is_probabilistic_apcp_inventory_line(inventory_line):
+        return False
     return True
 
 
@@ -1175,6 +1221,12 @@ class _ApcpCumDiffState:
     consumed_sum_crs: rasterio.crs.CRS | None = None
     consumed_sum_transform: rasterio.transform.Affine | None = None
     consumed_through_fh: int = 0
+    bucket_start_fh: int | None = None
+    bucket_cumulative_sum: np.ndarray | None = None
+    bucket_cumulative_valid: np.ndarray | None = None
+    bucket_cumulative_crs: rasterio.crs.CRS | None = None
+    bucket_cumulative_transform: rasterio.transform.Affine | None = None
+    bucket_through_fh: int = 0
 
 
 def _resolve_apcp_step_data(
@@ -1194,7 +1246,7 @@ def _resolve_apcp_step_data(
     target_grid_id: str,
     resampling: str,
     cum_diff_state: _ApcpCumDiffState,
-) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, bool]:
+) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, str]:
     """Resolve per-step APCP data with inventory-driven window selection.
 
     Tries, in order:
@@ -1206,7 +1258,7 @@ def _resolve_apcp_step_data(
     Detects cumulative (0-N hour) windows and differences against the
     previous step's cumulative value (tracked in *cum_diff_state*).
 
-    Returns ``(step_clean, apcp_valid, crs, transform, cumulative_mode_used)``
+    Returns ``(step_clean, apcp_valid, crs, transform, apcp_mode)``
     where
     *step_clean* is the cleaned per-step increment (>= 0, invalid → 0)
     and *apcp_valid* is the boolean validity mask.
@@ -1224,6 +1276,8 @@ def _resolve_apcp_step_data(
     selector_fallback_used = False
     selector_reason = "none"
     apcp_fetch_resolved = False
+    selected_mode = "invalid"
+    inventory_choice_mode = "invalid"
 
     # 1. Check FetchContext cache.
     if ctx is not None:
@@ -1253,13 +1307,22 @@ def _resolve_apcp_step_data(
                 )
                 cached = ctx.warp_cache.get(warped_cache_key)
                 if cached is not None:
-                    _record_warp_stat(ctx, "hits")
-                    apcp_step, step_crs, step_transform = cached
-                    apcp_meta = dict(ctx.warp_meta_cache.get(warped_cache_key, {}))
-                    apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
-                    selector_fallback_used = True
-                    selector_reason = "cache_hit"
-                    apcp_fetch_resolved = True
+                    cached_meta = dict(ctx.warp_meta_cache.get(warped_cache_key, {}))
+                    cached_line = str(cached_meta.get("inventory_line", "")).strip()
+                    cached_mode = _classify_apcp_mode_for_kuchera(
+                        inventory_line=cached_line,
+                        step_fh=step_fh,
+                        expected_start_fh=expected_start_fh,
+                    )
+                    if cached_mode != "invalid":
+                        _record_warp_stat(ctx, "hits")
+                        apcp_step, step_crs, step_transform = cached
+                        apcp_meta = cached_meta
+                        apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
+                        selector_fallback_used = True
+                        selector_reason = "cache_hit"
+                        selected_mode = cached_mode
+                        apcp_fetch_resolved = True
             else:
                 fetch_cache_key = (
                     str(model_id),
@@ -1273,13 +1336,22 @@ def _resolve_apcp_step_data(
                 )
                 cached = ctx.fetch_cache.get(fetch_cache_key)
                 if cached is not None:
-                    _record_fetch_stat(ctx, "hits")
-                    apcp_step, step_crs, step_transform = cached
-                    apcp_meta = dict(ctx.fetch_meta_cache.get(fetch_cache_key, {}))
-                    apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
-                    selector_fallback_used = True
-                    selector_reason = "cache_hit"
-                    apcp_fetch_resolved = True
+                    cached_meta = dict(ctx.fetch_meta_cache.get(fetch_cache_key, {}))
+                    cached_line = str(cached_meta.get("inventory_line", "")).strip()
+                    cached_mode = _classify_apcp_mode_for_kuchera(
+                        inventory_line=cached_line,
+                        step_fh=step_fh,
+                        expected_start_fh=expected_start_fh,
+                    )
+                    if cached_mode != "invalid":
+                        _record_fetch_stat(ctx, "hits")
+                        apcp_step, step_crs, step_transform = cached
+                        apcp_meta = cached_meta
+                        apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
+                        selector_fallback_used = True
+                        selector_reason = "cache_hit"
+                        selected_mode = cached_mode
+                        apcp_fetch_resolved = True
 
     # 2. Inventory-driven APCP selection.
     if not apcp_fetch_resolved:
@@ -1293,28 +1365,28 @@ def _resolve_apcp_step_data(
         if not inventory_lines:
             selector_fallback_used = True
             selector_reason = "inventory_empty"
-        elif _kuchera_inventory_contains_exact_guess(
-            inventory_lines=inventory_lines,
-            exact_guess=apcp_search_pattern,
-        ):
-            exact_guess_used = True
-            selected_window = f"{int(expected_start_fh)}-{int(step_fh)}"
-            selector_reason = "inventory_exact_match"
         else:
             inventory_choice = _kuchera_select_apcp_window_from_inventory(
                 inventory_lines=inventory_lines,
                 step_fh=step_fh,
+                expected_start_fh=expected_start_fh,
             )
             if inventory_choice is not None:
                 apcp_search_pattern = str(inventory_choice.get("search_pattern") or apcp_search_pattern)
                 selected_window = str(inventory_choice.get("selected_window") or selected_window)
-                inventory_selected = True
-                selector_reason = "inventory_best_window"
+                inventory_choice_mode = str(inventory_choice.get("mode") or inventory_choice_mode)
+                exact_guess_used = inventory_choice_mode == "exact_step"
+                inventory_selected = inventory_choice_mode != "exact_step"
+                selector_reason = (
+                    "inventory_exact_match"
+                    if inventory_choice_mode == "exact_step"
+                    else "inventory_best_window"
+                )
             else:
                 selector_fallback_used = True
                 selector_reason = "inventory_no_matching_window"
 
-        if not apcp_fetch_resolved and (exact_guess_used or inventory_selected):
+        if not apcp_fetch_resolved and (inventory_selected or exact_guess_used):
             try:
                 fetch_kwargs: dict[str, Any] = {}
                 if ctx is not None and getattr(ctx, "bundle_fetch_cache", None) is not None:
@@ -1351,6 +1423,7 @@ def _resolve_apcp_step_data(
                     step_crs = selected_crs
                     step_transform = selected_transform
                     apcp_meta = selected_meta
+                    selected_mode = inventory_choice_mode
                     apcp_fetch_resolved = True
                 else:
                     selector_fallback_used = True
@@ -1392,23 +1465,14 @@ def _resolve_apcp_step_data(
         step_fh=step_fh,
         expected_start_fh=expected_start_fh,
     )
-    if exact_guess_used and apcp_mode == "unknown":
-        logger.warning(
-            'KUCHERA_APCP exact pattern yielded unknown mode; forcing step '
-            'step_fh=%d expected_start_fh=%d pattern="%s" inv="%s"',
-            step_fh,
-            expected_start_fh,
-            apcp_search_pattern.replace('"', "'"),
-            apcp_inventory_line.replace('"', "'"),
-        )
-        apcp_mode = "step"
+    if apcp_mode == "invalid" and selected_mode != "invalid":
+        apcp_mode = selected_mode
 
     step_apcp_data = apcp_cum_clean
     apcp_valid = apcp_valid_raw
     fallback_differencing_applied = False
 
-    cumulative_mode_used = apcp_mode == "cumulative"
-    if cumulative_mode_used and cum_diff_state.consumed_sum is not None:
+    if apcp_mode == "cumulative_from_zero" and cum_diff_state.consumed_sum is not None:
         same_shape = apcp_cum_clean.shape == cum_diff_state.consumed_sum.shape
         same_crs = step_crs == cum_diff_state.consumed_sum_crs
         same_transform = step_transform == cum_diff_state.consumed_sum_transform
@@ -1429,6 +1493,50 @@ def _resolve_apcp_step_data(
             cum_diff_state.consumed_through_fh,
             step_fh,
         )
+    elif apcp_mode == "overlap_window":
+        bucket_state_available = (
+            cum_diff_state.bucket_start_fh is not None
+            and int(cum_diff_state.bucket_start_fh) == int(_parse_apcp_accum_window_hours(apcp_inventory_line)[0])
+            and int(cum_diff_state.bucket_through_fh) == int(expected_start_fh)
+            and cum_diff_state.bucket_cumulative_sum is not None
+        )
+        if bucket_state_available:
+            same_shape = apcp_cum_clean.shape == cum_diff_state.bucket_cumulative_sum.shape
+            same_crs = step_crs == cum_diff_state.bucket_cumulative_crs
+            same_transform = step_transform == cum_diff_state.bucket_cumulative_transform
+            if not (same_shape and same_crs and same_transform):
+                raise ValueError(
+                    f"KUCHERA_APCP overlap grid mismatch for fh{step_fh:03d}: "
+                    f"shape_match={same_shape} crs_match={same_crs} transform_match={same_transform}"
+                )
+            step_apcp_data = np.clip(
+                apcp_cum_clean - cum_diff_state.bucket_cumulative_sum,
+                0.0,
+                None,
+            ).astype(np.float32, copy=False)
+            if cum_diff_state.bucket_cumulative_valid is not None:
+                apcp_valid = apcp_valid_raw & cum_diff_state.bucket_cumulative_valid
+            fallback_differencing_applied = True
+            logger.info(
+                'KUCHERA_APCP_FALLBACK step_fh=%d prev_fh=%d reason="overlap %s"',
+                step_fh,
+                cum_diff_state.bucket_through_fh,
+                selected_window,
+            )
+        elif cum_diff_state.consumed_through_fh <= 0:
+            selector_reason = "history_gap_overlap_rebuild"
+        else:
+            raise ValueError(
+                f"KUCHERA_APCP overlap state missing for fh{step_fh:03d}: "
+                f"expected_start={expected_start_fh} selected_window={selected_window}"
+            )
+
+    log_mode = {
+        "exact_step": "step",
+        "cumulative_from_zero": "cumulative",
+        "overlap_window": "overlap",
+        "invalid": "invalid",
+    }.get(apcp_mode, apcp_mode)
 
     logger.info(
         'KUCHERA_APCP step_fh=%d product=%s inv="%s" mode=%s fallback=%s '
@@ -1437,7 +1545,7 @@ def _resolve_apcp_step_data(
         step_fh,
         apcp_product or product,
         apcp_inventory_line.replace('"', "'"),
-        apcp_mode,
+        log_mode,
         "true" if fallback_differencing_applied else "false",
         "true" if exact_guess_used else "false",
         "true" if inventory_selected else "false",
@@ -1471,10 +1579,27 @@ def _resolve_apcp_step_data(
         else:
             cum_diff_state.consumed_sum_valid = apcp_valid.copy()
 
+    window = _parse_apcp_accum_window_hours(apcp_inventory_line)
+    if window is not None and int(window[0]) > 0 and apcp_mode in {"exact_step", "overlap_window"}:
+        start_hour = int(window[0])
+        cum_diff_state.bucket_start_fh = start_hour
+        cum_diff_state.bucket_cumulative_sum = apcp_cum_clean.copy()
+        cum_diff_state.bucket_cumulative_valid = apcp_valid_raw.copy()
+        cum_diff_state.bucket_cumulative_crs = step_crs
+        cum_diff_state.bucket_cumulative_transform = step_transform
+        cum_diff_state.bucket_through_fh = int(step_fh)
+    elif apcp_mode == "cumulative_from_zero":
+        cum_diff_state.bucket_start_fh = None
+        cum_diff_state.bucket_cumulative_sum = None
+        cum_diff_state.bucket_cumulative_valid = None
+        cum_diff_state.bucket_cumulative_crs = None
+        cum_diff_state.bucket_cumulative_transform = None
+        cum_diff_state.bucket_through_fh = int(step_fh)
+
     cum_diff_state.consumed_through_fh = int(step_fh)
     assert step_crs is not None  # guaranteed set by steps 1/2/3 above
     assert step_transform is not None  # guaranteed set by steps 1/2/3 above
-    return step_apcp_data, apcp_valid, step_crs, step_transform, cumulative_mode_used
+    return step_apcp_data, apcp_valid, step_crs, step_transform, apcp_mode
 
 
 def _cumulative_apcp_loop(
@@ -1525,7 +1650,7 @@ def _cumulative_apcp_loop(
 
     for step_index, step_fh in enumerate(step_fhs):
         if use_inventory_resolution and cum_diff_state is not None:
-            step_data, apcp_valid, step_crs, step_transform, step_cumulative_mode = _resolve_apcp_step_data(
+            step_data, apcp_valid, step_crs, step_transform, step_apcp_mode = _resolve_apcp_step_data(
                 step_fh=step_fh,
                 step_index=step_index,
                 step_fhs=step_fhs,
@@ -1542,7 +1667,7 @@ def _cumulative_apcp_loop(
                 resampling=resampling,
                 cum_diff_state=cum_diff_state,
             )
-            cumulative_fallback_used = cumulative_fallback_used or bool(step_cumulative_mode)
+            cumulative_fallback_used = cumulative_fallback_used or step_apcp_mode != "exact_step"
         else:
             step_data, step_crs, step_transform = _fetch_step_component(
                 model_id=model_id,
@@ -1919,20 +2044,20 @@ def _derive_precip_total_cumulative(
         derive_component_target_grid, derive_component_resampling, model_id,
     )
 
-    # Prefetch all APCP steps in parallel.
-    _prefetch_components_parallel(
-        [
-            _PrefetchTask(
-                model_id=model_id, product=product, run_date=run_date,
-                fh=sfh, model_plugin=model_plugin, var_key=apcp_component,
-                warped=use_warped, target_region=target_region,
-                target_grid_id=target_grid_id, resampling=resampling,
-            )
-            for sfh in step_fhs
-        ],
-        ctx,
-        label=f"precip_total fh{fh:03d}",
-    )
+    if not use_inventory_resolution:
+        _prefetch_components_parallel(
+            [
+                _PrefetchTask(
+                    model_id=model_id, product=product, run_date=run_date,
+                    fh=sfh, model_plugin=model_plugin, var_key=apcp_component,
+                    warped=use_warped, target_region=target_region,
+                    target_grid_id=target_grid_id, resampling=resampling,
+                )
+                for sfh in step_fhs
+            ],
+            ctx,
+            label=f"precip_total fh{fh:03d}",
+        )
 
     def _process_step(
         step_fh: int,
@@ -2350,7 +2475,7 @@ def _derive_snowfall_kuchera_total_cumulative(
         steps_processed = 0
 
         for local_step_index, step_fh in enumerate(subset_step_fhs):
-            step_apcp_data, apcp_valid, step_crs, step_transform, step_cumulative_mode = _resolve_apcp_step_data(
+            step_apcp_data, apcp_valid, step_crs, step_transform, step_apcp_mode = _resolve_apcp_step_data(
                 step_fh=step_fh,
                 step_index=start_index + local_step_index,
                 step_fhs=step_fhs,
@@ -2367,15 +2492,16 @@ def _derive_snowfall_kuchera_total_cumulative(
                 resampling=resampling,
                 cum_diff_state=cum_diff_state,
             )
-            apcp_cumulative_fallback_used = apcp_cumulative_fallback_used or bool(step_cumulative_mode)
+            apcp_cumulative_fallback_used = apcp_cumulative_fallback_used or step_apcp_mode != "exact_step"
             steps_processed += 1
             if int(step_fh) == int(fh):
                 current_step_fetch_counts["apcp"] = current_step_fetch_counts.get("apcp", 0) + 1
 
             # Incremental reuse only has APCP differencing state for the current
-            # subset. Any 0-N cumulative window within that subset needs a full
-            # history rebuild to avoid subtracting against a stale baseline.
-            if step_cumulative_mode and start_index > 0:
+            # subset. Any history-dependent APCP window within that subset
+            # needs a full history rebuild to avoid subtracting against a stale
+            # baseline or missing intra-bucket state.
+            if step_apcp_mode != "exact_step" and start_index > 0:
                 requires_full_history_rebuild = True
                 rebuild_trigger_step_fh = int(step_fh)
                 break

@@ -95,6 +95,7 @@ def _make_fake_fetch(
         pattern = str(search_pattern)
         lookup = {
             exact_apcp_pattern: apcp,
+            f"{exact_apcp_pattern}$": apcp,
             ":TMP:850 mb:": temp_850,
             ":TMP:700 mb:": temp_700,
             ":TMP:600 mb:": temp_600,
@@ -359,6 +360,7 @@ def test_sfc_pressure_mask_graceful_fallback_on_fetch_failure(monkeypatch) -> No
             raise RuntimeError("surface pressure unavailable")
         lookup = {
             exact_apcp_pattern: apcp,
+            f"{exact_apcp_pattern}$": apcp,
             ":TMP:850 mb:": temp_850,
             ":TMP:700 mb:": temp_700,
             ":TMP:600 mb:": temp_600,

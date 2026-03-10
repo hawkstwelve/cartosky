@@ -88,14 +88,16 @@ def _run_case(
     ):
         del model_id, product, run_date, fh, herbie_kwargs
         pattern = str(search_pattern)
+        pattern_no_anchor = pattern[:-1] if pattern.endswith("$") else pattern
 
         if pattern == ":TMP:850 mb:":
             meta = {"inventory_line": "", "search_pattern": pattern}
             return (tmp850, crs, transform, meta) if return_meta else (tmp850, crs, transform)
 
-        if pattern in apcp_by_pattern:
-            data = apcp_by_pattern[pattern]
-            meta = {"inventory_line": pattern, "search_pattern": pattern}
+        if pattern in apcp_by_pattern or pattern_no_anchor in apcp_by_pattern:
+            data = apcp_by_pattern.get(pattern, apcp_by_pattern[pattern_no_anchor])
+            inventory_line = pattern_no_anchor if pattern_no_anchor in apcp_by_pattern else pattern
+            meta = {"inventory_line": inventory_line, "search_pattern": pattern}
             return (data, crs, transform, meta) if return_meta else (data, crs, transform)
 
         if pattern == _APCP_SELECTOR_REGEX:

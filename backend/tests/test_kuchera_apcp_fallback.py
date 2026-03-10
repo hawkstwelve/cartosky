@@ -206,22 +206,23 @@ def test_kuchera_apcp_interval_step_is_used_directly(monkeypatch) -> None:
             False,
             1,
         ),
-        (
-            "nam",
-            [29, 30],
-            {
-                29: [":APCP:surface:0-29 hour acc fcst:"],
-                30: [":APCP:surface:0-30 hour acc fcst:", ":APCP:surface:27-30 hour acc fcst:"],
-            },
-            {
-                ":APCP:surface:0-29 hour acc fcst:": np.full((2, 2), 5.0, dtype=np.float32),
-                ":APCP:surface:27-30 hour acc fcst:": np.full((2, 2), 1.0, dtype=np.float32),
-            },
-            ["step_fh=30", "exact_guess_used=false", "inventory_selected=true", 'selected_window="27-30"'],
-            ":APCP:surface:29-30 hour acc fcst:",
-            False,
-            2,
-        ),
+            (
+                "nam",
+                [29, 30],
+                {
+                    29: [":APCP:surface:0-29 hour acc fcst:"],
+                    30: [":APCP:surface:0-30 hour acc fcst:", ":APCP:surface:27-30 hour acc fcst:"],
+                },
+                {
+                    ":APCP:surface:0-29 hour acc fcst:": np.full((2, 2), 5.0, dtype=np.float32),
+                    ":APCP:surface:0-30 hour acc fcst:": np.full((2, 2), 6.0, dtype=np.float32),
+                    ":APCP:surface:27-30 hour acc fcst:": np.full((2, 2), 1.0, dtype=np.float32),
+                },
+                ["step_fh=30", "exact_guess_used=false", "inventory_selected=true", 'selected_window="0-30"'],
+                ":APCP:surface:29-30 hour acc fcst:",
+                False,
+                2,
+            ),
         (
             "gfs",
             [1],
@@ -281,10 +282,12 @@ def test_kuchera_inventory_driven_apcp_selection(
     def _fake_fetch_variable(*, model_id, product, search_pattern, run_date, fh, herbie_kwargs=None, return_meta=False):
         del model_id, product, run_date, herbie_kwargs
         pattern = str(search_pattern)
+        pattern_no_anchor = pattern[:-1] if pattern.endswith("$") else pattern
         fetch_patterns.append(pattern)
-        if pattern in apcp_pattern_data:
-            data = apcp_pattern_data[pattern]
-            meta = {"inventory_line": pattern, "search_pattern": pattern, "fh": int(fh)}
+        if pattern in apcp_pattern_data or pattern_no_anchor in apcp_pattern_data:
+            data = apcp_pattern_data.get(pattern, apcp_pattern_data[pattern_no_anchor])
+            inventory_line = pattern_no_anchor if pattern_no_anchor in apcp_pattern_data else pattern
+            meta = {"inventory_line": inventory_line, "search_pattern": pattern, "fh": int(fh)}
         elif pattern == _APCP_SELECTOR_REGEX:
             data = np.full((2, 2), 0.8, dtype=np.float32)
             meta = {"inventory_line": ":APCP:surface:0-1 hour acc fcst:", "search_pattern": pattern, "fh": int(fh)}

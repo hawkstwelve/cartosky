@@ -103,7 +103,7 @@ def test_kuchera_ptype_gate_masks_rain_only_step(monkeypatch) -> None:
     ):
         del model_id, product, run_date, fh, herbie_kwargs
         pattern = str(search_pattern)
-        if pattern == exact_apcp_pattern:
+        if pattern == exact_apcp_pattern or pattern == f"{exact_apcp_pattern}$":
             meta = {"inventory_line": exact_apcp_pattern, "search_pattern": pattern}
             return (apcp, crs, transform, meta) if return_meta else (apcp, crs, transform)
         if pattern == ":TMP:850 mb:":
