@@ -31,42 +31,96 @@ function formatCount(value: number | null | undefined): string {
   return new Intl.NumberFormat("en-US").format(Number(value));
 }
 
+type MetricStatusTone = "good" | "warning" | "bad" | "unknown";
+
+function getMetricStatus(metric?: PerfMetricSummary): {
+  tone: MetricStatusTone;
+  label: string;
+  accentClassName: string;
+  iconClassName: string;
+  badgeClassName: string;
+} {
+  const target = metric?.target_ms ?? null;
+  const p95 = metric?.p95_ms ?? null;
+
+  if (target === null || p95 === null || target <= 0) {
+    return {
+      tone: "unknown",
+      label: "Target unavailable",
+      accentClassName: "text-[#9dd5bf]",
+      iconClassName: "border-white/10 bg-white/[0.05] text-white/76",
+      badgeClassName: "border-white/10 bg-white/[0.04] text-white/54",
+    };
+  }
+
+  const ratio = p95 / target;
+
+  if (ratio <= 0.8) {
+    return {
+      tone: "good",
+      label: `Well under target ${formatMs(target)}`,
+      accentClassName: "text-emerald-300",
+      iconClassName: "border-emerald-400/25 bg-emerald-500/12 text-emerald-100",
+      badgeClassName: "border-emerald-400/25 bg-emerald-500/12 text-emerald-100",
+    };
+  }
+
+  if (ratio <= 1) {
+    return {
+      tone: "warning",
+      label: `Near target ${formatMs(target)}`,
+      accentClassName: "text-amber-300",
+      iconClassName: "border-amber-400/25 bg-amber-500/12 text-amber-100",
+      badgeClassName: "border-amber-400/25 bg-amber-500/12 text-amber-100",
+    };
+  }
+
+  return {
+    tone: "bad",
+    label: `Over target ${formatMs(target)}`,
+    accentClassName: "text-rose-300",
+    iconClassName: "border-rose-400/25 bg-rose-500/12 text-rose-100",
+    badgeClassName: "border-rose-400/25 bg-rose-500/12 text-rose-100",
+  };
+}
+
 function MetricCard(props: {
   title: string;
   icon: ComponentType<{ className?: string }>;
   metric?: PerfMetricSummary;
 }) {
   const { title, icon: Icon, metric } = props;
-  const target = metric?.target_ms ?? null;
+  const status = getMetricStatus(metric);
   const p95 = metric?.p95_ms ?? null;
-  const withinTarget = target !== null && p95 !== null ? p95 <= target : null;
+  const cardClassName =
+    status.tone === "good"
+      ? "border-emerald-400/20 bg-[linear-gradient(180deg,rgba(16,185,129,0.09),rgba(0,0,0,0.28))]"
+      : status.tone === "warning"
+        ? "border-amber-400/20 bg-[linear-gradient(180deg,rgba(245,158,11,0.09),rgba(0,0,0,0.28))]"
+        : status.tone === "bad"
+          ? "border-rose-400/20 bg-[linear-gradient(180deg,rgba(244,63,94,0.1),rgba(0,0,0,0.28))]"
+          : "border-white/12 bg-black/28";
 
   return (
-    <section className="rounded-[24px] border border-white/12 bg-black/28 p-5 shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+    <section className={`rounded-[24px] border p-5 shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl ${cardClassName}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-white">{title}</div>
           <div className="mt-1 text-xs uppercase tracking-[0.22em] text-white/42">p95</div>
         </div>
-        <div className="rounded-xl border border-white/10 bg-white/[0.05] p-2 text-white/76">
+        <div className={`rounded-xl border p-2 ${status.iconClassName}`}>
           <Icon className="h-4 w-4" />
         </div>
       </div>
 
-      <div className="mt-5 text-[2.2rem] font-semibold tracking-tight text-[#9dd5bf]">{formatMs(p95)}</div>
+      <div className={`mt-5 text-[2.2rem] font-semibold tracking-tight ${status.accentClassName}`}>{formatMs(p95)}</div>
       <div className="mt-2 flex items-center gap-2 text-sm text-white/62">
         <span>p50 {formatMs(metric?.p50_ms)}</span>
         <span className="text-white/24">•</span>
         <span>{formatCount(metric?.count)} samples</span>
       </div>
-      <div className="mt-4 inline-flex rounded-full border px-3 py-1 text-[11px] font-medium">
-        {withinTarget === null ? (
-          <span className="border-white/10 text-white/54">Target unavailable</span>
-        ) : withinTarget ? (
-          <span className="text-emerald-100">Within target {formatMs(target)}</span>
-        ) : (
-          <span className="text-amber-100">Over target {formatMs(target)}</span>
-        )}
+      <div className={`mt-4 inline-flex rounded-full border px-3 py-1 text-[11px] font-medium ${status.badgeClassName}`}>
+        {status.label}
       </div>
     </section>
   );
@@ -351,6 +405,17 @@ export default function AdminPerformancePage() {
             <p className="mt-3 max-w-2xl text-sm leading-6 text-white/62">
               Real-user viewer timing from the current frontend build. Focus on p95 for frame changes and loop start.
             </p>
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-white/58">
+              <span className="rounded-full border border-emerald-400/25 bg-emerald-500/12 px-3 py-1 text-emerald-100">
+                Green = well under target
+              </span>
+              <span className="rounded-full border border-amber-400/25 bg-amber-500/12 px-3 py-1 text-amber-100">
+                Yellow = near target
+              </span>
+              <span className="rounded-full border border-rose-400/25 bg-rose-500/12 px-3 py-1 text-rose-100">
+                Red = over target
+              </span>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
