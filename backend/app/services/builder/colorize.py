@@ -107,9 +107,18 @@ def _colorize_continuous(
         # Build 256-entry RGBA LUT from evenly spaced color ramp stops.
         lut = build_continuous_lut(colors, n=256)  # (256, 4) uint8
 
-    # Scale float values → 0–255 index
+    # Scale float values → 0–255 index. Some fields use a display-only power
+    # transform to expand low-end structure before LUT lookup.
     finite_mask = np.isfinite(data)
     scale = np.where(finite_mask, (data - range_min) / (range_max - range_min), 0.0)
+    power_norm_gamma = spec.get("power_norm_gamma")
+    if power_norm_gamma is not None:
+        try:
+            gamma = float(power_norm_gamma)
+        except (TypeError, ValueError):
+            gamma = 1.0
+        if gamma > 0.0 and gamma != 1.0:
+            scale = np.power(np.clip(scale, 0.0, 1.0), gamma).astype(np.float32, copy=False)
     indices = np.clip(np.rint(scale * 255.0), 0, 255).astype(np.uint8)
 
     # LUT lookup: (H, W) indices → (H, W, 4) RGBA
@@ -243,6 +252,7 @@ _META_PASSTHROUGH_KEYS = (
     "display_name",
     "legend_title",
     "legend_stops",
+    "power_norm_gamma",
     "ptype_order",
     "ptype_breaks",
     "ptype_levels",

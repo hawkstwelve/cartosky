@@ -405,6 +405,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "units": "in",
         "range": SNOWFALL_TOTAL_RANGE,
         "anchors": SNOWFALL_TOTAL_COLOR_ANCHORS,
+        "power_norm_gamma": 0.72,
         "display_name": "Total Snowfall (10:1)",
         "legend_title": "Total Snowfall (in)",
         "allow_dry_frame": True,

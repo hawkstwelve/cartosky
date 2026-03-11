@@ -70,3 +70,24 @@ def test_continuous_transparent_pixels_zero_rgb() -> None:
     assert tuple(int(v) for v in rgba[:, 0, 0]) == (0, 0, 0, 0)
     assert tuple(int(v) for v in rgba[:, 0, 1]) == (0, 0, 0, 0)
     assert int(rgba[3, 0, 2]) == 255
+
+
+def test_continuous_power_norm_expands_low_end() -> None:
+    data = np.array([[1.0]], dtype=np.float32)
+    linear_spec = {
+        "type": "continuous",
+        "range": (0.0, 4.0),
+        "colors": ["#000000", "#ffffff"],
+        "units": "in",
+    }
+    power_spec = {
+        **linear_spec,
+        "power_norm_gamma": 0.72,
+    }
+
+    linear_rgba, linear_meta = float_to_rgba(data, "snowfall_total", spec_override=linear_spec)
+    power_rgba, power_meta = float_to_rgba(data, "snowfall_total", spec_override=power_spec)
+
+    assert int(power_rgba[0, 0, 0]) > int(linear_rgba[0, 0, 0])
+    assert power_meta["power_norm_gamma"] == 0.72
+    assert "power_norm_gamma" not in linear_meta
