@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -254,6 +255,46 @@ def _manifest_path(data_root: Path, model_id: str, run_id: str) -> Path:
     return data_root / "manifests" / model_id / f"{run_id}.json"
 
 
+def _reviewable_run_ids_from_disk(data_root: Path, model_id: str, *, keep_runs: int) -> list[str]:
+    published_model_root = data_root / "published" / model_id
+    manifests_model_root = data_root / "manifests" / model_id
+    if not published_model_root.is_dir():
+        return []
+
+    published_runs = sorted(
+        [
+            path.name
+            for path in published_model_root.iterdir()
+            if path.is_dir() and re.match(r"^\d{8}_\d{2}z$", path.name)
+        ],
+        reverse=True,
+    )
+
+    reviewable: list[str] = []
+    for run_id in published_runs:
+        if manifests_model_root.joinpath(f"{run_id}.json").is_file():
+            reviewable.append(run_id)
+        if len(reviewable) >= max(1, int(keep_runs)):
+            break
+    return reviewable
+
+
+def _format_small_percent(value: float) -> str:
+    if value <= 0:
+        return "0.0%"
+    if value < 0.1:
+        return "<0.1%"
+    return f"{value:.1f}%"
+
+
+def _format_small_value(value: float) -> str:
+    if value <= 0:
+        return "0.0"
+    if value < 0.1:
+        return "<0.1"
+    return f"{value:.1f}"
+
+
 def _finite_grid_stats(path: Path) -> tuple[int, int, float | None, float | None]:
     with rasterio.open(path) as dataset:
         data = dataset.read(1, masked=False)
@@ -356,7 +397,7 @@ def _warning_summary(*, variable_id: str, checks: dict[str, Any], diagnostics: d
         location = f" near {lat}, {lon}" if lat is not None and lon is not None else ""
         return (
             f"Cumulative {variable_id} decreased versus the previous hour at "
-            f"{decreased_fraction:.1f}% of valid pixels; max drop {max_decrease:.1f}{location}."
+            f"{_format_small_percent(decreased_fraction)} of valid pixels; max drop {_format_small_value(max_decrease)}{location}."
         )
     return None
 
@@ -601,17 +642,15 @@ def sync_recent_verification_runs(*, data_root: Path, limit_runs_per_model: int 
 
 
 def prune_verification_rows(*, data_root: Path, keep_runs_per_model: int = VERIFICATION_KEEP_RUNS_PER_MODEL) -> int:
-    manifests_root = data_root / "manifests"
-    if not manifests_root.is_dir():
+    published_root = data_root / "published"
+    if not published_root.is_dir():
         return 0
 
     allowed_by_model: dict[str, set[str]] = {}
-    for model_dir in sorted(path for path in manifests_root.iterdir() if path.is_dir()):
-        run_ids = sorted(
-            [path.stem for path in model_dir.glob("*.json") if path.is_file()],
-            reverse=True,
-        )[: max(1, int(keep_runs_per_model))]
-        allowed_by_model[model_dir.name] = set(run_ids)
+    for model_dir in sorted(path for path in published_root.iterdir() if path.is_dir()):
+        allowed_by_model[model_dir.name] = set(
+            _reviewable_run_ids_from_disk(data_root, model_dir.name, keep_runs=keep_runs_per_model)
+        )
 
     deleted = 0
     with _connect() as conn:
@@ -632,17 +671,14 @@ def prune_verification_rows(*, data_root: Path, keep_runs_per_model: int = VERIF
 
 
 def sync_latest_missing_verification_runs(*, data_root: Path, limit_runs_per_model: int = 2) -> int:
-    manifests_root = data_root / "manifests"
-    if not manifests_root.is_dir():
+    published_root = data_root / "published"
+    if not published_root.is_dir():
         return 0
 
     synced = 0
     with _connect() as conn:
-        for model_dir in sorted(path for path in manifests_root.iterdir() if path.is_dir()):
-            run_ids = sorted(
-                [path.stem for path in model_dir.glob("*.json") if path.is_file()],
-                reverse=True,
-            )[: max(1, int(limit_runs_per_model))]
+        for model_dir in sorted(path for path in published_root.iterdir() if path.is_dir()):
+            run_ids = _reviewable_run_ids_from_disk(data_root, model_dir.name, keep_runs=limit_runs_per_model)
             for run_id in run_ids:
                 row = conn.execute(
                     """

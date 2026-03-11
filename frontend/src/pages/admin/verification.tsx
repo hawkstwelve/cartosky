@@ -40,6 +40,20 @@ function formatNumber(value: number | null | undefined, digits = 1): string {
   return value.toFixed(digits);
 }
 
+function formatDiagnosticPercent(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  if (value <= 0) return "0.0%";
+  if (value < 0.1) return "<0.1%";
+  return `${value.toFixed(1)}%`;
+}
+
+function formatDiagnosticValue(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  if (value <= 0) return "0.0";
+  if (value < 0.1) return "<0.1";
+  return value.toFixed(1);
+}
+
 function severityTone(value: string): "pass" | "warning" | "review" | "fail" {
   if (value === "high") return "fail";
   if (value === "medium" || value === "low") return "warning";
@@ -52,8 +66,10 @@ function monotonicSummary(diagnostics: VerificationDiagnostics): string {
   if (!monotonic) return "No previous-hour comparison";
   if (monotonic.ok) return "No cumulative drop detected";
   if (monotonic.reason === "shape_mismatch") return "Grid shape changed vs previous hour";
-  const fraction = typeof monotonic.decreased_fraction === "number" ? `${(monotonic.decreased_fraction * 100).toFixed(1)}%` : "—";
-  const drop = formatNumber(monotonic.max_decrease, 1);
+  const fraction = formatDiagnosticPercent(
+    typeof monotonic.decreased_fraction === "number" ? monotonic.decreased_fraction * 100 : null,
+  );
+  const drop = formatDiagnosticValue(monotonic.max_decrease);
   return `${fraction} of valid pixels decreased; max drop ${drop}`;
 }
 
@@ -569,14 +585,14 @@ export default function AdminVerificationPage() {
                   <div className="rounded-2xl border border-amber-400/18 bg-amber-500/8 p-4">
                     <div className="text-xs uppercase tracking-[0.22em] text-amber-100/70">Pixels decreased</div>
                     <div className="mt-2 text-2xl font-semibold text-amber-100">
-                      {formatNumber((selected.diagnostics.monotonic.decreased_fraction ?? 0) * 100, 1)}%
+                      {formatDiagnosticPercent((selected.diagnostics.monotonic.decreased_fraction ?? 0) * 100)}
                     </div>
                     <div className="mt-1 text-sm text-amber-100/70">of valid pixels versus the previous hour</div>
                   </div>
                   <div className="rounded-2xl border border-amber-400/18 bg-amber-500/8 p-4">
                     <div className="text-xs uppercase tracking-[0.22em] text-amber-100/70">Largest drop</div>
                     <div className="mt-2 text-2xl font-semibold text-amber-100">
-                      {formatNumber(selected.diagnostics.monotonic.max_decrease, 1)}
+                      {formatDiagnosticValue(selected.diagnostics.monotonic.max_decrease)}
                     </div>
                     <div className="mt-1 text-sm text-amber-100/70">
                       {selected.diagnostics.monotonic.max_decrease_lat != null && selected.diagnostics.monotonic.max_decrease_lon != null
