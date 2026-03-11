@@ -475,6 +475,18 @@ def sync_recent_verification_runs(*, data_root: Path, limit_runs_per_model: int 
     return synced
 
 
+def verification_rows_count() -> int:
+    with _connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS total FROM qa_reviews").fetchone()
+    return int(row["total"] or 0)
+
+
+def ensure_verification_seeded(*, data_root: Path, limit_runs_per_model: int = 2) -> int:
+    if verification_rows_count() > 0:
+        return 0
+    return sync_recent_verification_runs(data_root=data_root, limit_runs_per_model=limit_runs_per_model)
+
+
 def get_verification_summary(
     *,
     since_ts: int,

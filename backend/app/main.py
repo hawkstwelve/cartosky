@@ -1086,7 +1086,7 @@ async def admin_verification_summary(
     variable: str | None = Query(None),
 ) -> dict[str, Any]:
     _require_admin_session(request)
-    admin_telemetry.sync_recent_verification_runs(data_root=DATA_ROOT, limit_runs_per_model=2)
+    admin_telemetry.ensure_verification_seeded(data_root=DATA_ROOT, limit_runs_per_model=2)
     normalized_window = window.strip().lower()
     since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
     return {
@@ -1113,7 +1113,7 @@ async def admin_verification_results(
     limit: int = Query(200, ge=1, le=500),
 ) -> dict[str, Any]:
     _require_admin_session(request)
-    admin_telemetry.sync_recent_verification_runs(data_root=DATA_ROOT, limit_runs_per_model=2)
+    admin_telemetry.ensure_verification_seeded(data_root=DATA_ROOT, limit_runs_per_model=2)
     normalized_window = window.strip().lower()
     since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
     normalized_manual_status = _normalize_filter_value(manual_status)
