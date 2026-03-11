@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ClipboardCheck, Flag, SearchCheck, ShieldAlert } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ClipboardCheck, Flag, SearchCheck, ShieldAlert, X } from "lucide-react";
 
 import {
   fetchAdminVerificationResults,
@@ -118,6 +118,9 @@ export default function AdminVerificationPage() {
   const [manualStatus, setManualStatus] = useState<"review" | "pass" | "fail">("review");
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving">("idle");
+  const topScrollRef = useRef<HTMLDivElement | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,12 +168,8 @@ export default function AdminVerificationPage() {
   }, [modelFilter, queueFilter, variableFilter, windowValue]);
 
   useEffect(() => {
-    if (results.length === 0) {
+    if (selectedId !== null && !results.some((item) => item.id === selectedId)) {
       setSelectedId(null);
-      return;
-    }
-    if (selectedId === null || !results.some((item) => item.id === selectedId)) {
-      setSelectedId(results[0].id);
     }
   }, [results, selectedId]);
 
@@ -206,6 +205,25 @@ export default function AdminVerificationPage() {
       ? "No flagged rows in this window. Click All Recent or Needs Review to work through the queue."
       : "No rows match this view yet. Try widening the filters or switching to All Recent."
     : "No published verification candidates found yet. This page tracks tmp2m, precip_total, snowfall_total, and snowfall_kuchera_total.";
+
+  useEffect(() => {
+    function updateScrollWidth() {
+      if (!tableScrollRef.current) return;
+      setTableScrollWidth(tableScrollRef.current.scrollWidth);
+    }
+    updateScrollWidth();
+    window.addEventListener("resize", updateScrollWidth);
+    return () => window.removeEventListener("resize", updateScrollWidth);
+  }, [results]);
+
+  function syncScroll(source: "top" | "table") {
+    if (!topScrollRef.current || !tableScrollRef.current) return;
+    if (source === "top") {
+      tableScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft;
+      return;
+    }
+    topScrollRef.current.scrollLeft = tableScrollRef.current.scrollLeft;
+  }
 
   async function saveReview() {
     if (!selected) return;
@@ -355,8 +373,7 @@ export default function AdminVerificationPage() {
         </div>
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)]">
-        <section className="rounded-[32px] border border-white/12 bg-black/28 p-4 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+      <section className="rounded-[32px] border border-white/12 bg-black/28 p-4 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
           <div className="mb-3 flex items-center justify-between gap-3 px-2">
             <div>
               <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#95b1a2]">Queue</div>
@@ -369,7 +386,25 @@ export default function AdminVerificationPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto pb-2">
+          <div className="mb-3 px-2">
+            <div className="text-xs text-white/42">
+              Click any row to open diagnostics. Use the top scrollbar to inspect right-side columns without dropping to the bottom of the table.
+            </div>
+          </div>
+
+          <div
+            ref={topScrollRef}
+            onScroll={() => syncScroll("top")}
+            className="mb-3 overflow-x-auto px-2"
+          >
+            <div className="h-3 rounded-full bg-white/[0.04]" style={{ width: tableScrollWidth > 0 ? `${tableScrollWidth}px` : "100%" }} />
+          </div>
+
+          <div
+            ref={tableScrollRef}
+            onScroll={() => syncScroll("table")}
+            className="overflow-x-auto pb-2"
+          >
             <table className="w-max min-w-[1220px] border-separate border-spacing-y-2 text-left text-sm">
               <thead className="text-white/48">
                 <tr>
@@ -403,6 +438,7 @@ export default function AdminVerificationPage() {
                           ? "bg-emerald-500/10 text-white"
                           : "bg-white/[0.03] text-white/84 hover:bg-white/[0.05]",
                       ].join(" ")}
+                      aria-label={`Open diagnostics for ${item.model_id} ${item.variable_id} forecast hour ${item.forecast_hour}`}
                     >
                       <td className="rounded-l-2xl border-y border-l border-white/10 px-3 py-3 font-semibold">{item.model_id}</td>
                       <td className="border-y border-white/10 px-3 py-3">{item.variable_id}</td>
@@ -432,23 +468,41 @@ export default function AdminVerificationPage() {
               </tbody>
             </table>
           </div>
-        </section>
+      </section>
 
-        <section className="rounded-[32px] border border-white/12 bg-black/28 p-5 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-          {!selected ? (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-10 text-sm text-white/48">
-              Choose a row from the left to review it. The fastest workflow is: keep <span className="text-white/72">Needs review</span> selected, open the top row, compare it to your benchmark site, then save <span className="text-white/72">PASS</span> or <span className="text-white/72">FAIL</span>.
-            </div>
-          ) : (
+      {selected ? (
+        <>
+          <button
+            type="button"
+            aria-label="Close diagnostics panel"
+            className="fixed inset-0 z-30 bg-black/45 backdrop-blur-[2px]"
+            onClick={() => setSelectedId(null)}
+          />
+          <section className="fixed inset-y-4 right-4 z-40 w-[min(500px,calc(100vw-2rem))] overflow-y-auto rounded-[32px] border border-white/12 bg-[#030711]/95 p-5 text-white shadow-[0_24px_80px_rgba(0,0,0,0.5)] backdrop-blur-xl">
             <div className="space-y-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-[#95b1a2]">Selected Frame</div>
+                  <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+                    {selected.model_id} · {selected.variable_id} · f{selected.forecast_hour}
+                  </h2>
+                  <p className="mt-1 text-sm text-white/58">
+                    {selected.run_id} · checked {formatTimestamp(selected.last_checked_at)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(null)}
+                  className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-white/72 transition hover:bg-white/[0.08] hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-[#95b1a2]">Selected Frame</div>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                  {selected.model_id} · {selected.variable_id} · f{selected.forecast_hour}
-                </h2>
-                <p className="mt-1 text-sm text-white/58">
-                  {selected.run_id} · checked {formatTimestamp(selected.last_checked_at)}
-                </p>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/62">
+                  Review flow: inspect the automatic diagnostics first, compare with your benchmark only if needed, then save <span className="text-white/78">PASS</span> or <span className="text-white/78">FAIL</span>.
+                </div>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -589,9 +643,9 @@ export default function AdminVerificationPage() {
                 </div>
               </div>
             </div>
-          )}
-        </section>
-      </div>
+          </section>
+        </>
+      ) : null}
     </div>
   );
 }
