@@ -1,7 +1,7 @@
 import type { ComponentType, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Activity, AlertCircle, Gauge, Globe, Layers, PauseCircle, RefreshCcw, TimerReset, Zap } from "lucide-react";
+import { Activity, AlertCircle, Gauge, Globe, Layers, PauseCircle, RefreshCcw, TimerReset, X, Zap } from "lucide-react";
 
 import {
   fetchAdminPerfBreakdown,
@@ -16,6 +16,14 @@ import {
 
 type WindowValue = "24h" | "7d" | "30d";
 type DeviceValue = "all" | "desktop" | "mobile";
+type MetricKey =
+  | "frame_change"
+  | "loop_start"
+  | "scrub_latency"
+  | "animation_stall"
+  | "viewer_first_frame"
+  | "variable_switch"
+  | "tile_fetch";
 
 function formatMs(value: number | null | undefined): string {
   if (!Number.isFinite(value)) {
@@ -88,8 +96,9 @@ function MetricCard(props: {
   title: string;
   icon: ComponentType<{ className?: string }>;
   metric?: PerfMetricSummary;
+  onClick?: () => void;
 }) {
-  const { title, icon: Icon, metric } = props;
+  const { title, icon: Icon, metric, onClick } = props;
   const status = getMetricStatus(metric);
   const p95 = metric?.p95_ms ?? null;
   const cardClassName =
@@ -100,9 +109,8 @@ function MetricCard(props: {
         : status.tone === "bad"
           ? "border-rose-400/20 bg-[linear-gradient(180deg,rgba(244,63,94,0.1),rgba(0,0,0,0.28))]"
           : "border-white/12 bg-black/28";
-
-  return (
-    <section className={`rounded-[24px] border p-5 shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl ${cardClassName}`}>
+  const content = (
+    <>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-white">{title}</div>
@@ -122,8 +130,28 @@ function MetricCard(props: {
       <div className={`mt-4 inline-flex rounded-full border px-3 py-1 text-[11px] font-medium ${status.badgeClassName}`}>
         {status.label}
       </div>
-    </section>
+      {onClick ? (
+        <div className="mt-4 text-xs font-medium uppercase tracking-[0.18em] text-white/48">
+          Open metric details
+        </div>
+      ) : null}
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={`w-full rounded-[24px] border p-5 text-left shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.05] ${cardClassName}`}
+        aria-label={`Open ${title} details`}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return <section className={`rounded-[24px] border p-5 shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl ${cardClassName}`}>{content}</section>;
 }
 
 function TrendChart(props: {
@@ -247,6 +275,70 @@ function BreakdownList(props: { title: string; subtitle: string; items: PerfBrea
   );
 }
 
+function MetricDetailDialog(props: {
+  open: boolean;
+  title: string;
+  description: string;
+  icon: ComponentType<{ className?: string }>;
+  metric?: PerfMetricSummary;
+  onClose: () => void;
+  children?: ReactNode;
+}) {
+  const { open, title, description, icon, metric, onClose, children } = props;
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        type="button"
+        aria-label="Close metric details"
+        className="absolute inset-0 bg-[#04110d]/80 backdrop-blur-md"
+        onClick={onClose}
+      />
+      <div className="relative z-10 flex h-full items-center justify-center p-4 md:p-6">
+        <section
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${title} details`}
+          className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-[32px] border border-white/12 bg-[#061511]/96 shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
+        >
+          <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 md:px-6">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#95b1a2]">Metric details</div>
+              <h3 className="mt-2 text-2xl font-semibold tracking-tight text-white">{title}</h3>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">{description}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/12 bg-white/[0.04] text-white/74 transition hover:bg-white/[0.08]"
+              aria-label="Close metric details"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="overflow-y-auto px-5 py-5 md:px-6 md:py-6">
+            <div className="space-y-6">
+              <MetricCard title={title} icon={icon} metric={metric} />
+              {children ? (
+                children
+              ) : (
+                <section className="rounded-[28px] border border-dashed border-white/10 bg-white/[0.03] px-5 py-8 text-sm text-white/52">
+                  No detailed panels are available for this metric yet.
+                </section>
+              )}
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function SectionLabel(props: { label: string; description: string; children: ReactNode }) {
   return (
     <div className="space-y-4 pt-4">
@@ -284,6 +376,7 @@ export default function AdminPerformancePage() {
   const [frameVariableBreakdown, setFrameVariableBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [varSwitchModelBreakdown, setVarSwitchModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [tileFetchModelBreakdown, setTileFetchModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [activeMetric, setActiveMetric] = useState<MetricKey | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -357,6 +450,27 @@ export default function AdminPerformancePage() {
     };
   }, [windowValue, deviceValue, refreshTick]);
 
+  useEffect(() => {
+    if (!activeMetric) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setActiveMetric(null);
+      }
+    };
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [activeMetric]);
+
   if (loading && status === null) {
     return (
       <div className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
@@ -399,9 +513,197 @@ export default function AdminPerformancePage() {
     );
   }
 
+  const metricSections: Array<{
+    label: string;
+    description: string;
+    metrics: Array<{
+      key: MetricKey;
+      title: string;
+      description: string;
+      icon: ComponentType<{ className?: string }>;
+      metric?: PerfMetricSummary;
+      detailContent?: ReactNode;
+    }>;
+  }> = [
+    {
+      label: "Playback & Animation",
+      description: "Real-time frame rendering, loop playback, and scrub responsiveness.",
+      metrics: [
+        {
+          key: "frame_change",
+          title: "Frame Change",
+          description: "How quickly the map responds to manual frame changes.",
+          icon: Gauge,
+          metric: summary.frame_change,
+          detailContent: (
+            <>
+              <TrendChart
+                title="Frame Change Trend"
+                subtitle="How quickly the map responds to manual frame changes."
+                points={frameTrend}
+                lineColor="#7ec8ff"
+              />
+              <div className="grid gap-6 xl:grid-cols-2">
+                <BreakdownList
+                  title="Frame Change by Model"
+                  subtitle="Most active models ordered by sample count."
+                  items={modelBreakdown}
+                />
+                <BreakdownList
+                  title="Frame Change by Variable"
+                  subtitle="Frame change latency split by variable — identifies render-heavy variables."
+                  items={frameVariableBreakdown}
+                />
+              </div>
+            </>
+          ),
+        },
+        {
+          key: "loop_start",
+          title: "Loop Start",
+          description: "Time from play action to actual loop playback start.",
+          icon: Activity,
+          metric: summary.loop_start,
+          detailContent: (
+            <>
+              <TrendChart
+                title="Loop Start Trend"
+                subtitle="Time from play action to actual loop playback start."
+                points={loopTrend}
+                lineColor="#b7e38f"
+              />
+              <div className="grid gap-6 xl:grid-cols-2">
+                <BreakdownList
+                  title="Loop Start by Model"
+                  subtitle="Playback startup latency split by model."
+                  items={loopModelBreakdown}
+                />
+                <BreakdownList
+                  title="Loop Start by Device"
+                  subtitle="Quick split of playback startup behavior."
+                  items={deviceBreakdown}
+                />
+              </div>
+            </>
+          ),
+        },
+        {
+          key: "scrub_latency",
+          title: "Scrub Latency",
+          description: "How responsive timeline scrubbing feels under real interaction.",
+          icon: TimerReset,
+          metric: summary.scrub_latency,
+          detailContent: (
+            <BreakdownList
+              title="Scrub Latency by Model"
+              subtitle="Scrub response time per model — reveals which datasets are cache-miss prone."
+              items={scrubModelBreakdown}
+            />
+          ),
+        },
+        {
+          key: "animation_stall",
+          title: "Animation Stall",
+          description: "Counts slow playback frames that exceed the stall threshold.",
+          icon: PauseCircle,
+          metric: summary.animation_stall,
+        },
+      ],
+    },
+    {
+      label: "Cold Start & Navigation",
+      description: "Initial viewer load time and variable switching latency.",
+      metrics: [
+        {
+          key: "viewer_first_frame",
+          title: "First Viewer Frame",
+          description: "Time from viewer open to first frame being rendered.",
+          icon: Zap,
+          metric: summary.viewer_first_frame,
+          detailContent: (
+            <>
+              <TrendChart
+                title="First Viewer Frame Trend"
+                subtitle="Time from viewer open to first frame being rendered."
+                points={firstFrameTrend}
+                lineColor="#f0a575"
+              />
+              <div className="grid gap-6 xl:grid-cols-2">
+                <BreakdownList
+                  title="First Viewer Frame by Model"
+                  subtitle="Cold-start render latency per model — identifies slow-loading datasets."
+                  items={firstFrameModelBreakdown}
+                />
+                <BreakdownList
+                  title="First Viewer Frame by Device"
+                  subtitle="Cold-start render latency split by device type."
+                  items={firstFrameDeviceBreakdown}
+                />
+              </div>
+            </>
+          ),
+        },
+        {
+          key: "variable_switch",
+          title: "Variable Switch",
+          description: "Time from variable selector click to first frame of the new variable.",
+          icon: Layers,
+          metric: summary.variable_switch,
+          detailContent: (
+            <>
+              <TrendChart
+                title="Variable Switch Trend"
+                subtitle="Time from variable selector click to first frame of new variable."
+                points={varSwitchTrend}
+                lineColor="#c4a8f5"
+              />
+              <BreakdownList
+                title="Variable Switch by Model"
+                subtitle="Time to first frame after a variable selection, per model."
+                items={varSwitchModelBreakdown}
+              />
+            </>
+          ),
+        },
+      ],
+    },
+    {
+      label: "Network / Tile Fetch",
+      description: "Individual weather tile network fetch latency from the CDN.",
+      metrics: [
+        {
+          key: "tile_fetch",
+          title: "Tile Fetch",
+          description: "Individual weather tile network fetch duration from the CDN.",
+          icon: Globe,
+          metric: summary.tile_fetch,
+          detailContent: (
+            <>
+              <TrendChart
+                title="Tile Fetch Trend"
+                subtitle="Individual weather tile network fetch duration (sampled 1-in-8)."
+                points={tileFetchTrend}
+                lineColor="#f5c842"
+              />
+              <BreakdownList
+                title="Tile Fetch by Model"
+                subtitle="Sampled network fetch time per weather tile, split by model."
+                items={tileFetchModelBreakdown}
+              />
+            </>
+          ),
+        },
+      ],
+    },
+  ];
+  const activeMetricConfig = metricSections
+    .flatMap((section) => section.metrics)
+    .find((metric) => metric.key === activeMetric);
+
   return (
-    <div className="space-y-6">
-      <section className="rounded-[32px] border border-white/12 bg-black/28 p-6 shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl md:p-7">
+    <>
+      <div className="space-y-6">
+        <section className="rounded-[32px] border border-white/12 bg-black/28 p-6 shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl md:p-7">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#95b1a2]">Performance</div>
@@ -459,128 +761,35 @@ export default function AdminPerformancePage() {
             {error}
           </div>
         ) : null}
-      </section>
+        </section>
 
-      <SectionLabel
-        label="Playback & Animation"
-        description="Real-time frame rendering, loop playback, and scrub responsiveness."
+        {metricSections.map((section) => (
+          <SectionLabel key={section.label} label={section.label} description={section.description}>
+            <div className={`grid gap-4 ${section.metrics.length >= 4 ? "xl:grid-cols-4" : section.metrics.length === 2 ? "xl:grid-cols-2" : "xl:grid-cols-3"}`}>
+              {section.metrics.map((metric) => (
+                <MetricCard
+                  key={metric.key}
+                  title={metric.title}
+                  icon={metric.icon}
+                  metric={metric.metric}
+                  onClick={() => setActiveMetric(metric.key)}
+                />
+              ))}
+            </div>
+          </SectionLabel>
+        ))}
+      </div>
+
+      <MetricDetailDialog
+        open={activeMetricConfig !== undefined}
+        title={activeMetricConfig?.title ?? ""}
+        description={activeMetricConfig?.description ?? ""}
+        icon={activeMetricConfig?.icon ?? Gauge}
+        metric={activeMetricConfig?.metric}
+        onClose={() => setActiveMetric(null)}
       >
-        <div className="grid gap-4 xl:grid-cols-4">
-          <MetricCard title="Frame Change" icon={Gauge} metric={summary.frame_change} />
-          <MetricCard title="Loop Start" icon={Activity} metric={summary.loop_start} />
-          <MetricCard title="Scrub Latency" icon={TimerReset} metric={summary.scrub_latency} />
-          <MetricCard title="Animation Stall" icon={PauseCircle} metric={summary.animation_stall} />
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-2">
-          <TrendChart
-            title="Frame Change Trend"
-            subtitle="How quickly the map responds to manual frame changes."
-            points={frameTrend}
-            lineColor="#7ec8ff"
-          />
-          <TrendChart
-            title="Loop Start Trend"
-            subtitle="Time from play action to actual loop playback start."
-            points={loopTrend}
-            lineColor="#b7e38f"
-          />
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-3">
-          <BreakdownList
-            title="Frame Change by Model"
-            subtitle="Most active models ordered by sample count."
-            items={modelBreakdown}
-          />
-          <BreakdownList
-            title="Frame Change by Variable"
-            subtitle="Frame change latency split by variable — identifies render-heavy variables."
-            items={frameVariableBreakdown}
-          />
-          <BreakdownList
-            title="Scrub Latency by Model"
-            subtitle="Scrub response time per model — reveals which datasets are cache-miss prone."
-            items={scrubModelBreakdown}
-          />
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-2">
-          <BreakdownList
-            title="Loop Start by Model"
-            subtitle="Playback startup latency split by model."
-            items={loopModelBreakdown}
-          />
-          <BreakdownList
-            title="Loop Start by Device"
-            subtitle="Quick split of playback startup behavior."
-            items={deviceBreakdown}
-          />
-        </div>
-      </SectionLabel>
-
-      <SectionLabel
-        label="Cold Start & Navigation"
-        description="Initial viewer load time and variable switching latency."
-      >
-        <div className="grid gap-4 xl:grid-cols-2">
-          <MetricCard title="First Viewer Frame" icon={Zap} metric={summary.viewer_first_frame} />
-          <MetricCard title="Variable Switch" icon={Layers} metric={summary.variable_switch} />
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-2">
-          <TrendChart
-            title="First Viewer Frame Trend"
-            subtitle="Time from viewer open to first frame being rendered."
-            points={firstFrameTrend}
-            lineColor="#f0a575"
-          />
-          <TrendChart
-            title="Variable Switch Trend"
-            subtitle="Time from variable selector click to first frame of new variable."
-            points={varSwitchTrend}
-            lineColor="#c4a8f5"
-          />
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-3">
-          <BreakdownList
-            title="First Viewer Frame by Model"
-            subtitle="Cold-start render latency per model — identifies slow-loading datasets."
-            items={firstFrameModelBreakdown}
-          />
-          <BreakdownList
-            title="First Viewer Frame by Device"
-            subtitle="Cold-start render latency split by device type."
-            items={firstFrameDeviceBreakdown}
-          />
-          <BreakdownList
-            title="Variable Switch by Model"
-            subtitle="Time to first frame after a variable selection, per model."
-            items={varSwitchModelBreakdown}
-          />
-        </div>
-      </SectionLabel>
-
-      <SectionLabel
-        label="Network / Tile Fetch"
-        description="Individual weather tile network fetch latency from the CDN."
-      >
-        <div className="grid gap-6 xl:grid-cols-3">
-          <MetricCard title="Tile Fetch" icon={Globe} metric={summary.tile_fetch} />
-          <TrendChart
-            title="Tile Fetch Trend"
-            subtitle="Individual weather tile network fetch duration (sampled 1-in-8)."
-            points={tileFetchTrend}
-            lineColor="#f5c842"
-          />
-          <BreakdownList
-            title="Tile Fetch by Model"
-            subtitle="Sampled network fetch time per weather tile, split by model."
-            items={tileFetchModelBreakdown}
-          />
-        </div>
-      </SectionLabel>
-    </div>
+        {activeMetricConfig?.detailContent}
+      </MetricDetailDialog>
+    </>
   );
 }
