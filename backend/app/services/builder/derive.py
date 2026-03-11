@@ -2221,6 +2221,7 @@ def _derive_snowfall_total_10to1_cumulative(
     apcp_component = hints.get("apcp_component", "apcp_step")
     snow_component = hints.get("snow_component", "csnow")
     slr_raw = hints.get("slr", "10")
+    snow_mask_threshold_raw = hints.get("snow_mask_threshold")
     min_step_lwe_raw = hints.get("min_step_lwe_kgm2", "0.01")
 
     try:
@@ -2230,11 +2231,24 @@ def _derive_snowfall_total_10to1_cumulative(
     if slr <= 0.0:
         slr = 10.0
 
+    snow_mask_threshold: float | None = None
+    if snow_mask_threshold_raw is not None:
+        try:
+            parsed_threshold = float(snow_mask_threshold_raw)
+        except (TypeError, ValueError):
+            parsed_threshold = 0.5
+        snow_mask_threshold = min(max(parsed_threshold, 0.0), 1.0)
+
     try:
         min_step_lwe = float(min_step_lwe_raw)
     except (TypeError, ValueError):
         min_step_lwe = 0.01
     min_step_lwe = max(min_step_lwe, 0.0)
+
+    use_inventory_resolution = (
+        str(model_id).strip().lower() in {"gfs", "nam"}
+        and str(apcp_component).strip() == "apcp_step"
+    )
 
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
     # Build interval plan: step_fh → (step_len, sample_fhs).
@@ -2269,13 +2283,14 @@ def _derive_snowfall_total_10to1_cumulative(
 
     # Prefetch APCP + csnow in parallel.
     _prefetch_tasks: list[_PrefetchTask] = []
-    for _pf_fh in step_fhs:
-        _prefetch_tasks.append(_PrefetchTask(
-            model_id=model_id, product=product, run_date=run_date,
-            fh=_pf_fh, model_plugin=model_plugin, var_key=apcp_component,
-            warped=use_warped, target_region=target_region,
-            target_grid_id=target_grid_id, resampling=resampling,
-        ))
+    if not use_inventory_resolution:
+        for _pf_fh in step_fhs:
+            _prefetch_tasks.append(_PrefetchTask(
+                model_id=model_id, product=product, run_date=run_date,
+                fh=_pf_fh, model_plugin=model_plugin, var_key=apcp_component,
+                warped=use_warped, target_region=target_region,
+                target_grid_id=target_grid_id, resampling=resampling,
+            ))
     for _pf_fh in snow_step_fhs:
         _prefetch_tasks.append(_PrefetchTask(
             model_id=model_id, product=product, run_date=run_date,
@@ -2293,7 +2308,10 @@ def _derive_snowfall_total_10to1_cumulative(
         step_crs: rasterio.crs.CRS,
         step_transform: rasterio.transform.Affine,
     ) -> tuple[np.ndarray, np.ndarray]:
-        apcp_valid = np.isfinite(step_data) & (step_data >= 0.0)
+        if apcp_valid_hint is None:
+            apcp_valid = np.isfinite(step_data) & (step_data >= 0.0)
+        else:
+            apcp_valid = np.asarray(apcp_valid_hint, dtype=bool)
         step_apcp_clean = np.where(apcp_valid, step_data, 0.0).astype(np.float32, copy=False)
         if min_step_lwe > 0.0:
             step_apcp_clean = np.where(
@@ -2341,6 +2359,12 @@ def _derive_snowfall_total_10to1_cumulative(
                 where=sample_valid_counts > 0,
             )
             interval_mask = np.clip(interval_mask, 0.0, 1.0).astype(np.float32, copy=False)
+            if snow_mask_threshold is not None:
+                interval_mask = np.where(
+                    interval_mask >= np.float32(snow_mask_threshold),
+                    np.float32(1.0),
+                    np.float32(0.0),
+                ).astype(np.float32, copy=False)
             csnow_valid = sample_valid_counts > 0
         else:
             interval_mask = np.zeros(step_apcp_clean.shape, dtype=np.float32)
@@ -2365,7 +2389,7 @@ def _derive_snowfall_total_10to1_cumulative(
         target_region=target_region,
         target_grid_id=target_grid_id,
         resampling=resampling,
-        use_inventory_resolution=False,
+        use_inventory_resolution=use_inventory_resolution,
         process_step=_process_step,
         error_label=f"No cumulative snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}",
     )

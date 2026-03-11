@@ -16,6 +16,31 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.builder import derive as derive_module
 
 
+class _FakePlugin:
+    def normalize_var_id(self, var_key: str) -> str:
+        return var_key
+
+    def get_var_capability(self, var_key: str):
+        del var_key
+        return None
+
+    def get_var(self, var_key: str):
+        search_by_var = {
+            "apcp_step": [":APCP:surface:"],
+            "csnow": [":CSNOW:surface:"],
+        }
+        search = search_by_var.get(var_key)
+        if search is None:
+            return None
+        return SimpleNamespace(
+            selectors=SimpleNamespace(
+                search=search,
+                filter_by_keys={},
+                hints={},
+            )
+        )
+
+
 def test_resolve_cumulative_step_fhs_three_hourly() -> None:
     step_fhs = derive_module._resolve_cumulative_step_fhs(
         hints={"step_hours": "3"},
@@ -38,7 +63,7 @@ def test_resolve_cumulative_step_fhs_with_transition() -> None:
     assert step_fhs == [3, 6, 9, 12, 18, 24, 30]
 
 
-def test_snowfall_derive_uses_soft_interval_mask_for_3h_steps(monkeypatch) -> None:
+def test_snowfall_derive_enforces_configured_threshold_for_3h_steps(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()
 
@@ -78,7 +103,7 @@ def test_snowfall_derive_uses_soft_interval_mask_for_3h_steps(monkeypatch) -> No
     )
 
     data, out_crs, out_transform = derive_module._derive_snowfall_total_10to1_cumulative(
-        model_id="gfs",
+        model_id="test",
         var_key="snowfall_total",
         product="pgrb2.0p25",
         run_date=datetime(2026, 2, 28, 0, 0),
@@ -94,8 +119,8 @@ def test_snowfall_derive_uses_soft_interval_mask_for_3h_steps(monkeypatch) -> No
 
     expected = np.array(
         [
-            [0.39370078, 0.47244096],
-            [0.39370078, np.nan],
+            [0.78740156, 0.78740156],
+            [0.78740156, np.nan],
         ],
         dtype=np.float32,
     )
@@ -136,7 +161,7 @@ def test_snowfall_derive_skips_missing_csnow_samples_and_preserves_nan(monkeypat
     )
 
     data, out_crs, out_transform = derive_module._derive_snowfall_total_10to1_cumulative(
-        model_id="gfs",
+        model_id="test",
         var_key="snowfall_total",
         product="pgrb2.0p25",
         run_date=datetime(2026, 2, 28, 0, 0),
@@ -151,3 +176,86 @@ def test_snowfall_derive_skips_missing_csnow_samples_and_preserves_nan(monkeypat
     assert data.dtype == np.float32
     assert data.shape == (2, 2)
     assert np.isnan(data).all()
+
+
+def test_snowfall_derive_inventory_differences_gfs_cumulative_apcp(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    fetch_patterns: list[str] = []
+
+    def _fake_fetch_variable(
+        *,
+        model_id,
+        product,
+        search_pattern,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        return_meta=False,
+    ):
+        del model_id, product, run_date, herbie_kwargs
+        pattern = str(search_pattern)
+        fetch_patterns.append(f"{int(fh)}:{pattern}")
+        data_by_pattern = {
+            ":APCP:surface:0-3 hour acc fcst:$": np.full((2, 2), 3.0, dtype=np.float32),
+            ":APCP:surface:0-6 hour acc fcst:$": np.full((2, 2), 6.0, dtype=np.float32),
+            ":CSNOW:surface:": np.ones((2, 2), dtype=np.float32),
+        }
+        data = data_by_pattern[pattern]
+        inventory_line = {
+            ":APCP:surface:0-3 hour acc fcst:$": ":APCP:surface:0-3 hour acc fcst:",
+            ":APCP:surface:0-6 hour acc fcst:$": ":APCP:surface:0-6 hour acc fcst:",
+            ":CSNOW:surface:": "",
+        }[pattern]
+        meta = {"inventory_line": inventory_line, "search_pattern": pattern, "fh": int(fh)}
+        if return_meta:
+            return data, crs, transform, meta
+        return data, crs, transform
+
+    def _fake_inventory_lines(*, model_id, product, run_date, fh, search_pattern):
+        del model_id, product, run_date, search_pattern
+        return {
+            3: [":APCP:surface:0-3 hour acc fcst:"],
+            6: [":APCP:surface:0-6 hour acc fcst:"],
+        }[int(fh)]
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(derive_module, "_kuchera_inventory_lines", _fake_inventory_lines)
+    plugin = _FakePlugin()
+
+    var_spec_model = SimpleNamespace(
+        selectors=SimpleNamespace(
+            hints={
+                "apcp_component": "apcp_step",
+                "snow_component": "csnow",
+                "step_hours": "3",
+                "slr": "10",
+                "snow_mask_threshold": "0.5",
+                "min_step_lwe_kgm2": "0.01",
+            }
+        )
+    )
+
+    data, out_crs, out_transform = derive_module._derive_snowfall_total_10to1_cumulative(
+        model_id="gfs",
+        var_key="snowfall_total",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 3, 2, 0, 0),
+        fh=6,
+        var_spec_model=var_spec_model,
+        var_capability=None,
+        model_plugin=plugin,
+    )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    assert fetch_patterns == [
+        "3::APCP:surface:0-3 hour acc fcst:$",
+        "0::CSNOW:surface:",
+        "3::CSNOW:surface:",
+        "6::APCP:surface:0-6 hour acc fcst:$",
+        "3::CSNOW:surface:",
+        "6::CSNOW:surface:",
+    ]
+    expected_inches = 6.0 * 0.03937007874015748 * 10.0
+    np.testing.assert_allclose(data, np.full((2, 2), expected_inches, dtype=np.float32), rtol=1e-6, atol=1e-6)
