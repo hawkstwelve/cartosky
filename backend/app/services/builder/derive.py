@@ -1060,6 +1060,7 @@ def _resolve_cumulative_step_fhs(
     *,
     hints: dict[str, Any],
     fh: int,
+    run_date: datetime | None = None,
     default_step_hours: int = 6,
 ) -> list[int]:
     step_hours_raw = hints.get("step_hours", str(default_step_hours))
@@ -1080,6 +1081,10 @@ def _resolve_cumulative_step_fhs(
         step_hours_after_fh = None
     if step_hours_after_fh is not None:
         step_hours_after_fh = max(1, step_hours_after_fh)
+    align_after_transition_to_cycle = _parse_hint_bool(
+        hints.get("step_hours_after_fh_align_to_cycle"),
+        default=False,
+    )
 
     if (
         step_transition_fh is not None
@@ -1091,6 +1096,14 @@ def _resolve_cumulative_step_fhs(
         step_fhs = list(range(step_hours, before_end + 1, step_hours))
         if fh > step_transition_fh:
             after_start = step_transition_fh + step_hours_after_fh
+            if align_after_transition_to_cycle and run_date is not None:
+                cycle_hour = int(run_date.hour)
+                transition_mod = int(step_transition_fh) % int(step_hours_after_fh)
+                cycle_mod = cycle_hour % int(step_hours_after_fh)
+                offset = (cycle_mod - transition_mod) % int(step_hours_after_fh)
+                after_start = int(step_transition_fh) + offset
+                if after_start <= int(step_transition_fh):
+                    after_start += int(step_hours_after_fh)
             step_fhs.extend(range(after_start, fh + 1, step_hours_after_fh))
         return step_fhs
 
@@ -1227,6 +1240,48 @@ class _ApcpCumDiffState:
     bucket_cumulative_crs: rasterio.crs.CRS | None = None
     bucket_cumulative_transform: rasterio.transform.Affine | None = None
     bucket_through_fh: int = 0
+    recent_exact_steps: dict[
+        int,
+        tuple[np.ndarray, np.ndarray, rasterio.crs.CRS | None, rasterio.transform.Affine | None],
+    ] = field(default_factory=dict)
+
+
+def _reconstruct_overlap_prior_sum(
+    *,
+    cum_diff_state: _ApcpCumDiffState,
+    start_fh: int,
+    through_fh: int,
+) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS | None, rasterio.transform.Affine | None] | None:
+    if through_fh <= start_fh:
+        return None
+
+    reconstructed_sum: np.ndarray | None = None
+    reconstructed_valid: np.ndarray | None = None
+    reconstructed_crs: rasterio.crs.CRS | None = None
+    reconstructed_transform: rasterio.transform.Affine | None = None
+
+    for prior_fh in range(int(start_fh) + 1, int(through_fh) + 1):
+        cached = cum_diff_state.recent_exact_steps.get(int(prior_fh))
+        if cached is None:
+            return None
+        prior_data, prior_valid, prior_crs, prior_transform = cached
+        if reconstructed_sum is None:
+            reconstructed_sum = prior_data.copy()
+            reconstructed_valid = prior_valid.copy()
+            reconstructed_crs = prior_crs
+            reconstructed_transform = prior_transform
+            continue
+        if prior_data.shape != reconstructed_sum.shape:
+            return None
+        if prior_crs != reconstructed_crs or prior_transform != reconstructed_transform:
+            return None
+        reconstructed_sum = (reconstructed_sum + prior_data).astype(np.float32, copy=False)
+        assert reconstructed_valid is not None
+        reconstructed_valid = reconstructed_valid & prior_valid
+
+    if reconstructed_sum is None or reconstructed_valid is None:
+        return None
+    return reconstructed_sum, reconstructed_valid, reconstructed_crs, reconstructed_transform
 
 
 def _resolve_apcp_step_data(
@@ -1471,6 +1526,7 @@ def _resolve_apcp_step_data(
     step_apcp_data = apcp_cum_clean
     apcp_valid = apcp_valid_raw
     fallback_differencing_applied = False
+    window = _parse_apcp_accum_window_hours(apcp_inventory_line)
 
     if apcp_mode == "cumulative_from_zero" and cum_diff_state.consumed_sum is not None:
         same_shape = apcp_cum_clean.shape == cum_diff_state.consumed_sum.shape
@@ -1494,9 +1550,10 @@ def _resolve_apcp_step_data(
             step_fh,
         )
     elif apcp_mode == "overlap_window":
+        assert window is not None
         bucket_state_available = (
             cum_diff_state.bucket_start_fh is not None
-            and int(cum_diff_state.bucket_start_fh) == int(_parse_apcp_accum_window_hours(apcp_inventory_line)[0])
+            and int(cum_diff_state.bucket_start_fh) == int(window[0])
             and int(cum_diff_state.bucket_through_fh) == int(expected_start_fh)
             and cum_diff_state.bucket_cumulative_sum is not None
         )
@@ -1523,13 +1580,42 @@ def _resolve_apcp_step_data(
                 cum_diff_state.bucket_through_fh,
                 selected_window,
             )
-        elif cum_diff_state.consumed_through_fh <= 0:
-            selector_reason = "history_gap_overlap_rebuild"
         else:
-            raise ValueError(
-                f"KUCHERA_APCP overlap state missing for fh{step_fh:03d}: "
-                f"expected_start={expected_start_fh} selected_window={selected_window}"
+            reconstructed = _reconstruct_overlap_prior_sum(
+                cum_diff_state=cum_diff_state,
+                start_fh=int(window[0]),
+                through_fh=int(expected_start_fh),
             )
+            if reconstructed is not None:
+                prior_sum, prior_valid, prior_crs, prior_transform = reconstructed
+                same_shape = apcp_cum_clean.shape == prior_sum.shape
+                same_crs = step_crs == prior_crs
+                same_transform = step_transform == prior_transform
+                if not (same_shape and same_crs and same_transform):
+                    raise ValueError(
+                        f"KUCHERA_APCP reconstructed overlap grid mismatch for fh{step_fh:03d}: "
+                        f"shape_match={same_shape} crs_match={same_crs} transform_match={same_transform}"
+                    )
+                step_apcp_data = np.clip(
+                    apcp_cum_clean - prior_sum,
+                    0.0,
+                    None,
+                ).astype(np.float32, copy=False)
+                apcp_valid = apcp_valid_raw & prior_valid
+                fallback_differencing_applied = True
+                logger.info(
+                    'KUCHERA_APCP_FALLBACK step_fh=%d prev_fh=%d reason="overlap_reconstructed %s"',
+                    step_fh,
+                    expected_start_fh,
+                    selected_window,
+                )
+            elif cum_diff_state.consumed_through_fh <= 0:
+                selector_reason = "history_gap_overlap_rebuild"
+            else:
+                raise ValueError(
+                    f"KUCHERA_APCP overlap state missing for fh{step_fh:03d}: "
+                    f"expected_start={expected_start_fh} selected_window={selected_window}"
+                )
 
     log_mode = {
         "exact_step": "step",
@@ -1579,7 +1665,6 @@ def _resolve_apcp_step_data(
         else:
             cum_diff_state.consumed_sum_valid = apcp_valid.copy()
 
-    window = _parse_apcp_accum_window_hours(apcp_inventory_line)
     if window is not None and int(window[0]) > 0 and apcp_mode in {"exact_step", "overlap_window"}:
         start_hour = int(window[0])
         cum_diff_state.bucket_start_fh = start_hour
@@ -1595,6 +1680,18 @@ def _resolve_apcp_step_data(
         cum_diff_state.bucket_cumulative_crs = None
         cum_diff_state.bucket_cumulative_transform = None
         cum_diff_state.bucket_through_fh = int(step_fh)
+
+    if apcp_mode in {"exact_step", "overlap_window"}:
+        cum_diff_state.recent_exact_steps[int(step_fh)] = (
+            increment_for_sum.copy(),
+            apcp_valid.copy(),
+            step_crs,
+            step_transform,
+        )
+        prune_before_fh = int(step_fh) - 12
+        for prior_fh in list(cum_diff_state.recent_exact_steps.keys()):
+            if int(prior_fh) < prune_before_fh:
+                cum_diff_state.recent_exact_steps.pop(int(prior_fh), None)
 
     cum_diff_state.consumed_through_fh = int(step_fh)
     assert step_crs is not None  # guaranteed set by steps 1/2/3 above
@@ -2035,7 +2132,7 @@ def _derive_precip_total_cumulative(
         str(var_key).strip().lower() == "precip_total"
         and str(apcp_component).strip() == "apcp_step"
     )
-    step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, default_step_hours=6)
+    step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
     cadence_hint = _cadence_hint_suffix(hints)
     logger.info("derive %s fh%03d apcp_steps=%d%s", var_key, fh, len(step_fhs), cadence_hint)
     logger.debug("derive %s fh%03d apcp_steps=%s", var_key, fh, step_fhs)
@@ -2139,7 +2236,7 @@ def _derive_snowfall_total_10to1_cumulative(
         min_step_lwe = 0.01
     min_step_lwe = max(min_step_lwe, 0.0)
 
-    step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, default_step_hours=6)
+    step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
     # Build interval plan: step_fh → (step_len, sample_fhs).
     interval_plan: dict[int, tuple[int, list[int]]] = {}
     snow_step_fhs: list[int] = []
@@ -2339,7 +2436,7 @@ def _derive_snowfall_kuchera_total_cumulative(
         minimum=1,
     )
 
-    step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, default_step_hours=6)
+    step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
     if not step_fhs:
         raise ValueError(f"No cumulative Kuchera source steps resolved for {model_id}/{var_key} fh{fh:03d}")
     logger.info(

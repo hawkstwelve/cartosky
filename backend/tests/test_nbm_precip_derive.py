@@ -42,6 +42,7 @@ def test_precip_total_mixed_cadence_uses_hourly_then_6hourly_steps(monkeypatch) 
                 "step_hours": "1",
                 "step_transition_fh": "36",
                 "step_hours_after_fh": "6",
+                "step_hours_after_fh_align_to_cycle": "true",
             }
         )
     )
@@ -326,6 +327,7 @@ def test_precip_total_nbm_late_step_prefers_exact_36_to_42_window_and_ignores_in
                 "step_hours": "1",
                 "step_transition_fh": "36",
                 "step_hours_after_fh": "6",
+                "step_hours_after_fh_align_to_cycle": "true",
             }
         )
     )
@@ -396,6 +398,83 @@ def test_precip_total_nbm_late_step_prefers_exact_36_to_42_window_and_ignores_in
     assert any(pattern.endswith(":APCP:surface:36-42 hour acc fcst:$") for pattern in fetch_patterns)
     assert not any("prob" in pattern for pattern in fetch_patterns)
     expected_inches = 42.0 * 0.03937007874015748
+    np.testing.assert_allclose(data, np.full((2, 2), expected_inches, dtype=np.float32), rtol=1e-6, atol=1e-6)
+
+
+def test_precip_total_nbm_off_cycle_uses_shifted_late_windows(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    fetch_patterns: list[str] = []
+
+    def _fake_fetch_variable(*, model_id, product, search_pattern, run_date, fh, herbie_kwargs=None, return_meta=False):
+        del model_id, product, run_date, herbie_kwargs
+        pattern = str(search_pattern)
+        fetch_patterns.append(f"{int(fh)}:{pattern}")
+        if int(fh) <= 36:
+            data = np.full((2, 2), 1.0, dtype=np.float32)
+            inventory_line = f":APCP:surface:{int(fh) - 1}-{int(fh)} hour acc fcst:"
+        elif int(fh) == 39:
+            assert pattern == ":APCP:surface:33-39 hour acc fcst:$"
+            data = np.full((2, 2), 6.0, dtype=np.float32)
+            inventory_line = ":APCP:surface:33-39 hour acc fcst:"
+        else:
+            assert int(fh) == 45
+            assert pattern == ":APCP:surface:39-45 hour acc fcst:$"
+            data = np.full((2, 2), 6.0, dtype=np.float32)
+            inventory_line = ":APCP:surface:39-45 hour acc fcst:"
+        meta = {"inventory_line": inventory_line, "search_pattern": pattern, "fh": int(fh)}
+        if return_meta:
+            return data, crs, transform, meta
+        return data, crs, transform
+
+    def _fake_inventory_lines(*, model_id, product, run_date, fh, search_pattern):
+        del model_id, product, run_date, search_pattern
+        if int(fh) <= 36:
+            return [f":APCP:surface:{int(fh) - 1}-{int(fh)} hour acc fcst:"]
+        if int(fh) == 39:
+            return [
+                ":APCP:surface:38-39 hour acc fcst:",
+                ":APCP:surface:33-39 hour acc fcst:",
+            ]
+        return [
+            ":APCP:surface:44-45 hour acc fcst:",
+            ":APCP:surface:39-45 hour acc fcst:",
+        ]
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(derive_module, "_kuchera_inventory_lines", _fake_inventory_lines)
+    monkeypatch.setattr(derive_module, "_fetch_component", lambda **kwargs: (_ for _ in ()).throw(AssertionError("selector fallback should not be used")))
+
+    var_spec_model = SimpleNamespace(
+        selectors=SimpleNamespace(
+            hints={
+                "apcp_component": "apcp_step",
+                "step_hours": "1",
+                "step_transition_fh": "36",
+                "step_hours_after_fh": "6",
+                "step_hours_after_fh_align_to_cycle": "true",
+            }
+        )
+    )
+    var_capability = SimpleNamespace(conversion="kgm2_to_in")
+
+    data, out_crs, out_transform = derive_module._derive_precip_total_cumulative(
+        model_id="nbm",
+        var_key="precip_total",
+        product="co",
+        run_date=datetime(2026, 3, 11, 9, 0),
+        fh=45,
+        var_spec_model=var_spec_model,
+        var_capability=var_capability,
+        model_plugin=object(),
+    )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    assert any(pattern.endswith(":APCP:surface:33-39 hour acc fcst:$") for pattern in fetch_patterns)
+    assert any(pattern.endswith(":APCP:surface:39-45 hour acc fcst:$") for pattern in fetch_patterns)
+    assert not any(pattern.endswith(":APCP:surface:36-42 hour acc fcst:$") for pattern in fetch_patterns)
+    expected_inches = 45.0 * 0.03937007874015748
     np.testing.assert_allclose(data, np.full((2, 2), expected_inches, dtype=np.float32), rtol=1e-6, atol=1e-6)
 
 

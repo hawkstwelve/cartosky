@@ -310,7 +310,11 @@ def test_kuchera_inventory_driven_apcp_selection(
 
     monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
     monkeypatch.setattr(derive_module, "_kuchera_inventory_lines", _fake_inventory_lines)
-    monkeypatch.setattr(derive_module, "_resolve_cumulative_step_fhs", lambda *, hints, fh, default_step_hours=6: list(step_fhs))
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, run_date=None, default_step_hours=6: list(step_fhs),
+    )
 
     var_spec_model = SimpleNamespace(
         selectors=SimpleNamespace(

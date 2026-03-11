@@ -68,61 +68,39 @@ export type UsageSummaryResponse = {
   }>;
 };
 
-export type StatusAutoChecks = {
-  has_valid_pixels?: boolean;
-  range_present?: boolean;
-  coverage_present?: boolean;
-  monotonic?: boolean | null;
-};
-
-export type StatusDiagnostics = {
-  monotonic?: {
-    ok?: boolean;
-    reason?: string;
-    decreased_pixel_count?: number;
-    decreased_fraction?: number;
-    max_decrease?: number;
-    max_increase?: number;
-    max_decrease_lon?: number | null;
-    max_decrease_lat?: number | null;
-  } | null;
-  artifact?: {
-    issue_type?: string;
-    value_grid_exists?: boolean;
+export type StatusResult = {
+  id: string;
+  model_id: string;
+  run_id: string;
+  status: "healthy" | "warning" | "error";
+  issue_type: string;
+  summary: string;
+  latest_for_model: boolean;
+  run_timestamp?: number | null;
+  run_age_hours: number;
+  last_updated_at?: number | null;
+  expected_frames: number;
+  available_frames: number;
+  completion_pct: number;
+  missing_artifact_count: number;
+  unreadable_artifact_count: number;
+  incomplete_variable_count: number;
+  incomplete_variables: string[];
+  sample_paths: Array<{
+    variable_id: string;
+    forecast_hour: number;
+    issue: string;
     value_grid_path?: string;
-    sidecar_exists?: boolean;
     sidecar_path?: string;
     read_error?: string;
-  } | null;
-};
-
-export type StatusResult = {
-  id: number;
-  created_at: number;
-  updated_at: number;
-  model_id: string;
-  variable_id: string;
-  run_id: string;
-  forecast_hour: number;
-  auto_status: "pass" | "warning";
-  auto_checks: StatusAutoChecks;
-  diagnostics: StatusDiagnostics;
-  coverage_fraction?: number | null;
-  valid_pixel_count: number;
-  total_pixel_count: number;
-  range_min?: number | null;
-  range_max?: number | null;
-  warning_summary?: string | null;
-  severity: string;
-  last_checked_at: number;
+  }>;
 };
 
 export type StatusResultsResponse = {
   window: string;
   filters: {
     model: string | null;
-    variable: string | null;
-    flagged_only: boolean;
+    status: string | null;
   };
   results: StatusResult[];
 };
@@ -212,15 +190,13 @@ export async function fetchAdminUsageSummary(window: string): Promise<UsageSumma
 export async function fetchAdminStatusResults(params: {
   window: string;
   model?: string;
-  variable?: string;
-  flaggedOnly?: boolean;
+  status?: string;
   limit?: number;
 }): Promise<StatusResultsResponse> {
   const search = new URLSearchParams();
   search.set("window", params.window);
   if (params.limit) search.set("limit", String(params.limit));
   if (params.model && params.model !== "all") search.set("model", params.model);
-  if (params.variable && params.variable !== "all") search.set("variable", params.variable);
-  if (params.flaggedOnly) search.set("flagged_only", "true");
+  if (params.status && params.status !== "all") search.set("status", params.status);
   return fetchJson<StatusResultsResponse>(`${API_ORIGIN}/api/v4/admin/status/results?${search.toString()}`);
 }

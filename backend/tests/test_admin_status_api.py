@@ -64,7 +64,7 @@ def _write_value_grid(path: Path, data: np.ndarray) -> None:
         dataset.write(data.astype("float32"), 1)
 
 
-def _write_sidecar(path: Path, *, model_id: str, variable_id: str, run_id: str, forecast_hour: int, min_value: float, max_value: float) -> None:
+def _write_sidecar(path: Path, *, model_id: str, variable_id: str, run_id: str, forecast_hour: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
@@ -76,32 +76,55 @@ def _write_sidecar(path: Path, *, model_id: str, variable_id: str, run_id: str, 
                 "fh": forecast_hour,
                 "units": "in",
                 "kind": "continuous",
-                "min": min_value,
-                "max": max_value,
+                "min": 0.0,
+                "max": 1.0,
             }
         )
     )
 
 
-def _write_manifest(path: Path, *, model_id: str, run_id: str, variables: dict[str, list[int]]) -> None:
+def _write_manifest(path: Path, *, model_id: str, run_id: str, variables: dict[str, list[int]], available_override: dict[str, int] | None = None) -> None:
     payload = {
         "contract_version": "3.0",
         "model": model_id,
         "run": run_id,
-        "variables": {
-            variable_id: {
-                "display_name": variable_id,
-                "kind": "continuous",
-                "units": "in",
-                "expected_frames": len(hours),
-                "available_frames": len(hours),
-                "frames": [{"fh": forecast_hour} for forecast_hour in hours],
-            }
-            for variable_id, hours in variables.items()
-        },
+        "last_updated": "2026-03-11T18:00:00Z",
+        "variables": {},
     }
+    for variable_id, hours in variables.items():
+        available = len(hours)
+        if available_override and variable_id in available_override:
+            available = int(available_override[variable_id])
+        payload["variables"][variable_id] = {
+            "display_name": variable_id,
+            "kind": "continuous",
+            "units": "in",
+            "expected_frames": len(hours),
+            "available_frames": available,
+            "frames": [{"fh": forecast_hour} for forecast_hour in hours[:available]],
+        }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload))
+
+
+def _seed_run(root: Path, *, model_id: str, run_id: str, variables: dict[str, list[int]], available_override: dict[str, int] | None = None, missing_value_grid: tuple[str, int] | None = None) -> None:
+    _write_manifest(
+        root / "manifests" / model_id / f"{run_id}.json",
+        model_id=model_id,
+        run_id=run_id,
+        variables=variables,
+        available_override=available_override,
+    )
+    for variable_id, hours in variables.items():
+        available = available_override.get(variable_id, len(hours)) if available_override else len(hours)
+        for forecast_hour in hours[:available]:
+            value_path = root / "published" / model_id / run_id / variable_id / f"fh{forecast_hour:03d}.val.cog.tif"
+            sidecar_path = root / "published" / model_id / run_id / variable_id / f"fh{forecast_hour:03d}.json"
+            if missing_value_grid == (variable_id, forecast_hour):
+                _write_sidecar(sidecar_path, model_id=model_id, variable_id=variable_id, run_id=run_id, forecast_hour=forecast_hour)
+                continue
+            _write_value_grid(value_path, np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32))
+            _write_sidecar(sidecar_path, model_id=model_id, variable_id=variable_id, run_id=run_id, forecast_hour=forecast_hour)
 
 
 @pytest.fixture(autouse=True)
@@ -126,188 +149,97 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
         yield test_client
 
 
-def _seed_status_files(root: Path) -> None:
-    model_id = "hrrr"
-    run_id = "20260310_12z"
-    _write_manifest(
-        root / "manifests" / model_id / f"{run_id}.json",
-        model_id=model_id,
-        run_id=run_id,
-        variables={
-            "tmp2m": [1],
-            "precip_total": [1, 2],
-        },
-    )
-
-    _write_value_grid(
-        root / "published" / model_id / run_id / "tmp2m" / "fh001.val.cog.tif",
-        np.array([[48.0, 49.5], [50.0, 51.0]], dtype=np.float32),
-    )
-    _write_sidecar(
-        root / "published" / model_id / run_id / "tmp2m" / "fh001.json",
-        model_id=model_id,
-        variable_id="tmp2m",
-        run_id=run_id,
-        forecast_hour=1,
-        min_value=48.0,
-        max_value=51.0,
-    )
-
-    _write_value_grid(
-        root / "published" / model_id / run_id / "precip_total" / "fh001.val.cog.tif",
-        np.array([[0.2, 0.5], [0.7, 1.0]], dtype=np.float32),
-    )
-    _write_sidecar(
-        root / "published" / model_id / run_id / "precip_total" / "fh001.json",
-        model_id=model_id,
-        variable_id="precip_total",
-        run_id=run_id,
-        forecast_hour=1,
-        min_value=0.2,
-        max_value=1.0,
-    )
-
-    _write_value_grid(
-        root / "published" / model_id / run_id / "precip_total" / "fh002.val.cog.tif",
-        np.array([[0.1, 0.4], [0.6, 0.9]], dtype=np.float32),
-    )
-    _write_sidecar(
-        root / "published" / model_id / run_id / "precip_total" / "fh002.json",
-        model_id=model_id,
-        variable_id="precip_total",
-        run_id=run_id,
-        forecast_hour=2,
-        min_value=0.1,
-        max_value=0.9,
-    )
-
-
-def _seed_latest_run(root: Path, *, model_id: str, run_id: str, variable_id: str = "tmp2m") -> None:
-    _write_manifest(
-        root / "manifests" / model_id / f"{run_id}.json",
-        model_id=model_id,
-        run_id=run_id,
-        variables={variable_id: [1]},
-    )
-    _write_value_grid(
-        root / "published" / model_id / run_id / variable_id / "fh001.val.cog.tif",
-        np.array([[10.0, 11.0], [12.0, 13.0]], dtype=np.float32),
-    )
-    _write_sidecar(
-        root / "published" / model_id / run_id / variable_id / "fh001.json",
-        model_id=model_id,
-        variable_id=variable_id,
-        run_id=run_id,
-        forecast_hour=1,
-        min_value=10.0,
-        max_value=13.0,
-    )
-
-
-async def test_status_results(client: httpx.AsyncClient) -> None:
+async def test_status_results_reports_incomplete_and_artifact_failures(client: httpx.AsyncClient) -> None:
     _create_session(session_id="admin-session", member_id=42, name="Admin")
-    _seed_status_files(main_module.DATA_ROOT)
+    _seed_run(
+        main_module.DATA_ROOT,
+        model_id="hrrr",
+        run_id="20260311_13z",
+        variables={"tmp2m": [0, 1], "precip_total": [0, 1]},
+        available_override={"precip_total": 1},
+    )
+    _seed_run(
+        main_module.DATA_ROOT,
+        model_id="gfs",
+        run_id="20260311_12z",
+        variables={"tmp2m": [0], "precip_total": [0]},
+        missing_value_grid=("precip_total", 0),
+    )
 
-    results = await client.get(
+    response = await client.get(
         "/api/v4/admin/status/results?window=30d",
         cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
     )
 
-    assert results.status_code == 200
-    body = results.json()
-    assert len(body["results"]) == 3
-    warning_row = next(item for item in body["results"] if item["variable_id"] == "precip_total" and item["forecast_hour"] == 2)
-    assert warning_row["auto_status"] == "warning"
-    assert warning_row["auto_checks"]["monotonic"] is False
-    assert warning_row["severity"] in {"low", "medium", "high"}
-    assert "decreased" in (warning_row["warning_summary"] or "").lower()
-    assert warning_row["diagnostics"]["monotonic"]["max_decrease"] > 0
-
-    flagged = await client.get(
-        "/api/v4/admin/status/results?window=30d&flagged_only=true",
-        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
-    )
-
-    assert flagged.status_code == 200
-    flagged_rows = flagged.json()["results"]
-    assert len(flagged_rows) == 1
-    assert flagged_rows[0]["auto_status"] == "warning"
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert any(row["issue_type"] == "run_incomplete" and row["model_id"] == "hrrr" for row in rows)
+    artifact_row = next(row for row in rows if row["issue_type"] == "artifact_failure")
+    assert artifact_row["model_id"] == "gfs"
+    assert artifact_row["missing_artifact_count"] >= 1
+    assert artifact_row["sample_paths"]
 
 
-async def test_status_results_refresh_missing_diagnostics(client: httpx.AsyncClient) -> None:
+async def test_status_results_only_scans_retained_published_runs(client: httpx.AsyncClient) -> None:
     _create_session(session_id="admin-session", member_id=42, name="Admin")
-    _seed_status_files(main_module.DATA_ROOT)
-
-    admin_telemetry.sync_recent_status_runs(data_root=main_module.DATA_ROOT, limit_runs_per_model=2)
-    with admin_telemetry._connect() as conn:
-        conn.execute(
-            """
-            UPDATE qa_reviews
-            SET warning_summary = NULL, diagnostics_json = NULL, severity = NULL
-            WHERE variable_id = 'precip_total' AND forecast_hour = 2
-            """
+    run_ids = [
+        "20260310_00z",
+        "20260310_06z",
+        "20260310_12z",
+        "20260310_18z",
+        "20260311_00z",
+    ]
+    for run_id in run_ids:
+        _seed_run(
+            main_module.DATA_ROOT,
+            model_id="gfs",
+            run_id=run_id,
+            variables={"tmp2m": [0]},
         )
 
-    results = await client.get(
-        "/api/v4/admin/status/results?window=30d&flagged_only=true",
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=gfs",
         cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
     )
 
-    assert results.status_code == 200
-    payload = results.json()["results"][0]
-    assert payload["warning_summary"]
-    assert payload["diagnostics"]["monotonic"]["max_decrease"] > 0
-    assert payload["severity"] in {"low", "medium", "high"}
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    returned_runs = [row["run_id"] for row in rows]
+    assert "20260310_00z" not in returned_runs
+    assert set(returned_runs) == {"20260311_00z", "20260310_18z", "20260310_12z", "20260310_06z"}
+    assert len(returned_runs) == 4
 
 
-async def test_status_ready_syncs_new_latest_runs(client: httpx.AsyncClient) -> None:
+async def test_status_results_flags_stale_latest_run(client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     _create_session(session_id="admin-session", member_id=42, name="Admin")
-    _seed_status_files(main_module.DATA_ROOT)
-    admin_telemetry.sync_recent_status_runs(data_root=main_module.DATA_ROOT, limit_runs_per_model=2)
+    _seed_run(
+        main_module.DATA_ROOT,
+        model_id="hrrr",
+        run_id="20260311_08z",
+        variables={"tmp2m": [0]},
+    )
 
-    _seed_latest_run(main_module.DATA_ROOT, model_id="hrrr", run_id="20260311_13z")
-    _seed_latest_run(main_module.DATA_ROOT, model_id="nbm", run_id="20260311_12z")
-    _seed_latest_run(main_module.DATA_ROOT, model_id="nam", run_id="20260311_12z")
-    _seed_latest_run(main_module.DATA_ROOT, model_id="gfs", run_id="20260311_12z")
+    real_datetime = admin_telemetry.datetime
 
-    results = await client.get(
-        "/api/v4/admin/status/results?window=30d",
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return real_datetime(2026, 3, 11, 15, 0, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=hrrr",
         cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
     )
 
-    assert results.status_code == 200
-    rows = results.json()["results"]
-    run_ids = {(row["model_id"], row["run_id"]) for row in rows}
-    assert ("hrrr", "20260311_13z") in run_ids
-    assert ("nbm", "20260311_12z") in run_ids
-    assert ("nam", "20260311_12z") in run_ids
-    assert ("gfs", "20260311_12z") in run_ids
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert rows[0]["issue_type"] == "stale_run"
+    assert rows[0]["status"] == "warning"
 
 
-async def test_status_ready_prunes_runs_older_than_retention(client: httpx.AsyncClient) -> None:
-    _create_session(session_id="admin-session", member_id=42, name="Admin")
-
-    old_runs = [
-        "20260310_00z",
-        "20260310_01z",
-        "20260310_02z",
-        "20260310_03z",
-        "20260310_04z",
-    ]
-    for run_id in old_runs:
-        _seed_latest_run(main_module.DATA_ROOT, model_id="hrrr", run_id=run_id, variable_id="tmp2m")
-
-    admin_telemetry.sync_recent_status_runs(data_root=main_module.DATA_ROOT, limit_runs_per_model=5)
-
-    # Simulate retention by removing the oldest manifest so only the newest four remain reviewable.
-    (main_module.DATA_ROOT / "manifests" / "hrrr" / "20260310_00z.json").unlink()
-
-    results = await client.get(
-        "/api/v4/admin/status/results?window=30d",
-        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
-    )
-
-    assert results.status_code == 200
-    run_ids = {(row["model_id"], row["run_id"]) for row in results.json()["results"]}
-    assert ("hrrr", "20260310_00z") not in run_ids
-    assert ("hrrr", "20260310_04z") in run_ids
+async def test_status_results_requires_admin(client: httpx.AsyncClient) -> None:
+    response = await client.get("/api/v4/admin/status/results?window=30d")
+    assert response.status_code == 401

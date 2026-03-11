@@ -1077,26 +1077,23 @@ async def admin_status_results(
     request: Request,
     window: str = Query("30d"),
     model: str | None = Query(None),
-    variable: str | None = Query(None),
-    flagged_only: bool = Query(False),
+    status: str | None = Query(None),
     limit: int = Query(200, ge=1, le=500),
 ) -> dict[str, Any]:
     _require_admin_session(request)
-    admin_telemetry.ensure_status_ready(data_root=DATA_ROOT, seed_limit_runs_per_model=2, refresh_limit_runs=50)
     normalized_window = window.strip().lower()
     since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
     return {
         "window": normalized_window,
         "filters": {
             "model": _normalize_filter_value(model),
-            "variable": _normalize_filter_value(variable),
-            "flagged_only": bool(flagged_only),
+            "status": _normalize_filter_value(status),
         },
-        "results": admin_telemetry.get_status_results(
+        "results": admin_telemetry.get_operational_status_results(
+            data_root=DATA_ROOT,
             since_ts=since_ts,
             model_id=_normalize_filter_value(model),
-            variable_id=_normalize_filter_value(variable),
-            flagged_only=bool(flagged_only),
+            status_filter=_normalize_filter_value(status),
             limit=limit,
         ),
     }

@@ -205,6 +205,7 @@ NBM_VARS: dict[str, VarSpec] = {
                 "step_hours": "1",
                 "step_transition_fh": "36",
                 "step_hours_after_fh": "6",
+                "step_hours_after_fh_align_to_cycle": "true",
             },
         ),
         derived=True,
@@ -221,6 +222,7 @@ NBM_VARS: dict[str, VarSpec] = {
                 "step_hours": "1",
                 "step_transition_fh": "36",
                 "step_hours_after_fh": "6",
+                "step_hours_after_fh_align_to_cycle": "true",
             }
         ),
         derived=True,

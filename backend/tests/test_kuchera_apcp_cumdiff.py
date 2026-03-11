@@ -114,7 +114,7 @@ def _run_case(
     monkeypatch.setattr(
         derive_module,
         "_resolve_cumulative_step_fhs",
-        lambda *, hints, fh, default_step_hours=6: list(step_fhs),
+        lambda *, hints, fh, run_date=None, default_step_hours=6: list(step_fhs),
     )
 
     data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(

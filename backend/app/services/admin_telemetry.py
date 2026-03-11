@@ -7,12 +7,13 @@ import sqlite3
 import threading
 import time
 from collections.abc import Iterable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import rasterio
-from pyproj import Transformer
+
+from app.models.registry import MODEL_REGISTRY
 
 TELEMETRY_DB_PATH = Path(
     os.environ.get("CARTOSKY_TELEMETRY_DB_PATH")
@@ -46,20 +47,9 @@ PERF_TARGETS_MS = {
     "animation_stall": 750.0,
 }
 
-STATUS_VARIABLE_IDS = {
-    "tmp2m",
-    "precip_total",
-    "snowfall_total",
-    "snowfall_kuchera_total",
-}
-
 STATUS_KEEP_RUNS_PER_MODEL = 4
 
-STATUS_CUMULATIVE_VARIABLE_IDS = {
-    "precip_total",
-    "snowfall_total",
-    "snowfall_kuchera_total",
-}
+RUN_ID_RE = re.compile(r"^(?P<day>\d{8})_(?P<hour>\d{2})z$")
 
 _db_init_lock = threading.Lock()
 _db_initialized = False
@@ -157,45 +147,8 @@ def _init_db(conn: sqlite3.Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_synthetic_perf_runs_metric_created
                 ON synthetic_perf_runs(metric_name, created_at);
 
-            CREATE TABLE IF NOT EXISTS qa_reviews (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                model_id TEXT NOT NULL,
-                variable_id TEXT NOT NULL,
-                run_id TEXT NOT NULL,
-                forecast_hour INTEGER NOT NULL,
-                auto_status TEXT NOT NULL,
-                manual_status TEXT NOT NULL,
-                benchmark_site TEXT,
-                reviewer_name TEXT,
-                reviewer_member_id INTEGER,
-                notes TEXT,
-                auto_checks_json TEXT,
-                coverage_fraction REAL,
-                valid_pixel_count INTEGER,
-                total_pixel_count INTEGER,
-                range_min REAL,
-                range_max REAL,
-                last_checked_at INTEGER NOT NULL,
-                UNIQUE(model_id, variable_id, run_id, forecast_hour)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_qa_reviews_updated
-                ON qa_reviews(updated_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_qa_reviews_run
-                ON qa_reviews(model_id, run_id, variable_id, forecast_hour);
-            CREATE INDEX IF NOT EXISTS idx_qa_reviews_manual
-                ON qa_reviews(manual_status, updated_at DESC);
             """
         )
-        qa_cols = {str(row["name"]) for row in conn.execute("PRAGMA table_info(qa_reviews)").fetchall()}
-        if "warning_summary" not in qa_cols:
-            conn.execute("ALTER TABLE qa_reviews ADD COLUMN warning_summary TEXT")
-        if "severity" not in qa_cols:
-            conn.execute("ALTER TABLE qa_reviews ADD COLUMN severity TEXT")
-        if "diagnostics_json" not in qa_cols:
-            conn.execute("ALTER TABLE qa_reviews ADD COLUMN diagnostics_json TEXT")
         _db_initialized = True
 
 
@@ -234,6 +187,62 @@ def _load_json_file(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _parse_run_id_datetime(run_id: str) -> datetime | None:
+    match = RUN_ID_RE.match(run_id)
+    if not match:
+        return None
+    try:
+        day = match.group("day")
+        hour = int(match.group("hour"))
+        return datetime(
+            int(day[0:4]),
+            int(day[4:6]),
+            int(day[6:8]),
+            hour,
+            tzinfo=timezone.utc,
+        )
+    except ValueError:
+        return None
+
+
+def _parse_manifest_timestamp(value: Any) -> int | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return int(parsed.timestamp())
+
+
+def _expected_latest_run_time(*, model_id: str, now_utc: datetime) -> datetime | None:
+    plugin = MODEL_REGISTRY.get(model_id)
+    capabilities = getattr(plugin, "capabilities", None) if plugin is not None else None
+    run_discovery = getattr(capabilities, "run_discovery", {}) if capabilities is not None else {}
+    cadence = int(run_discovery.get("cycle_cadence_hours") or 0)
+    fallback_lag = int(run_discovery.get("fallback_lag_hours") or 0)
+    if cadence <= 0:
+        return None
+    reference = now_utc - timedelta(hours=max(0, fallback_lag))
+    floored_hour = reference.hour - (reference.hour % cadence)
+    return reference.replace(hour=floored_hour, minute=0, second=0, microsecond=0)
+
+
+def _published_run_ids(data_root: Path, model_id: str, *, keep_runs: int) -> list[str]:
+    model_root = data_root / "published" / model_id
+    if not model_root.is_dir():
+        return []
+    run_ids = sorted(
+        [
+            path.name
+            for path in model_root.iterdir()
+            if path.is_dir() and RUN_ID_RE.match(path.name)
+        ],
+        reverse=True,
+    )
+    return run_ids[: max(1, int(keep_runs))]
 
 
 def _value_cog_path(data_root: Path, model_id: str, run_id: str, variable_id: str, forecast_hour: int) -> Path:
@@ -1136,6 +1145,212 @@ def get_perf_breakdown(
         }
         for key, values in ranked
     ]
+
+
+def _scan_run_issue(
+    *,
+    data_root: Path,
+    model_id: str,
+    run_id: str,
+    latest_run_id: str | None,
+) -> dict[str, Any]:
+    manifest_path = _manifest_path(data_root, model_id, run_id)
+    manifest = _load_json_file(manifest_path)
+    now_utc = datetime.now(timezone.utc)
+    run_dt = _parse_run_id_datetime(run_id)
+    run_timestamp = int(run_dt.timestamp()) if run_dt is not None else None
+    latest_for_model = run_id == latest_run_id
+
+    base_row = {
+        "id": f"{model_id}:{run_id}",
+        "model_id": model_id,
+        "run_id": run_id,
+        "latest_for_model": latest_for_model,
+        "run_timestamp": run_timestamp,
+        "run_age_hours": round(max(0.0, (now_utc.timestamp() - (run_timestamp or now_utc.timestamp())) / 3600.0), 1),
+        "expected_frames": 0,
+        "available_frames": 0,
+        "completion_pct": 0.0,
+        "missing_artifact_count": 0,
+        "unreadable_artifact_count": 0,
+        "incomplete_variable_count": 0,
+        "incomplete_variables": [],
+        "sample_paths": [],
+    }
+
+    if manifest is None:
+        return {
+            **base_row,
+            "status": "error",
+            "issue_type": "manifest_missing",
+            "summary": f"Manifest is missing or unreadable for {model_id}/{run_id}.",
+            "last_updated_at": int(manifest_path.stat().st_mtime) if manifest_path.exists() else None,
+        }
+
+    variables = manifest.get("variables")
+    if not isinstance(variables, dict) or not variables:
+        return {
+            **base_row,
+            "status": "error",
+            "issue_type": "manifest_invalid",
+            "summary": f"Manifest is missing variable entries for {model_id}/{run_id}.",
+            "last_updated_at": _parse_manifest_timestamp(manifest.get("last_updated")),
+        }
+
+    expected_frames = 0
+    available_frames = 0
+    incomplete_variables: list[str] = []
+    missing_artifact_count = 0
+    unreadable_artifact_count = 0
+    sample_paths: list[dict[str, Any]] = []
+
+    for variable_id, entry in sorted(variables.items()):
+        if not isinstance(entry, dict):
+            continue
+        expected = int(entry.get("expected_frames") or 0)
+        available = int(entry.get("available_frames") or 0)
+        expected_frames += max(0, expected)
+        available_frames += max(0, available)
+        if expected > available:
+            incomplete_variables.append(str(variable_id))
+
+        frame_entries = entry.get("frames")
+        if not isinstance(frame_entries, list):
+            continue
+
+        frame_hours = sorted(
+            int(frame.get("fh"))
+            for frame in frame_entries
+            if isinstance(frame, dict) and isinstance(frame.get("fh"), int)
+        )
+        for fh in frame_hours:
+            value_path = _value_cog_path(data_root, model_id, run_id, str(variable_id), fh)
+            sidecar_path = _sidecar_path(data_root, model_id, run_id, str(variable_id), fh)
+            missing_here = False
+            if not value_path.is_file():
+                missing_artifact_count += 1
+                missing_here = True
+            if not sidecar_path.is_file():
+                missing_artifact_count += 1
+                missing_here = True
+            if missing_here and len(sample_paths) < 6:
+                sample_paths.append(
+                    {
+                        "variable_id": str(variable_id),
+                        "forecast_hour": fh,
+                        "issue": "missing_artifact",
+                        "value_grid_path": str(value_path),
+                        "sidecar_path": str(sidecar_path),
+                    }
+                )
+
+        sample_hours = frame_hours[:1]
+        if len(frame_hours) > 1:
+            sample_hours.append(frame_hours[-1])
+        for fh in sorted(set(sample_hours)):
+            value_path = _value_cog_path(data_root, model_id, run_id, str(variable_id), fh)
+            if not value_path.is_file():
+                continue
+            try:
+                with rasterio.open(value_path):
+                    pass
+            except Exception as exc:
+                unreadable_artifact_count += 1
+                if len(sample_paths) < 6:
+                    sample_paths.append(
+                        {
+                            "variable_id": str(variable_id),
+                            "forecast_hour": fh,
+                            "issue": "unreadable_value_grid",
+                            "value_grid_path": str(value_path),
+                            "read_error": str(exc),
+                        }
+                    )
+
+    completion_pct = round((available_frames / expected_frames) * 100.0, 1) if expected_frames > 0 else 0.0
+    expected_latest_dt = _expected_latest_run_time(model_id=model_id, now_utc=now_utc)
+    stale_latest = bool(
+        latest_for_model
+        and run_dt is not None
+        and expected_latest_dt is not None
+        and run_dt < expected_latest_dt
+    )
+
+    status = "healthy"
+    issue_type = "healthy"
+    summary = "Retained published run looks healthy."
+    if unreadable_artifact_count > 0 or missing_artifact_count > 0:
+        status = "error"
+        issue_type = "artifact_failure"
+        summary = f"{missing_artifact_count} missing artifacts and {unreadable_artifact_count} unreadable value grids detected."
+    elif latest_for_model and stale_latest and available_frames < expected_frames:
+        status = "error"
+        issue_type = "run_stalled"
+        summary = f"Latest published run is stale and incomplete at {available_frames}/{expected_frames} frames."
+    elif latest_for_model and stale_latest:
+        status = "warning"
+        issue_type = "stale_run"
+        summary = "Latest published run is older than the expected cycle for this model."
+    elif available_frames < expected_frames:
+        status = "warning"
+        issue_type = "run_incomplete"
+        summary = f"Run is incomplete at {available_frames}/{expected_frames} frames."
+
+    return {
+        **base_row,
+        "status": status,
+        "issue_type": issue_type,
+        "summary": summary,
+        "last_updated_at": _parse_manifest_timestamp(manifest.get("last_updated")) or int(manifest_path.stat().st_mtime),
+        "expected_frames": expected_frames,
+        "available_frames": available_frames,
+        "completion_pct": completion_pct,
+        "missing_artifact_count": missing_artifact_count,
+        "unreadable_artifact_count": unreadable_artifact_count,
+        "incomplete_variable_count": len(incomplete_variables),
+        "incomplete_variables": incomplete_variables[:12],
+        "sample_paths": sample_paths,
+    }
+
+
+def get_operational_status_results(
+    *,
+    data_root: Path,
+    since_ts: int,
+    model_id: str | None = None,
+    status_filter: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    candidate_models = [model_id] if model_id else sorted(MODEL_REGISTRY.keys())
+    normalized_status_filter = (status_filter or "").strip().lower() or None
+    rows: list[dict[str, Any]] = []
+
+    for candidate_model in candidate_models:
+        run_ids = _published_run_ids(data_root, candidate_model, keep_runs=STATUS_KEEP_RUNS_PER_MODEL)
+        latest_run_id = run_ids[0] if run_ids else None
+        for run_id in run_ids:
+            row = _scan_run_issue(
+                data_root=data_root,
+                model_id=candidate_model,
+                run_id=run_id,
+                latest_run_id=latest_run_id,
+            )
+            updated_at = int(row.get("last_updated_at") or row.get("run_timestamp") or 0)
+            if updated_at < since_ts:
+                continue
+            if normalized_status_filter and row["status"] != normalized_status_filter:
+                continue
+            rows.append(row)
+
+    rows.sort(
+        key=lambda item: (
+            0 if item["status"] == "error" else 1 if item["status"] == "warning" else 2,
+            -int(item.get("last_updated_at") or 0),
+            item["model_id"],
+            item["run_id"],
+        )
+    )
+    return rows[: max(1, min(500, int(limit)))]
 
 
 def get_usage_summary(*, since_ts: int) -> dict[str, Any]:
