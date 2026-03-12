@@ -60,7 +60,8 @@ type DenseLegendRow = {
 };
 
 const DENSE_LEGEND_THRESHOLD = 18;
-const DENSE_LEGEND_MAX_ROWS = 18;
+const DENSE_LEGEND_MAX_ROWS = 15;
+const DENSE_LEGEND_HEIGHT = 232;
 
 function radarGroupLabelForCode(code: string, index: number): string {
   const normalized = code.toLowerCase();
@@ -142,25 +143,25 @@ function DenseLegendRows({ entries }: { entries: LegendEntry[] }) {
   const rows = buildDenseLegendRows(entries);
 
   return (
-    <div className="py-0.5">
+    <div className="py-1">
       <div
-        className="grid gap-[2px]"
+        className="grid gap-[3px]"
         style={{
           gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))`,
-          height: 198,
+          height: DENSE_LEGEND_HEIGHT,
         }}
       >
         {rows.map((row, index) => (
-          <div key={`${row.min}-${row.max}-${index}`} className="grid min-h-0 grid-cols-[10px_1fr] items-center gap-1">
+          <div key={`${row.min}-${row.max}-${index}`} className="grid min-h-0 grid-cols-[12px_1fr] items-center gap-1.5">
             <span
-              className="h-full min-h-[8px] rounded-[2px] border border-border/20 shadow-sm"
+              className="h-full min-h-[10px] rounded-[3px] border border-border/20 shadow-sm"
               style={
                 row.startColor === row.endColor
                   ? { backgroundColor: row.startColor }
                   : { backgroundImage: `linear-gradient(to bottom, ${row.startColor}, ${row.endColor})` }
               }
             />
-            <span className="font-mono text-[9px] font-medium leading-none tabular-nums tracking-tight text-foreground/92 whitespace-nowrap">
+            <span className="font-mono text-[10px] font-medium leading-none tabular-nums tracking-tight text-foreground/95 whitespace-nowrap">
               {formatRangeLabel(row.min, row.max)}
             </span>
           </div>
@@ -341,7 +342,7 @@ export function MapLegend({
       ref={containerRef}
       className={cn(
         "fixed z-[55] flex flex-col max-h-[70vh] overflow-hidden rounded-xl glass bg-black/34 shadow-[0_6px_22px_rgba(0,0,0,0.3)] transition-all duration-200",
-        showPrecipPtypeRows ? "w-[220px]" : "w-[156px]",
+        showPrecipPtypeRows ? "w-[220px]" : showDenseLegend ? "w-[138px]" : "w-[156px]",
         isSmallScreen ? "right-3 top-40 max-w-[min(72vw,220px)]" : "right-4 top-[4.35rem]"
       )}
       role="complementary"
