@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Ref, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 import { Slider } from "@/components/ui/slider";
@@ -168,64 +168,49 @@ function groupRadarEntries(
 // of discrete swatches. Variables like surface temp (~40 stops) and snowfall
 // comfortably exceed this; simple legends (≤12 entries) keep the swatch list.
 const GRADIENT_THRESHOLD = 12;
-const GRADIENT_MAX_TICKS = 5;
+// Number of labels shown beside the gradient bar (always includes min & max).
+const GRADIENT_LABEL_COUNT = 6;
 
 function GradientColorBar({ entries }: { entries: LegendEntry[] }) {
   const n = entries.length;
 
-  // entries is ascending (low→high); render gradient left→right.
-  const gradientColors = entries.map((e) => e.color).join(", ");
+  // entries is ascending (low→high); pill gradient goes high (top) → low (bottom).
+  const gradientColors = entries
+    .slice()
+    .reverse()
+    .map((e) => e.color)
+    .join(", ");
 
-  // Up to 5 evenly-spaced ticks, always including both endpoints.
+  // Pick GRADIENT_LABEL_COUNT evenly-spaced indices, sorted descending so the
+  // first label (highest value) sits at the top next to the warm end of the bar.
   const tickSet = new Set<number>();
-  const step = Math.max(1, Math.floor((n - 1) / (GRADIENT_MAX_TICKS - 1)));
+  const step = Math.max(1, Math.floor((n - 1) / (GRADIENT_LABEL_COUNT - 1)));
   for (let i = 0; i < n; i += step) tickSet.add(i);
   tickSet.add(0);
   tickSet.add(n - 1);
-  const tickIndices = Array.from(tickSet).sort((a, b) => a - b);
+  // Descending: highest entry index → top label.
+  const labelIndices = Array.from(tickSet).sort((a, b) => b - a);
 
   return (
-    <div className="flex flex-col gap-2 pt-1.5 pb-0.5">
-      {/* Full-width smooth horizontal gradient bar */}
+    <div className="flex items-stretch gap-3 py-2">
+      {/* Smooth vertical gradient pill */}
       <div
-        className="h-5 w-full rounded-lg shadow-[0_2px_12px_rgba(0,0,0,0.55)] ring-1 ring-inset ring-white/10"
-        style={{ backgroundImage: `linear-gradient(to right, ${gradientColors})` }}
+        className="w-5 shrink-0 rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.6)] ring-1 ring-inset ring-white/10"
+        style={{
+          backgroundImage: `linear-gradient(to bottom, ${gradientColors})`,
+          minHeight: 180,
+        }}
       />
-      {/* Thin tick nubs beneath the bar */}
-      <div className="relative h-1">
-        {tickIndices.map((i) => {
-          const leftPct = ((i + 0.5) / n) * 100;
-          return (
-            <span
-              key={i}
-              className="absolute top-0 h-full w-px rounded-full bg-foreground/25"
-              style={{ left: `${leftPct}%` }}
-            />
-          );
-        })}
-      </div>
-      {/* Value labels — edge-anchored at endpoints so they never overflow */}
-      <div className="relative h-3.5">
-        {tickIndices.map((i, ti) => {
-          const leftPct = ((i + 0.5) / n) * 100;
-          let pos: CSSProperties;
-          if (ti === 0) {
-            pos = { left: 0 };
-          } else if (ti === tickIndices.length - 1) {
-            pos = { right: 0 };
-          } else {
-            pos = { left: `${leftPct}%`, transform: "translateX(-50%)" };
-          }
-          return (
-            <span
-              key={i}
-              className="absolute font-mono text-[9px] font-semibold tabular-nums tracking-tight text-foreground/75 leading-none whitespace-nowrap"
-              style={pos}
-            >
-              {formatValue(entries[i].value)}
-            </span>
-          );
-        })}
+      {/* Value labels evenly distributed top-to-bottom — no tick marks */}
+      <div className="flex flex-col justify-between py-[1px] flex-1">
+        {labelIndices.map((i) => (
+          <span
+            key={i}
+            className="font-mono text-[10px] font-medium tabular-nums tracking-tight text-foreground/80 leading-none whitespace-nowrap"
+          >
+            {formatValue(entries[i].value)}
+          </span>
+        ))}
       </div>
     </div>
   );
