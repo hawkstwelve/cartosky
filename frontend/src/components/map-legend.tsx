@@ -164,6 +164,63 @@ function groupRadarEntries(
   return fallbackGroups;
 }
 
+// Threshold above which the default branch switches from discrete swatches to a
+// continuous gradient bar.  Variables like surface temp (~40 stops) and snowfall
+// (~20+ stops) comfortably exceed this; simple variables (wind direction 8 stops,
+// precip < 10 stops) stay as swatches.
+const GRADIENT_THRESHOLD = 12;
+const GRADIENT_MAX_TICKS = 7;
+
+function GradientColorBar({ entries }: { entries: LegendEntry[] }) {
+  const n = entries.length;
+
+  // entries is ascending (low→high); we display high at top, low at bottom.
+  const gradientColors = entries
+    .slice()
+    .reverse()
+    .map((e) => e.color)
+    .join(", ");
+
+  // Choose evenly-spaced tick indices so we always hit both endpoints.
+  const tickSet = new Set<number>();
+  const step = Math.max(1, Math.floor((n - 1) / (GRADIENT_MAX_TICKS - 1)));
+  for (let i = 0; i < n; i += step) tickSet.add(i);
+  tickSet.add(0);
+  tickSet.add(n - 1);
+  const tickIndices = Array.from(tickSet).sort((a, b) => a - b);
+
+  return (
+    <div className="flex gap-1.5 py-0.5" style={{ height: 160 }}>
+      {/* Gradient strip */}
+      <div
+        className="w-3 shrink-0 self-stretch rounded-[3px] border border-border/30 shadow-sm"
+        style={{ backgroundImage: `linear-gradient(to bottom, ${gradientColors})` }}
+      />
+      {/* Tick labels — positioned relative to the strip height */}
+      <div className="relative flex-1 self-stretch">
+        {tickIndices.map((i) => {
+          // Ascending index i → reversed display index j from the top.
+          const j = n - 1 - i;
+          // Center of that color band as a percentage from the top of the bar.
+          const topPct = ((j + 0.5) / n) * 100;
+          return (
+            <div
+              key={i}
+              className="absolute left-0 right-0 flex items-center gap-0.5"
+              style={{ top: `${topPct}%`, transform: "translateY(-50%)" }}
+            >
+              <span className="h-px w-2 shrink-0 bg-foreground/30" />
+              <span className="font-mono text-[10px] font-medium tabular-nums tracking-tight text-foreground/95 leading-none whitespace-nowrap">
+                {formatValue(entries[i].value)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function groupPrecipPtypeRows(
   entries: LegendEntry[],
   ptypeBreaks?: Record<string, { offset: number; count: number }>,
@@ -303,7 +360,7 @@ export function MapLegend({
       >
         <div className="overflow-hidden">
           <div key={fadeKey} className="flex flex-col gap-1.5 px-1.5 py-1.5 animate-in fade-in duration-200">
-            <div className="legend-scroll max-h-[45vh] space-y-px overflow-y-auto scroll-smooth">
+            <div className={cn(legend.entries.length > GRADIENT_THRESHOLD && !showPrecipPtypeRows && !showGroupedRadar ? "" : "legend-scroll max-h-[45vh] space-y-px overflow-y-auto scroll-smooth")}>
               {showPrecipPtypeRows
                 ? precipPtypeRows.map((row, rowIndex) => (
                     <div
@@ -349,6 +406,8 @@ export function MapLegend({
                       ))}
                     </div>
                   ))
+                : legend.entries.length > GRADIENT_THRESHOLD
+                ? <GradientColorBar entries={legend.entries} />
                 : legend.entries.slice().reverse().map((entry, index) => (
                     <div
                       key={`${entry.value}-${entry.color}-${index}`}
