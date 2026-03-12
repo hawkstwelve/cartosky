@@ -65,6 +65,24 @@ const QUICK_FORUMS: Array<{ id: number; label: string }> = [
   { id: 9, label: "East" },
 ];
 
+const modalCardClass =
+  "glass-strong relative isolate my-2 flex max-h-[calc(100dvh-1rem)] w-full max-w-3xl flex-col overflow-hidden rounded-[26px] border border-white/12 shadow-[0_24px_80px_rgba(0,0,0,0.58)] sm:my-4 sm:max-h-[calc(100dvh-2rem)]";
+
+const sectionCardClass =
+  "rounded-2xl border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_14px_34px_rgba(0,0,0,0.2)] backdrop-blur-xl";
+
+const insetCardClass =
+  "rounded-xl border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.025))] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]";
+
+const secondaryButtonClass =
+  "inline-flex h-8 items-center rounded-md border border-white/15 bg-white/[0.07] px-2.5 text-xs font-medium text-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors hover:bg-white/[0.12]";
+
+const fieldClass =
+  "h-8 w-full rounded-md border border-white/15 bg-black/30 px-2 text-xs text-white outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md focus:border-emerald-300/40";
+
+const textareaClass =
+  "w-full rounded-md border border-white/15 bg-black/30 px-2 py-2 text-xs text-white outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md focus:border-emerald-300/40";
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -889,33 +907,40 @@ export function TwfShareModal({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/65 p-2 backdrop-blur-sm sm:items-center sm:p-4"
+      className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/60 p-2 backdrop-blur-md sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Share"
       onClick={onClose}
     >
       <div
-        className="my-2 flex max-h-[calc(100dvh-1rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-white/15 bg-black/85 shadow-[0_20px_52px_rgba(0,0,0,0.72)] sm:my-4 sm:max-h-[calc(100dvh-2rem)]"
+        className={modalCardClass}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),transparent)]" />
+          <div className="absolute left-[-4.5rem] top-10 h-36 w-36 rounded-full bg-emerald-300/10 blur-3xl" />
+          <div className="absolute right-[-3rem] top-16 h-28 w-28 rounded-full bg-sky-300/10 blur-3xl" />
+          <div className="absolute inset-0 rounded-[26px] ring-1 ring-inset ring-white/6" />
+        </div>
+
+        <div className="relative z-10 flex shrink-0 items-center justify-between border-b border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.07),rgba(255,255,255,0.02))] px-4 py-3.5">
           <div>
             <div className="text-sm font-semibold text-white">Share</div>
-            <div className="text-xs text-white/60">Copy link/summary, generate a screenshot, or post to TWF.</div>
+            <div className="text-xs text-white/68">Copy link or summary, generate a screenshot, or post to TWF.</div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/15 bg-white/[0.07] text-white/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors hover:bg-white/[0.12]"
             aria-label="Close share modal"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="min-h-0 space-y-4 overflow-y-auto px-4 py-4">
-          <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">
+        <div className="legend-scroll relative z-10 min-h-0 space-y-4 overflow-y-auto px-4 py-4">
+          <div className={`${sectionCardClass} p-3 sm:p-4`}>
             <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/65">
               Post to The Weather Forums
             </div>
@@ -933,7 +958,7 @@ export function TwfShareModal({
                 <div className="flex items-center gap-2">
                   <a
                     href={`${API_ORIGIN}/auth/twf/start`}
-                    className="inline-flex h-8 items-center rounded-md border border-emerald-300/25 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] px-2.5 text-xs font-semibold text-emerald-50 hover:brightness-110"
+                    className="inline-flex h-8 items-center rounded-md border border-emerald-300/30 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] px-2.5 text-xs font-semibold text-emerald-50 shadow-[0_10px_22px_rgba(22,39,34,0.35)] transition-all hover:brightness-110"
                   >
                     Connect TWF
                   </a>
@@ -955,7 +980,7 @@ export function TwfShareModal({
                     href={submitTopicSuccess ? submitTopicSuccess.topicUrl : submitSuccess?.postUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35"
+                    className={`${secondaryButtonClass} gap-1.5`}
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                     {submitTopicSuccess ? "Open topic" : "Open post"}
@@ -963,7 +988,7 @@ export function TwfShareModal({
                   <button
                     type="button"
                     onClick={onClose}
-                    className="inline-flex h-8 items-center rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35"
+                    className={secondaryButtonClass}
                   >
                     Close
                   </button>
@@ -971,24 +996,24 @@ export function TwfShareModal({
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <div className={`${insetCardClass} bg-black/18 p-3 backdrop-blur-xl`}>
                   <div className="space-y-2">
-                    <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                    <div className={`${insetCardClass} px-3 py-2.5`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex min-w-0 items-start gap-3">
-                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-[11px] font-semibold text-emerald-100">
+                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/35 bg-emerald-400/12 text-[11px] font-semibold text-emerald-100 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
                             1
                           </div>
                           <div className="min-w-0">
-                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Where to post</div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/52">Where to post</div>
                             <div className="mt-1 text-sm text-white">{postingTargetSummary}</div>
-                            <div className="mt-1 text-xs text-white/55">{destinationStepLabel}</div>
+                            <div className="mt-1 text-xs text-white/62">{destinationStepLabel}</div>
                           </div>
                         </div>
                         <button
                           type="button"
                           onClick={() => setShowDestinationEditor((current) => !current)}
-                          className="inline-flex h-8 shrink-0 items-center rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35"
+                          className={`${secondaryButtonClass} shrink-0`}
                         >
                           {showDestinationEditor ? "Done" : "Edit"}
                         </button>
@@ -1002,10 +1027,10 @@ export function TwfShareModal({
                                 type="button"
                                 onClick={() => setShareMode("existing")}
                                 className={[
-                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium",
+                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors",
                                   shareMode === "existing"
-                                    ? "border-emerald-300/35 bg-emerald-400/20 text-emerald-50"
-                                    : "border-white/15 bg-black/25 text-white/80 hover:bg-black/35",
+                                    ? "border-emerald-300/40 bg-[linear-gradient(180deg,rgba(101,179,149,0.28),rgba(48,91,73,0.2))] text-emerald-50"
+                                    : "border-white/15 bg-white/[0.07] text-white/82 hover:bg-white/[0.12]",
                                 ].join(" ")}
                               >
                                 Existing topic
@@ -1014,10 +1039,10 @@ export function TwfShareModal({
                                 type="button"
                                 onClick={() => setShareMode("new")}
                                 className={[
-                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium",
+                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors",
                                   shareMode === "new"
-                                    ? "border-emerald-300/35 bg-emerald-400/20 text-emerald-50"
-                                    : "border-white/15 bg-black/25 text-white/80 hover:bg-black/35",
+                                    ? "border-emerald-300/40 bg-[linear-gradient(180deg,rgba(101,179,149,0.28),rgba(48,91,73,0.2))] text-emerald-50"
+                                    : "border-white/15 bg-white/[0.07] text-white/82 hover:bg-white/[0.12]",
                                 ].join(" ")}
                               >
                                 New topic
@@ -1037,10 +1062,10 @@ export function TwfShareModal({
                                     setShowOtherForums(false);
                                   }}
                                   className={[
-                                    "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium",
+                                    "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors",
                                     selectedForumId === forum.id && !showOtherForums
-                                      ? "border-emerald-300/35 bg-emerald-400/20 text-emerald-50"
-                                      : "border-white/15 bg-black/25 text-white/80 hover:bg-black/35",
+                                      ? "border-emerald-300/40 bg-[linear-gradient(180deg,rgba(101,179,149,0.28),rgba(48,91,73,0.2))] text-emerald-50"
+                                      : "border-white/15 bg-white/[0.07] text-white/82 hover:bg-white/[0.12]",
                                   ].join(" ")}
                                 >
                                   {forum.label}
@@ -1050,10 +1075,10 @@ export function TwfShareModal({
                                 type="button"
                                 onClick={() => setShowOtherForums((current) => !current)}
                                 className={[
-                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium",
+                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors",
                                   showOtherForums
-                                    ? "border-emerald-300/35 bg-emerald-400/20 text-emerald-50"
-                                    : "border-white/15 bg-black/25 text-white/80 hover:bg-black/35",
+                                    ? "border-emerald-300/40 bg-[linear-gradient(180deg,rgba(101,179,149,0.28),rgba(48,91,73,0.2))] text-emerald-50"
+                                    : "border-white/15 bg-white/[0.07] text-white/82 hover:bg-white/[0.12]",
                                 ].join(" ")}
                               >
                                 Other forum...
@@ -1067,7 +1092,7 @@ export function TwfShareModal({
                                   <select
                                     value={String(selectedForumId)}
                                     onChange={(event) => setSelectedForumId(Number(event.target.value))}
-                                    className="h-8 w-full rounded-md border border-white/15 bg-black/35 px-2 text-xs text-white outline-none focus:border-emerald-300/40"
+                                    className={fieldClass}
                                   >
                                     {forums.map((forum) => (
                                       <option key={forum.id} value={String(forum.id)}>
@@ -1095,7 +1120,7 @@ export function TwfShareModal({
                                 <select
                                   value={selectedTopicId !== null ? String(selectedTopicId) : ""}
                                   onChange={(event) => setSelectedTopicId(Number(event.target.value))}
-                                  className="h-8 w-full rounded-md border border-white/15 bg-black/35 px-2 text-xs text-white outline-none focus:border-emerald-300/40"
+                                  className={fieldClass}
                                 >
                                   {topics.map((topic) => (
                                     <option key={topic.id} value={String(topic.id)}>
@@ -1116,7 +1141,7 @@ export function TwfShareModal({
                                 onChange={(event) => setNewTopicTitle(event.target.value)}
                                 maxLength={255}
                                 placeholder="Enter a topic title"
-                                className="h-8 w-full rounded-md border border-white/15 bg-black/35 px-2 text-xs text-white outline-none placeholder:text-white/40 focus:border-emerald-300/40"
+                                className={`${fieldClass} placeholder:text-white/40`}
                               />
                               <div className="mt-1 text-[11px] text-white/55">New topic will be posted in the selected forum.</div>
                             </div>
@@ -1124,14 +1149,14 @@ export function TwfShareModal({
                         </div>
                       ) : null}
                     </div>
-                    <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                    <div className={`${insetCardClass} px-3 py-2.5`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex min-w-0 items-start gap-3">
-                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-[11px] font-semibold text-emerald-100">
+                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/35 bg-emerald-400/12 text-[11px] font-semibold text-emerald-100 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
                             2
                           </div>
                           <div className="min-w-0">
-                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Screenshot</div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/52">Screenshot</div>
                             <div className="mt-1 text-sm text-white">{screenshotStepLabel}</div>
                           </div>
                         </div>
@@ -1141,7 +1166,7 @@ export function TwfShareModal({
                             void handlePrepareScreenshot();
                           }}
                           disabled={!canPrepareScreenshot || screenshotBusy || screenshotUploadBusy}
-                          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35 disabled:opacity-60 disabled:hover:bg-black/25"
+                          className={`${secondaryButtonClass} shrink-0 gap-1.5 disabled:opacity-60 disabled:hover:bg-white/[0.07]`}
                         >
                           {screenshotBusy || screenshotUploadBusy ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1166,7 +1191,7 @@ export function TwfShareModal({
                             type="button"
                             onClick={handleDownloadScreenshot}
                             disabled={!screenshotBlobUrl || screenshotBusy}
-                            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35 disabled:opacity-60 disabled:hover:bg-black/25"
+                            className={`${secondaryButtonClass} gap-1.5 disabled:opacity-60 disabled:hover:bg-white/[0.07]`}
                           >
                             <Download className="h-3.5 w-3.5" />
                             Download Image
@@ -1174,16 +1199,16 @@ export function TwfShareModal({
                         </div>
                       ) : null}
                     </div>
-                    <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                    <div className={`${insetCardClass} px-3 py-2.5`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex min-w-0 items-start gap-3">
-                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-[11px] font-semibold text-emerald-100">
+                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/35 bg-emerald-400/12 text-[11px] font-semibold text-emerald-100 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
                             3
                           </div>
                           <div className="min-w-0">
-                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Summary</div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/52">Summary</div>
                             <div className="mt-1 line-clamp-2 text-sm text-white">{currentSummaryPreview}</div>
-                            <div className="mt-1 text-xs text-white/55">Permalink is added automatically below the summary.</div>
+                            <div className="mt-1 text-xs text-white/62">Permalink is added automatically below the summary.</div>
                           </div>
                         </div>
                         <button
@@ -1197,7 +1222,7 @@ export function TwfShareModal({
                               return next;
                             });
                           }}
-                          className="inline-flex h-8 shrink-0 items-center rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35"
+                          className={`${secondaryButtonClass} shrink-0`}
                         >
                           {showSummaryEditor ? "Done" : "Edit"}
                         </button>
@@ -1208,7 +1233,7 @@ export function TwfShareModal({
                             value={content}
                             onChange={(event) => handleMessageChange(event.target.value)}
                             rows={6}
-                            className="w-full rounded-md border border-white/15 bg-black/35 px-2 py-2 text-xs text-white outline-none focus:border-emerald-300/40"
+                            className={textareaClass}
                           />
                           <button
                             type="button"
@@ -1258,14 +1283,14 @@ export function TwfShareModal({
           </div>
 
           {screenshotBlobUrl ? (
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">
+            <div className={`${sectionCardClass} p-3`}>
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wider text-white/65">Screenshot Preview</div>
                   <div className="mt-1 text-xs text-white/55">{screenshotStatus}</div>
                 </div>
                 {screenshotUrl ? (
-                  <label className="flex items-center gap-2 rounded-md border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white/80">
+                  <label className="flex items-center gap-2 rounded-md border border-white/12 bg-white/[0.06] px-2.5 py-2 text-xs text-white/82 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md">
                     <input
                       type="checkbox"
                       checked={includeScreenshotInPost}
@@ -1286,7 +1311,7 @@ export function TwfShareModal({
                   {screenshotUploadError}
                 </div>
               ) : null}
-              <div className="overflow-hidden rounded-lg border border-white/10 bg-black/30">
+              <div className="overflow-hidden rounded-xl border border-white/12 bg-black/28 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                 <img
                   src={screenshotBlobUrl}
                   alt="Screenshot preview"
@@ -1306,12 +1331,12 @@ export function TwfShareModal({
             </div>
           ) : null}
 
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3">
+          <div className={`${sectionCardClass} px-3 py-3`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Share preview</div>
-                <div className="mt-1 line-clamp-2 text-sm text-white/85">{payload.summary}</div>
-                <div className="mt-1 truncate text-xs text-white/55">{payload.permalink}</div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-white/52">Share preview</div>
+                <div className="mt-1 line-clamp-2 text-sm text-white/90">{payload.summary}</div>
+                <div className="mt-1 truncate text-xs text-white/62">{payload.permalink}</div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -1319,7 +1344,7 @@ export function TwfShareModal({
                   onClick={() => {
                     void handleCopy("link");
                   }}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35"
+                  className={`${secondaryButtonClass} gap-1.5`}
                 >
                   <Copy className="h-3.5 w-3.5" />
                   Copy link
@@ -1329,7 +1354,7 @@ export function TwfShareModal({
                   onClick={() => {
                     void handleCopy("summary");
                   }}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/15 bg-black/25 px-2.5 text-xs font-medium text-white hover:bg-black/35"
+                  className={`${secondaryButtonClass} gap-1.5`}
                 >
                   <Copy className="h-3.5 w-3.5" />
                   Copy summary
