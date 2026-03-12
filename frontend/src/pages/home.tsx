@@ -71,7 +71,7 @@ export default function Home() {
       {
         key: "GFS",
         modelId: "gfs",
-        update: "3h to 240h, then 6h",
+        update: "Every 6 hours",
         forecast: "0-384h",
         notes: "Global trends",
       },

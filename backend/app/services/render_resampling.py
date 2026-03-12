@@ -27,14 +27,16 @@ _TARGETED_LOOP_FIXED_WIDTHS: dict[int, int] = {
     0: 2300,
     1: 3400,
 }
-_TARGETED_LOOP_RESAMPLING_OVERRIDES: dict[str, str] = {
-    "radar_ptype": "bilinear",
+_TARGETED_LOOP_FIXED_WIDTHS_BY_VAR: dict[tuple[str, int], int] = {
+    ("radar_ptype", 0): 2560,
+    ("radar_ptype", 1): 3200,
 }
 _TARGETED_LOOP_MAX_DIMS: dict[tuple[str, int], int] = {
     ("radar_ptype", 0): 2048,
 }
 _TARGETED_LOOP_QUALITY: dict[tuple[str, int], int] = {
-    ("radar_ptype", 0): 90,
+    ("radar_ptype", 0): 92,
+    ("radar_ptype", 1): 90,
 }
 _MODEL_GRID_KM_FALLBACK: dict[str, float] = {
     "gfs": 25.0,
@@ -242,10 +244,6 @@ def loop_resampling_name(
     var_key: str,
     kind: str | None = None,
 ) -> str:
-    var_norm = str(var_key or "").strip().lower()
-    override = _TARGETED_LOOP_RESAMPLING_OVERRIDES.get(var_norm)
-    if override in _SUPPORTED_DISPLAY_RESAMPLING:
-        return override
     return render_resampling_name(model_id=model_id, var_key=var_key, kind=kind)
 
 
@@ -259,6 +257,9 @@ def use_fixed_loop_size_for_variable(
     var_norm = str(var_key or "").strip().lower()
     if not model_norm or not var_norm:
         return False
+
+    if (var_norm, 0) in _TARGETED_LOOP_FIXED_WIDTHS_BY_VAR or (var_norm, 1) in _TARGETED_LOOP_FIXED_WIDTHS_BY_VAR:
+        return True
 
     resolved_kind = _normalize_kind(kind) or _normalize_kind(variable_kind(model_norm, var_norm))
     if resolved_kind != "continuous":
@@ -307,6 +308,10 @@ def loop_fixed_width_for_tier(
         tier_int = int(tier)
     except (TypeError, ValueError):
         tier_int = 0
+
+    var_override = _TARGETED_LOOP_FIXED_WIDTHS_BY_VAR.get((var_norm, tier_int))
+    if var_override is not None:
+        return max(1, int(var_override))
 
     if model_norm in _TARGETED_VALUE_RENDER_MODELS and var_norm in _TARGETED_VALUE_RENDER_VARS:
         override = _TARGETED_LOOP_FIXED_WIDTHS.get(tier_int)
