@@ -79,6 +79,7 @@ const PREFETCH_READY_TIMEOUT_MS = 8000;
 const WEBP_TO_TILE_STABLE_MS = 150;
 const WEBP_TO_TILE_CROSSFADE_MS = 200;
 const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
+const ANCHOR_COLLISION_RADIUS_KM = 95;
 const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
 const STATE_BOUNDARY_SOURCE_ID = "twf-boundaries";
@@ -301,7 +302,53 @@ type ActiveAnchorMarker = {
   lngLat: [number, number];
   label: string;
   cityName: string;
+  priority: number;
 };
+
+function haversineKm(a: [number, number], b: [number, number]): number {
+  const [lonA, latA] = a;
+  const [lonB, latB] = b;
+  const earthRadiusKm = 6371;
+  const latDelta = (latB - latA) * Math.PI / 180;
+  const lonDelta = (lonB - lonA) * Math.PI / 180;
+  const latARadians = latA * Math.PI / 180;
+  const latBRadians = latB * Math.PI / 180;
+  const latSin = Math.sin(latDelta / 2);
+  const lonSin = Math.sin(lonDelta / 2);
+  const arc = latSin * latSin
+    + Math.cos(latARadians) * Math.cos(latBRadians) * lonSin * lonSin;
+
+  return 2 * earthRadiusKm * Math.asin(Math.sqrt(arc));
+}
+
+function anchorPriorityFromId(id: string): number {
+  const parts = id.split("_");
+  const suffix = Number(parts[parts.length - 1]);
+  if (!Number.isFinite(suffix) || suffix < 1) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return suffix;
+}
+
+function thinAnchorMarkers(markers: ActiveAnchorMarker[]): ActiveAnchorMarker[] {
+  const sorted = [...markers].sort((left, right) => {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+    return left.id.localeCompare(right.id);
+  });
+
+  const accepted: ActiveAnchorMarker[] = [];
+  for (const marker of sorted) {
+    const overlapsExisting = accepted.some(
+      (existing) => haversineKm(existing.lngLat, marker.lngLat) < ANCHOR_COLLISION_RADIUS_KM
+    );
+    if (!overlapsExisting) {
+      accepted.push(marker);
+    }
+  }
+  return accepted;
+}
 
 function getActiveAnchorMarkers(
   collection: AnchorFeatureCollection | null | undefined
@@ -328,10 +375,11 @@ function getActiveAnchorMarkers(
       lngLat: [lng, lat],
       label,
       cityName,
+      priority: anchorPriorityFromId(id),
     });
   }
 
-  return activeMarkers;
+  return thinAnchorMarkers(activeMarkers);
 }
 
 function styleFor(
