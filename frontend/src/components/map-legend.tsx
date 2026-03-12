@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Ref } from "react";
+import { useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 import { Slider } from "@/components/ui/slider";
@@ -25,6 +25,27 @@ function formatValue(value: number): string {
   if (Number.isInteger(value)) return value.toString();
   if (Math.abs(value) < 0.1) return value.toFixed(2);
   return value.toFixed(1);
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+// Parses any common CSS color string (hex3, hex6, hex8, rgb, rgba) to [r, g, b].
+function hexToRgb(color: string): [number, number, number] {
+  const t = color.trim();
+  if (t.startsWith("#")) {
+    let h = t.slice(1);
+    if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+    return [
+      parseInt(h.slice(0, 2), 16) || 0,
+      parseInt(h.slice(2, 4), 16) || 0,
+      parseInt(h.slice(4, 6), 16) || 0,
+    ];
+  }
+  const m = t.match(/\d+/g);
+  if (m && m.length >= 3) return [Number(m[0]), Number(m[1]), Number(m[2])];
+  return [0, 0, 0];
 }
 
 function UnavailablePlaceholder() {
@@ -164,53 +185,73 @@ function groupRadarEntries(
   return fallbackGroups;
 }
 
-// Threshold above which the default branch renders a gradient colorbar instead
-// of discrete swatches. Variables like surface temp (~40 stops) and snowfall
-// comfortably exceed this; simple legends (≤12 entries) keep the swatch list.
 const GRADIENT_THRESHOLD = 12;
-// Number of labels shown beside the gradient bar (always includes min & max).
 const GRADIENT_LABEL_COUNT = 6;
+// Canvas pixel height — determines the resolution of the rendered gradient.
+const GRADIENT_BAR_HEIGHT = 200;
 
 function GradientColorBar({ entries }: { entries: LegendEntry[] }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const n = entries.length;
 
-  // entries is ascending (low→high); pill gradient goes high (top) → low (bottom).
-  const gradientColors = entries
-    .slice()
-    .reverse()
-    .map((e) => e.color)
-    .join(", ");
+  // entries is ascending (low→high); reverse so index 0 = top of bar (highest).
+  const reversed = useMemo(() => entries.slice().reverse(), [entries]);
 
-  // Pick GRADIENT_LABEL_COUNT evenly-spaced indices, sorted descending so the
-  // first label (highest value) sits at the top next to the warm end of the bar.
-  const tickSet = new Set<number>();
-  const step = Math.max(1, Math.floor((n - 1) / (GRADIENT_LABEL_COUNT - 1)));
-  for (let i = 0; i < n; i += step) tickSet.add(i);
-  tickSet.add(0);
-  tickSet.add(n - 1);
-  // Descending: highest entry index → top label.
-  const labelIndices = Array.from(tickSet).sort((a, b) => b - a);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // Draw 2px wide — CSS flex-1 stretches it; gradient is uniform on x-axis.
+    canvas.width = 2;
+    canvas.height = GRADIENT_BAR_HEIGHT;
+
+    const rgbs = reversed.map((e) => hexToRgb(e.color));
+
+    for (let y = 0; y < GRADIENT_BAR_HEIGHT; y++) {
+      const t = y / (GRADIENT_BAR_HEIGHT - 1);
+      const fi = t * (n - 1);
+      const lo = Math.floor(fi);
+      const hi = Math.min(lo + 1, n - 1);
+      const frac = fi - lo;
+      const rgb1 = rgbs[lo] ?? [0, 0, 0];
+      const rgb2 = rgbs[hi] ?? [0, 0, 0];
+      const r = Math.round(lerp(rgb1[0], rgb2[0], frac));
+      const g = Math.round(lerp(rgb1[1], rgb2[1], frac));
+      const b = Math.round(lerp(rgb1[2], rgb2[2], frac));
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(0, y, 2, 1);
+    }
+  }, [reversed, n]);
+
+  // 6 evenly-spaced label indices into `reversed` (index 0 = top = highest value).
+  const step = (n - 1) / (GRADIENT_LABEL_COUNT - 1);
+  const labelIndices = Array.from({ length: GRADIENT_LABEL_COUNT }, (_, k) =>
+    Math.min(Math.round(k * step), n - 1)
+  );
 
   return (
-    <div className="flex items-stretch gap-2 py-2">
-      {/* Labels on the LEFT, right-aligned — shrink to their natural text width */}
-      <div className="flex flex-col justify-between shrink-0 py-px">
-        {labelIndices.map((i) => (
+    <div className="flex items-stretch gap-2.5 py-2">
+      {/* Right-aligned value labels, height-matched to bar via justify-between */}
+      <div
+        className="flex flex-col justify-between shrink-0 py-px"
+        style={{ height: GRADIENT_BAR_HEIGHT }}
+      >
+        {labelIndices.map((i, k) => (
           <span
-            key={i}
-            className="font-mono text-[10px] font-medium tabular-nums tracking-tight text-foreground/70 leading-none whitespace-nowrap text-right"
+            key={k}
+            className="font-mono text-[10px] font-medium tabular-nums tracking-tight text-foreground/75 leading-none whitespace-nowrap text-right"
           >
-            {formatValue(entries[i].value)}
+            {formatValue(reversed[i].value)}
           </span>
         ))}
       </div>
-      {/* Gradient pill fills ALL remaining panel width */}
-      <div
-        className="flex-1 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.55)] ring-1 ring-inset ring-white/8"
-        style={{
-          backgroundImage: `linear-gradient(to bottom, ${gradientColors})`,
-          minHeight: 180,
-        }}
+      {/* Per-pixel canvas gradient — fills all remaining width, perfectly smooth */}
+      <canvas
+        ref={canvasRef}
+        height={GRADIENT_BAR_HEIGHT}
+        className="block flex-1 rounded-2xl shadow-[0_2px_20px_rgba(0,0,0,0.5)] ring-1 ring-inset ring-white/10"
       />
     </div>
   );
