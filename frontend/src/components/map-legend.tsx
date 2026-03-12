@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Ref } from "react";
+import { useEffect, useRef, useState, type Ref, type CSSProperties } from "react";
 import { AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 import { Slider } from "@/components/ui/slider";
@@ -164,24 +164,19 @@ function groupRadarEntries(
   return fallbackGroups;
 }
 
-// Threshold above which the default branch switches from discrete swatches to a
-// continuous gradient bar.  Variables like surface temp (~40 stops) and snowfall
-// (~20+ stops) comfortably exceed this; simple variables (wind direction 8 stops,
-// precip < 10 stops) stay as swatches.
+// Threshold above which the default branch renders a gradient colorbar instead
+// of discrete swatches. Variables like surface temp (~40 stops) and snowfall
+// comfortably exceed this; simple legends (≤12 entries) keep the swatch list.
 const GRADIENT_THRESHOLD = 12;
-const GRADIENT_MAX_TICKS = 7;
+const GRADIENT_MAX_TICKS = 5;
 
 function GradientColorBar({ entries }: { entries: LegendEntry[] }) {
   const n = entries.length;
 
-  // entries is ascending (low→high); display high→low top→bottom.
-  const gradientColors = entries
-    .slice()
-    .reverse()
-    .map((e) => e.color)
-    .join(", ");
+  // entries is ascending (low→high); render gradient left→right.
+  const gradientColors = entries.map((e) => e.color).join(", ");
 
-  // Evenly-spaced ticks, always including both endpoints.
+  // Up to 5 evenly-spaced ticks, always including both endpoints.
   const tickSet = new Set<number>();
   const step = Math.max(1, Math.floor((n - 1) / (GRADIENT_MAX_TICKS - 1)));
   for (let i = 0; i < n; i += step) tickSet.add(i);
@@ -190,29 +185,45 @@ function GradientColorBar({ entries }: { entries: LegendEntry[] }) {
   const tickIndices = Array.from(tickSet).sort((a, b) => a - b);
 
   return (
-    <div className="flex gap-2.5 py-1.5" style={{ height: 200 }}>
-      {/* Gradient bar — wide pill with subtle inner depth */}
+    <div className="flex flex-col gap-2 pt-1.5 pb-0.5">
+      {/* Full-width smooth horizontal gradient bar */}
       <div
-        className="w-6 shrink-0 self-stretch rounded-xl ring-1 ring-inset ring-white/10 shadow-[inset_0_2px_8px_rgba(0,0,0,0.45)]"
-        style={{ backgroundImage: `linear-gradient(to bottom, ${gradientColors})` }}
+        className="h-5 w-full rounded-lg shadow-[0_2px_12px_rgba(0,0,0,0.55)] ring-1 ring-inset ring-white/10"
+        style={{ backgroundImage: `linear-gradient(to right, ${gradientColors})` }}
       />
-      {/* Tick marks + value labels */}
-      <div className="relative flex-1 self-stretch">
+      {/* Thin tick nubs beneath the bar */}
+      <div className="relative h-1">
         {tickIndices.map((i) => {
-          // Map ascending index i → display position from top.
-          const j = n - 1 - i;
-          const topPct = ((j + 0.5) / n) * 100;
+          const leftPct = ((i + 0.5) / n) * 100;
           return (
-            <div
+            <span
               key={i}
-              className="absolute left-0 right-0 flex items-center gap-1.5"
-              style={{ top: `${topPct}%`, transform: "translateY(-50%)" }}
+              className="absolute top-0 h-full w-px rounded-full bg-foreground/25"
+              style={{ left: `${leftPct}%` }}
+            />
+          );
+        })}
+      </div>
+      {/* Value labels — edge-anchored at endpoints so they never overflow */}
+      <div className="relative h-3.5">
+        {tickIndices.map((i, ti) => {
+          const leftPct = ((i + 0.5) / n) * 100;
+          let pos: CSSProperties;
+          if (ti === 0) {
+            pos = { left: 0 };
+          } else if (ti === tickIndices.length - 1) {
+            pos = { right: 0 };
+          } else {
+            pos = { left: `${leftPct}%`, transform: "translateX(-50%)" };
+          }
+          return (
+            <span
+              key={i}
+              className="absolute font-mono text-[9px] font-semibold tabular-nums tracking-tight text-foreground/75 leading-none whitespace-nowrap"
+              style={pos}
             >
-              <span className="h-[1.5px] w-2.5 shrink-0 rounded-full bg-foreground/25" />
-              <span className="font-mono text-[10px] font-semibold tabular-nums tracking-tight text-foreground/90 leading-none whitespace-nowrap">
-                {formatValue(entries[i].value)}
-              </span>
-            </div>
+              {formatValue(entries[i].value)}
+            </span>
           );
         })}
       </div>
