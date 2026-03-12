@@ -174,14 +174,14 @@ const GRADIENT_MAX_TICKS = 7;
 function GradientColorBar({ entries }: { entries: LegendEntry[] }) {
   const n = entries.length;
 
-  // entries is ascending (low→high); we display high at top, low at bottom.
+  // entries is ascending (low→high); display high→low top→bottom.
   const gradientColors = entries
     .slice()
     .reverse()
     .map((e) => e.color)
     .join(", ");
 
-  // Choose evenly-spaced tick indices so we always hit both endpoints.
+  // Evenly-spaced ticks, always including both endpoints.
   const tickSet = new Set<number>();
   const step = Math.max(1, Math.floor((n - 1) / (GRADIENT_MAX_TICKS - 1)));
   for (let i = 0; i < n; i += step) tickSet.add(i);
@@ -190,27 +190,26 @@ function GradientColorBar({ entries }: { entries: LegendEntry[] }) {
   const tickIndices = Array.from(tickSet).sort((a, b) => a - b);
 
   return (
-    <div className="flex gap-1.5 py-0.5" style={{ height: 160 }}>
-      {/* Gradient strip */}
+    <div className="flex gap-2.5 py-1.5" style={{ height: 200 }}>
+      {/* Gradient bar — wide pill with subtle inner depth */}
       <div
-        className="w-3 shrink-0 self-stretch rounded-[3px] border border-border/30 shadow-sm"
+        className="w-6 shrink-0 self-stretch rounded-xl ring-1 ring-inset ring-white/10 shadow-[inset_0_2px_8px_rgba(0,0,0,0.45)]"
         style={{ backgroundImage: `linear-gradient(to bottom, ${gradientColors})` }}
       />
-      {/* Tick labels — positioned relative to the strip height */}
+      {/* Tick marks + value labels */}
       <div className="relative flex-1 self-stretch">
         {tickIndices.map((i) => {
-          // Ascending index i → reversed display index j from the top.
+          // Map ascending index i → display position from top.
           const j = n - 1 - i;
-          // Center of that color band as a percentage from the top of the bar.
           const topPct = ((j + 0.5) / n) * 100;
           return (
             <div
               key={i}
-              className="absolute left-0 right-0 flex items-center gap-0.5"
+              className="absolute left-0 right-0 flex items-center gap-1.5"
               style={{ top: `${topPct}%`, transform: "translateY(-50%)" }}
             >
-              <span className="h-px w-2 shrink-0 bg-foreground/30" />
-              <span className="font-mono text-[10px] font-medium tabular-nums tracking-tight text-foreground/95 leading-none whitespace-nowrap">
+              <span className="h-[1.5px] w-2.5 shrink-0 rounded-full bg-foreground/25" />
+              <span className="font-mono text-[10px] font-semibold tabular-nums tracking-tight text-foreground/90 leading-none whitespace-nowrap">
                 {formatValue(entries[i].value)}
               </span>
             </div>
