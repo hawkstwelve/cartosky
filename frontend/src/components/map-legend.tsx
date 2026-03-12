@@ -176,7 +176,7 @@ function GradientColorBar({ entries }: { entries: LegendEntry[] }) {
 
   const lastIndex = reversed.length - 1;
   const labelIndices = Array.from({ length: GRADIENT_LABEL_COUNT }, (_, index) => {
-    const ratio = GRADIENT_LABEL_COUNT === 1 ? 0 : index / (GRADIENT_LABEL_COUNT - 1);
+    const ratio = index / (GRADIENT_LABEL_COUNT - 1);
     return Math.round(ratio * lastIndex);
   });
 
