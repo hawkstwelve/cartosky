@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type Ref } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 import { Slider } from "@/components/ui/slider";
@@ -25,27 +25,6 @@ function formatValue(value: number): string {
   if (Number.isInteger(value)) return value.toString();
   if (Math.abs(value) < 0.1) return value.toFixed(2);
   return value.toFixed(1);
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-// Parses any common CSS color string (hex3, hex6, hex8, rgb, rgba) to [r, g, b].
-function hexToRgb(color: string): [number, number, number] {
-  const t = color.trim();
-  if (t.startsWith("#")) {
-    let h = t.slice(1);
-    if (h.length === 3) h = h.split("").map((c) => c + c).join("");
-    return [
-      parseInt(h.slice(0, 2), 16) || 0,
-      parseInt(h.slice(2, 4), 16) || 0,
-      parseInt(h.slice(4, 6), 16) || 0,
-    ];
-  }
-  const m = t.match(/\d+/g);
-  if (m && m.length >= 3) return [Number(m[0]), Number(m[1]), Number(m[2])];
-  return [0, 0, 0];
 }
 
 function UnavailablePlaceholder() {
@@ -186,98 +165,35 @@ function groupRadarEntries(
 }
 
 const GRADIENT_THRESHOLD = 12;
-const GRADIENT_LABEL_COUNT = 6;
-const BAR_HEIGHT = 200;
-
-function drawGradient(canvas: HTMLCanvasElement, rgbs: [number, number, number][]) {
-  const w = canvas.width;
-  const h = canvas.height;
-  if (w === 0 || h === 0) return;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const n = rgbs.length;
-  const img = ctx.createImageData(w, h);
-  for (let y = 0; y < h; y++) {
-    const t = y / (h - 1);
-    const fi = t * (n - 1);
-    const lo = Math.floor(fi);
-    const hi = Math.min(lo + 1, n - 1);
-    const frac = fi - lo;
-    const [r1, g1, b1] = rgbs[lo] ?? [0, 0, 0];
-    const [r2, g2, b2] = rgbs[hi] ?? [0, 0, 0];
-    const r = Math.round(lerp(r1, r2, frac));
-    const g = Math.round(lerp(g1, g2, frac));
-    const b = Math.round(lerp(b1, b2, frac));
-    for (let x = 0; x < w; x++) {
-      const idx = (y * w + x) * 4;
-      img.data[idx] = r;
-      img.data[idx + 1] = g;
-      img.data[idx + 2] = b;
-      img.data[idx + 3] = 255;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-}
+const GRADIENT_LABEL_COUNT = 7;
 
 function GradientColorBar({ entries }: { entries: LegendEntry[] }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const reversed = entries.slice().reverse();
+  const stopCount = Math.max(reversed.length - 1, 1);
+  const gradientStops = reversed
+    .map((entry, index) => `${entry.color} ${(index / stopCount) * 100}%`)
+    .join(", ");
 
-  // entries ascending (low→high); reverse so index 0 = top = hottest.
-  const rgbs = useMemo(
-    () => entries.slice().reverse().map((e) => hexToRgb(e.color)),
-    [entries]
-  );
-  const reversed = useMemo(() => entries.slice().reverse(), [entries]);
-  const n = entries.length;
-
-  // Draw immediately when rgbs change, and again whenever the canvas is resized.
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    // Set pixel height once.
-    canvas.height = BAR_HEIGHT;
-
-    const ro = new ResizeObserver(() => {
-      // Sync canvas pixel width to its CSS width, then redraw.
-      const cssW = canvas.getBoundingClientRect().width;
-      if (cssW > 0) {
-        canvas.width = Math.round(cssW * window.devicePixelRatio);
-        drawGradient(canvas, rgbs);
-      }
-    });
-    ro.observe(canvas);
-    return () => ro.disconnect();
-  }, [rgbs]);
-
-  // Evenly-spaced label indices across `reversed` (0 = top = max value).
-  const step = (n - 1) / (GRADIENT_LABEL_COUNT - 1);
-  const labelIndices = Array.from({ length: GRADIENT_LABEL_COUNT }, (_, k) =>
-    Math.min(Math.round(k * step), n - 1)
-  );
+  const lastIndex = reversed.length - 1;
+  const labelIndices = Array.from({ length: GRADIENT_LABEL_COUNT }, (_, index) => {
+    const ratio = GRADIENT_LABEL_COUNT === 1 ? 0 : index / (GRADIENT_LABEL_COUNT - 1);
+    return Math.round(ratio * lastIndex);
+  });
 
   return (
-    <div className="flex gap-2 py-2">
-      {/* Per-pixel canvas — height fixed, width fills remaining space */}
-      <canvas
-        ref={canvasRef}
-        height={BAR_HEIGHT}
-        className="block flex-1 rounded-xl shadow-[0_2px_16px_rgba(0,0,0,0.5)] ring-1 ring-inset ring-white/10"
-        style={{ height: BAR_HEIGHT }}
-      />
-      {/* Right-edge labels, distributed top-to-bottom */}
-      <div
-        className="flex flex-col justify-between shrink-0"
-        style={{ height: BAR_HEIGHT }}
-      >
-        {labelIndices.map((i, k) => (
-          <span
-            key={k}
-            className="font-mono text-[10px] font-medium tabular-nums tracking-tight text-foreground/80 leading-none whitespace-nowrap"
-          >
-            {formatValue(reversed[i].value)}
-          </span>
-        ))}
+    <div className="py-1.5">
+      <div className="relative h-[184px] overflow-hidden rounded-[18px] ring-1 ring-white/10 shadow-[0_6px_22px_rgba(0,0,0,0.34)]">
+        <div className="absolute inset-0" style={{ backgroundImage: `linear-gradient(to bottom, ${gradientStops})` }} />
+        <div className="absolute inset-y-0 right-0 w-[44px] bg-gradient-to-l from-black/44 via-black/24 to-transparent" />
+        <div className="absolute inset-0 flex flex-col justify-between px-2 py-2">
+          {labelIndices.map((index, labelIndex) => (
+            <div key={`${index}-${labelIndex}`} className="flex justify-end">
+              <span className="rounded-md bg-black/12 px-1.5 py-0.5 font-mono text-[9px] font-medium leading-none tabular-nums text-white/88 backdrop-blur-[1px]">
+                {formatValue(reversed[index].value)}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -387,7 +303,7 @@ export function MapLegend({
       ref={containerRef}
       className={cn(
         "fixed z-[55] flex flex-col max-h-[70vh] overflow-hidden rounded-xl glass bg-black/34 shadow-[0_6px_22px_rgba(0,0,0,0.3)] transition-all duration-200",
-        showPrecipPtypeRows ? "w-[220px]" : (legend.entries.length > GRADIENT_THRESHOLD ? "w-[180px]" : "w-[156px]"),
+        showPrecipPtypeRows ? "w-[220px]" : "w-[156px]",
         isSmallScreen ? "right-3 top-40 max-w-[min(72vw,220px)]" : "right-4 top-[4.35rem]"
       )}
       role="complementary"
