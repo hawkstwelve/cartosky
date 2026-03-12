@@ -164,41 +164,6 @@ function groupRadarEntries(
   return fallbackGroups;
 }
 
-const GRADIENT_THRESHOLD = 12;
-const GRADIENT_LABEL_COUNT = 7;
-
-function GradientColorBar({ entries }: { entries: LegendEntry[] }) {
-  const reversed = entries.slice().reverse();
-  const stopCount = Math.max(reversed.length - 1, 1);
-  const gradientStops = reversed
-    .map((entry, index) => `${entry.color} ${(index / stopCount) * 100}%`)
-    .join(", ");
-
-  const lastIndex = reversed.length - 1;
-  const labelIndices = Array.from({ length: GRADIENT_LABEL_COUNT }, (_, index) => {
-    const ratio = index / (GRADIENT_LABEL_COUNT - 1);
-    return Math.round(ratio * lastIndex);
-  });
-
-  return (
-    <div className="py-1.5">
-      <div className="relative h-[184px] overflow-hidden rounded-[18px] ring-1 ring-white/10 shadow-[0_6px_22px_rgba(0,0,0,0.34)]">
-        <div className="absolute inset-0" style={{ backgroundImage: `linear-gradient(to bottom, ${gradientStops})` }} />
-        <div className="absolute inset-y-0 right-0 w-[44px] bg-gradient-to-l from-black/44 via-black/24 to-transparent" />
-        <div className="absolute inset-0 flex flex-col justify-between px-2 py-2">
-          {labelIndices.map((index, labelIndex) => (
-            <div key={`${index}-${labelIndex}`} className="flex justify-end">
-              <span className="rounded-md bg-black/12 px-1.5 py-0.5 font-mono text-[9px] font-medium leading-none tabular-nums text-white/88 backdrop-blur-[1px]">
-                {formatValue(reversed[index].value)}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function groupPrecipPtypeRows(
   entries: LegendEntry[],
   ptypeBreaks?: Record<string, { offset: number; count: number }>,
@@ -338,7 +303,7 @@ export function MapLegend({
       >
         <div className="overflow-hidden">
           <div key={fadeKey} className="flex flex-col gap-1.5 px-1.5 py-1.5 animate-in fade-in duration-200">
-            <div className={cn(legend.entries.length > GRADIENT_THRESHOLD && !showPrecipPtypeRows && !showGroupedRadar ? "" : "legend-scroll max-h-[45vh] space-y-px overflow-y-auto scroll-smooth")}>
+            <div className="legend-scroll max-h-[45vh] space-y-px overflow-y-auto scroll-smooth">
               {showPrecipPtypeRows
                 ? precipPtypeRows.map((row, rowIndex) => (
                     <div
@@ -384,8 +349,6 @@ export function MapLegend({
                       ))}
                     </div>
                   ))
-                : legend.entries.length > GRADIENT_THRESHOLD
-                ? <GradientColorBar entries={legend.entries} />
                 : legend.entries.slice().reverse().map((entry, index) => (
                     <div
                       key={`${entry.value}-${entry.color}-${index}`}
