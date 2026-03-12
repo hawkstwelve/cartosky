@@ -165,3 +165,4 @@ def test_gfs_snowfall_total_search_patterns_include_upstream_fallback() -> None:
     assert var_spec.selectors.search == []
     assert var_spec.derived is True
     assert var_spec.derive == "snowfall_total_10to1_cumulative"
+    assert var_spec.selectors.hints["snow_mask_threshold"] == "0.6"
