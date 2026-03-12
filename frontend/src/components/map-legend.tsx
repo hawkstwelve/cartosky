@@ -52,6 +52,11 @@ type PrecipPtypeLegendRow = {
   colors: string[];
 };
 
+type RadarLegendRow = {
+  label: string;
+  colors: string[];
+};
+
 const DENSE_LEGEND_THRESHOLD = 18;
 const DENSE_GRADIENT_LABEL_COUNT = 6;
 const DENSE_GRADIENT_HEIGHT_DEFAULT = "clamp(268px, calc(100vh - 24rem), 372px)";
@@ -116,11 +121,21 @@ function buildDenseLegendTicks(entries: LegendEntry[], targetCount = DENSE_GRADI
   return indices.map((index) => displayed[index]);
 }
 
-function formatDenseTickValue(value: number, isMinTick: boolean): string {
-  if (isMinTick && value > 0 && value < 1) {
+function formatDenseTickValue(value: number): string {
+  const absValue = Math.abs(value);
+  if (absValue < 1) {
     return "0";
   }
-  return formatValue(value);
+
+  if (absValue >= 20) {
+    return formatValue(Math.round(value / 10) * 10);
+  }
+
+  if (absValue >= 5) {
+    return formatValue(Math.round(value / 5) * 5);
+  }
+
+  return formatValue(Math.round(value));
 }
 
 function DenseGradientLegend({ entries, height }: { entries: LegendEntry[]; height: string }) {
@@ -144,12 +159,12 @@ function DenseGradientLegend({ entries, height }: { entries: LegendEntry[]; heig
               style={{ backgroundImage: `linear-gradient(to bottom, ${gradientStops})` }}
             />
           </div>
-          <div className="flex flex-col justify-between py-[2px] pl-[1px]" style={{ height }}>
+          <div className="flex flex-col justify-between py-[2px]" style={{ height }}>
             {ticks.map((entry, index) => (
-              <div key={`${entry.value}-${index}`} className="flex items-center gap-[3px]">
-                <span className="h-px w-[8px] shrink-0 rounded-full bg-white/52" />
+              <div key={`${entry.value}-${index}`} className="-ml-px flex items-center gap-[2px]">
+                <span className="h-0 w-[8px] shrink-0 border-t border-white/60" />
                 <span className="font-mono text-[10px] font-semibold leading-none tabular-nums tracking-tight text-foreground/95 whitespace-nowrap">
-                  {formatDenseTickValue(entry.value, index === ticks.length - 1)}
+                  {formatDenseTickValue(entry.value)}
                 </span>
               </div>
             ))}
@@ -265,6 +280,45 @@ function groupPrecipPtypeRows(
   return rows;
 }
 
+function buildRadarLegendRows(groups: RadarLegendGroup[]): RadarLegendRow[] {
+  return groups
+    .map((group) => ({
+      label: group.label,
+      colors: group.entries.map((entry) => entry.color).filter(Boolean),
+    }))
+    .filter((row) => row.colors.length > 0);
+}
+
+function RadarGradientRows({ groups }: { groups: RadarLegendGroup[] }) {
+  const rows = buildRadarLegendRows(groups);
+
+  return (
+    <div className="space-y-2">
+      {rows.map((row, index) => (
+        <div key={`${row.label}-${index}`} className={cn(index > 0 ? "border-t border-border/18 pt-2" : "")}>
+          <div className="mb-1 px-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-foreground/78">
+            {row.label}
+          </div>
+          <div className="rounded-lg bg-black/16 p-[3px] ring-1 ring-inset ring-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+            <div
+              className="h-3 rounded-[5px]"
+              style={{
+                backgroundImage:
+                  row.colors.length === 1 ? undefined : `linear-gradient(to right, ${row.colors.join(", ")})`,
+                backgroundColor: row.colors.length === 1 ? row.colors[0] : undefined,
+              }}
+            />
+          </div>
+          <div className="mt-1 flex items-center justify-between px-0.5 font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-foreground/58">
+            <span>Light</span>
+            <span>Heavy</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 type MapLegendProps = {
   legend: LegendPayload | null;
   onOpacityChange: (opacity: number) => void;
@@ -334,7 +388,7 @@ export function MapLegend({
       ref={containerRef}
       className={cn(
         "fixed z-[55] flex flex-col max-h-[70vh] overflow-hidden rounded-xl glass bg-black/34 shadow-[0_6px_22px_rgba(0,0,0,0.3)] transition-all duration-200",
-        showPrecipPtypeRows ? "w-[220px]" : showDenseLegend ? "w-[122px]" : "w-[156px]",
+        showPrecipPtypeRows ? "w-[220px]" : showGroupedRadar ? "w-[176px]" : showDenseLegend ? "w-[122px]" : "w-[156px]",
         isSmallScreen ? "right-3 top-40 max-w-[min(72vw,220px)]" : "right-4 top-[4.35rem]"
       )}
       role="complementary"
@@ -391,30 +445,7 @@ export function MapLegend({
                     </div>
                   ))
                 : showGroupedRadar
-                ? groupedRadarEntries.map((group, groupIndex) => (
-                    <div
-                      key={`group-${groupIndex}`}
-                      className={cn(groupIndex > 0 ? "mt-2 border-t border-border/20 pt-2" : "")}
-                    >
-                      <div className="mb-1 px-0.5 text-[9px] font-medium uppercase tracking-wide text-foreground/62">
-                        {group.label}
-                      </div>
-                      {group.entries.map((entry, index) => (
-                        <div
-                          key={`${entry.value}-${entry.color}-${groupIndex}-${index}`}
-                          className="flex items-center gap-1.5 rounded-[2px] px-0.5 py-0.5 transition-colors duration-150"
-                        >
-                          <span
-                            className="h-3 w-3 shrink-0 rounded-[2px] border border-border/30 shadow-sm"
-                            style={{ backgroundColor: entry.color }}
-                          />
-                          <span className="font-mono text-[10px] font-medium leading-none tabular-nums tracking-tight text-foreground/95">
-                            {formatValue(entry.value)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  ))
+                ? <RadarGradientRows groups={groupedRadarEntries} />
                 : showDenseLegend
                 ? <DenseGradientLegend entries={legend.entries} height={denseGradientHeight} />
                 : legend.entries.slice().reverse().map((entry, index) => (
