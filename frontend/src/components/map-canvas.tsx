@@ -291,6 +291,12 @@ type AnchorMarkerRecord = {
   chip: HTMLDivElement;
 };
 
+function snapAnchorMarkerToPixels(map: maplibregl.Map, record: AnchorMarkerRecord) {
+  const { lng, lat } = record.marker.getLngLat();
+  const projected = map.project([lng, lat]);
+  record.element.style.transform = `translate(-50%, -50%) translate(${Math.round(projected.x)}px, ${Math.round(projected.y)}px)`;
+}
+
 type AnchorTooltipState = {
   cityName: string;
   x: number;
@@ -920,6 +926,7 @@ export function MapCanvas({
             existing.chip.setAttribute("aria-label", activeMarker.cityName);
           }
           existing.marker.setLngLat(activeMarker.lngLat);
+          snapAnchorMarkerToPixels(map, existing);
           continue;
         }
 
@@ -985,6 +992,7 @@ export function MapCanvas({
           element,
           chip,
         });
+        snapAnchorMarkerToPixels(map, { marker, element, chip });
       }
     },
     [clearAnchorMarkers, hideAnchorTooltip, showAnchorTooltip]
@@ -1352,6 +1360,28 @@ export function MapCanvas({
     }
     syncAnchorMarkers(map, anchorGeoJson, pointLabelsEnabled);
   }, [anchorGeoJson, isLoaded, pointLabelsEnabled, syncAnchorMarkers]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+
+    const snapAllAnchorMarkers = () => {
+      for (const record of anchorMarkersRef.current.values()) {
+        snapAnchorMarkerToPixels(map, record);
+      }
+    };
+
+    map.on("render", snapAllAnchorMarkers);
+    map.on("moveend", snapAllAnchorMarkers);
+    snapAllAnchorMarkers();
+
+    return () => {
+      map.off("render", snapAllAnchorMarkers);
+      map.off("moveend", snapAllAnchorMarkers);
+    };
+  }, [isLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;
