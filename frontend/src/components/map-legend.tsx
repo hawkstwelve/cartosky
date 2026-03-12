@@ -52,16 +52,9 @@ type PrecipPtypeLegendRow = {
   colors: string[];
 };
 
-type DenseLegendRow = {
-  min: number;
-  max: number;
-  startColor: string;
-  endColor: string;
-};
-
 const DENSE_LEGEND_THRESHOLD = 18;
-const DENSE_LEGEND_MAX_ROWS = 13;
-const DENSE_LEGEND_HEIGHT = 264;
+const DENSE_GRADIENT_LABEL_COUNT = 6;
+const DENSE_GRADIENT_HEIGHT = 236;
 
 function radarGroupLabelForCode(code: string, index: number): string {
   const normalized = code.toLowerCase();
@@ -109,63 +102,51 @@ function isPrecipPtypeLegend(legend: LegendPayload): boolean {
   return kind.includes("precip_ptype") || id === "precip_ptype";
 }
 
-function formatRangeLabel(min: number, max: number): string {
-  return Math.abs(max - min) < 1e-9 ? formatValue(max) : `${formatValue(min)}-${formatValue(max)}`;
-}
-
-function buildDenseLegendRows(entries: LegendEntry[], maxRows = DENSE_LEGEND_MAX_ROWS): DenseLegendRow[] {
+function buildDenseLegendTicks(entries: LegendEntry[], targetCount = DENSE_GRADIENT_LABEL_COUNT): LegendEntry[] {
   const displayed = entries.slice().reverse();
   if (displayed.length === 0) return [];
 
-  const rowCount = Math.min(displayed.length, maxRows);
-  const rows: DenseLegendRow[] = [];
+  const lastIndex = displayed.length - 1;
+  const indices = Array.from({ length: targetCount }, (_, index) => {
+    const ratio = targetCount === 1 ? 0 : index / (targetCount - 1);
+    return Math.round(ratio * lastIndex);
+  }).filter((value, index, arr) => index === 0 || value !== arr[index - 1]);
 
-  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
-    const start = Math.floor((rowIndex * displayed.length) / rowCount);
-    const rawEnd = Math.floor(((rowIndex + 1) * displayed.length) / rowCount);
-    const end = Math.max(start + 1, rawEnd);
-    const segment = displayed.slice(start, end);
-    if (segment.length === 0) continue;
-    const first = segment[0];
-    const last = segment[segment.length - 1];
-    rows.push({
-      min: Math.min(first.value, last.value),
-      max: Math.max(first.value, last.value),
-      startColor: first.color,
-      endColor: last.color,
-    });
-  }
-
-  return rows;
+  return indices.map((index) => displayed[index]);
 }
 
-function DenseLegendRows({ entries }: { entries: LegendEntry[] }) {
-  const rows = buildDenseLegendRows(entries);
+function DenseGradientLegend({ entries }: { entries: LegendEntry[] }) {
+  const displayed = entries.slice().reverse();
+  const ticks = buildDenseLegendTicks(entries);
+  const stopCount = Math.max(displayed.length - 1, 1);
+  const gradientStops = displayed
+    .map((entry, index) => `${entry.color} ${(index / stopCount) * 100}%`)
+    .join(", ");
 
   return (
     <div className="py-1.5">
-      <div
-        className="grid gap-1"
-        style={{
-          gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))`,
-          height: DENSE_LEGEND_HEIGHT,
-        }}
-      >
-        {rows.map((row, index) => (
-          <div key={`${row.min}-${row.max}-${index}`} className="grid min-h-0 grid-cols-[14px_1fr] items-center gap-2">
-            <span
-              className="h-full min-h-[12px] rounded-[3px] border border-border/20 shadow-sm"
-              style={
-                row.startColor === row.endColor
-                  ? { backgroundColor: row.startColor }
-                  : { backgroundImage: `linear-gradient(to bottom, ${row.startColor}, ${row.endColor})` }
-              }
+      <div className="flex justify-start px-0.5">
+        <div className="inline-grid grid-cols-[26px_auto] items-stretch gap-2.5">
+          <div
+            className="rounded-[14px] bg-black/14 p-[3px] ring-1 ring-inset ring-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_6px_16px_rgba(0,0,0,0.18)]"
+            style={{ height: DENSE_GRADIENT_HEIGHT }}
+          >
+            <div
+              className="h-full w-full rounded-[11px] shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]"
+              style={{ backgroundImage: `linear-gradient(to bottom, ${gradientStops})` }}
             />
-            <span className="font-mono text-[11px] font-medium leading-none tabular-nums tracking-tight text-foreground/95 whitespace-nowrap">
-              {formatRangeLabel(row.min, row.max)}
-            </span>
           </div>
-        ))}
+          <div className="flex flex-col justify-between py-[2px]" style={{ height: DENSE_GRADIENT_HEIGHT }}>
+            {ticks.map((entry, index) => (
+              <span
+                key={`${entry.value}-${index}`}
+                className="font-mono text-[10px] font-semibold leading-none tabular-nums tracking-tight text-foreground/95 whitespace-nowrap"
+              >
+                {formatValue(entry.value)}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -424,7 +405,7 @@ export function MapLegend({
                     </div>
                   ))
                 : showDenseLegend
-                ? <DenseLegendRows entries={legend.entries} />
+                ? <DenseGradientLegend entries={legend.entries} />
                 : legend.entries.slice().reverse().map((entry, index) => (
                     <div
                       key={`${entry.value}-${entry.color}-${index}`}
