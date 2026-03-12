@@ -4180,7 +4180,12 @@ export default function App() {
 
         {legendVisible ? (
           <Suspense fallback={null}>
-            <MapLegend legend={legend} onOpacityChange={setOpacity} showOpacityControl={false} />
+            <MapLegend
+              legend={legend}
+              onOpacityChange={setOpacity}
+              showOpacityControl={false}
+              displayPanelOpen={displayPanelOpen}
+            />
           </Suspense>
         ) : null}
 

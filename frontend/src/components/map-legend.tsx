@@ -54,7 +54,8 @@ type PrecipPtypeLegendRow = {
 
 const DENSE_LEGEND_THRESHOLD = 18;
 const DENSE_GRADIENT_LABEL_COUNT = 6;
-const DENSE_GRADIENT_HEIGHT = "clamp(268px, calc(100vh - 24rem), 372px)";
+const DENSE_GRADIENT_HEIGHT_DEFAULT = "clamp(268px, calc(100vh - 24rem), 372px)";
+const DENSE_GRADIENT_HEIGHT_PANEL_OPEN = "clamp(228px, calc(100vh - 31rem), 300px)";
 
 function radarGroupLabelForCode(code: string, index: number): string {
   const normalized = code.toLowerCase();
@@ -115,7 +116,7 @@ function buildDenseLegendTicks(entries: LegendEntry[], targetCount = DENSE_GRADI
   return indices.map((index) => displayed[index]);
 }
 
-function DenseGradientLegend({ entries }: { entries: LegendEntry[] }) {
+function DenseGradientLegend({ entries, height }: { entries: LegendEntry[]; height: string }) {
   const displayed = entries.slice().reverse();
   const ticks = buildDenseLegendTicks(entries);
   const stopCount = Math.max(displayed.length - 1, 1);
@@ -129,14 +130,14 @@ function DenseGradientLegend({ entries }: { entries: LegendEntry[] }) {
         <div className="inline-grid grid-cols-[26px_auto] items-stretch gap-1.5">
           <div
             className="rounded-[14px] bg-black/14 p-[3px] ring-1 ring-inset ring-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_6px_16px_rgba(0,0,0,0.18)]"
-            style={{ height: DENSE_GRADIENT_HEIGHT }}
+            style={{ height }}
           >
             <div
               className="h-full w-full rounded-[11px] shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]"
               style={{ backgroundImage: `linear-gradient(to bottom, ${gradientStops})` }}
             />
           </div>
-          <div className="flex flex-col justify-between py-[2px]" style={{ height: DENSE_GRADIENT_HEIGHT }}>
+          <div className="flex flex-col justify-between py-[2px]" style={{ height }}>
             {ticks.map((entry, index) => (
               <div key={`${entry.value}-${index}`} className="flex items-center gap-1">
                 <span className="h-px w-[7px] shrink-0 rounded-full bg-white/45" />
@@ -262,6 +263,7 @@ type MapLegendProps = {
   onOpacityChange: (opacity: number) => void;
   containerRef?: Ref<HTMLDivElement>;
   showOpacityControl?: boolean;
+  displayPanelOpen?: boolean;
 };
 
 export function MapLegend({
@@ -269,6 +271,7 @@ export function MapLegend({
   onOpacityChange,
   containerRef,
   showOpacityControl = true,
+  displayPanelOpen = false,
 }: MapLegendProps) {
   const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsedPreference());
   const [isSmallScreen, setIsSmallScreen] = useState(false);
@@ -317,6 +320,7 @@ export function MapLegend({
     : [];
   const showGroupedRadar = groupedRadarEntries.length > 0;
   const showDenseLegend = !showPrecipPtypeRows && !showGroupedRadar && legend.entries.length > DENSE_LEGEND_THRESHOLD;
+  const denseGradientHeight = displayPanelOpen ? DENSE_GRADIENT_HEIGHT_PANEL_OPEN : DENSE_GRADIENT_HEIGHT_DEFAULT;
 
   return (
     <div
@@ -405,7 +409,7 @@ export function MapLegend({
                     </div>
                   ))
                 : showDenseLegend
-                ? <DenseGradientLegend entries={legend.entries} />
+                ? <DenseGradientLegend entries={legend.entries} height={denseGradientHeight} />
                 : legend.entries.slice().reverse().map((entry, index) => (
                     <div
                       key={`${entry.value}-${entry.color}-${index}`}
