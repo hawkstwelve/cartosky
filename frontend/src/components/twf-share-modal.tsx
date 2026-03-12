@@ -66,22 +66,22 @@ const QUICK_FORUMS: Array<{ id: number; label: string }> = [
 ];
 
 const modalCardClass =
-  "glass-strong relative isolate my-2 flex max-h-[calc(100dvh-1rem)] w-full max-w-3xl flex-col overflow-hidden rounded-[26px] border border-white/12 shadow-[0_24px_80px_rgba(0,0,0,0.58)] sm:my-4 sm:max-h-[calc(100dvh-2rem)]";
+  "glass-strong my-2 flex max-h-[calc(100dvh-1rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-white/12 shadow-[0_18px_48px_rgba(0,0,0,0.42)] sm:my-4 sm:max-h-[calc(100dvh-2rem)]";
 
 const sectionCardClass =
-  "rounded-2xl border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_14px_34px_rgba(0,0,0,0.2)] backdrop-blur-xl";
+  "rounded-2xl border border-white/10 bg-black/16";
 
 const insetCardClass =
-  "rounded-xl border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.025))] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]";
+  "rounded-xl border border-white/10 bg-white/[0.03]";
 
 const secondaryButtonClass =
-  "inline-flex h-8 items-center rounded-md border border-white/15 bg-white/[0.07] px-2.5 text-xs font-medium text-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors hover:bg-white/[0.12]";
+  "inline-flex h-8 items-center rounded-md border border-white/12 bg-white/[0.05] px-2.5 text-xs font-medium text-white/88 transition-colors hover:bg-white/[0.09]";
 
 const fieldClass =
-  "h-8 w-full rounded-md border border-white/15 bg-black/30 px-2 text-xs text-white outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md focus:border-emerald-300/40";
+  "h-8 w-full rounded-md border border-white/12 bg-black/24 px-2 text-xs text-white outline-none focus:border-emerald-300/40";
 
 const textareaClass =
-  "w-full rounded-md border border-white/15 bg-black/30 px-2 py-2 text-xs text-white outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md focus:border-emerald-300/40";
+  "w-full rounded-md border border-white/12 bg-black/24 px-2 py-2 text-xs text-white outline-none focus:border-emerald-300/40";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -907,7 +907,7 @@ export function TwfShareModal({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/60 p-2 backdrop-blur-md sm:items-center sm:p-4"
+      className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/60 p-2 backdrop-blur-sm sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Share"
@@ -917,29 +917,22 @@ export function TwfShareModal({
         className={modalCardClass}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="pointer-events-none absolute inset-0">
-          <div className="absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),transparent)]" />
-          <div className="absolute left-[-4.5rem] top-10 h-36 w-36 rounded-full bg-emerald-300/10 blur-3xl" />
-          <div className="absolute right-[-3rem] top-16 h-28 w-28 rounded-full bg-sky-300/10 blur-3xl" />
-          <div className="absolute inset-0 rounded-[26px] ring-1 ring-inset ring-white/6" />
-        </div>
-
-        <div className="relative z-10 flex shrink-0 items-center justify-between border-b border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.07),rgba(255,255,255,0.02))] px-4 py-3.5">
+        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
           <div>
             <div className="text-sm font-semibold text-white">Share</div>
-            <div className="text-xs text-white/68">Copy link or summary, generate a screenshot, or post to TWF.</div>
+            <div className="text-xs text-white/60">Copy link or summary, generate a screenshot, or post to TWF.</div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/15 bg-white/[0.07] text-white/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors hover:bg-white/[0.12]"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/12 bg-white/[0.05] text-white/80 transition-colors hover:bg-white/[0.09]"
             aria-label="Close share modal"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="legend-scroll relative z-10 min-h-0 space-y-4 overflow-y-auto px-4 py-4">
+        <div className="legend-scroll min-h-0 space-y-4 overflow-y-auto px-4 py-4">
           <div className={`${sectionCardClass} p-3 sm:p-4`}>
             <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/65">
               Post to The Weather Forums
@@ -998,16 +991,16 @@ export function TwfShareModal({
               <div className="space-y-4">
                 <div className={`${insetCardClass} bg-black/18 p-3 backdrop-blur-xl`}>
                   <div className="space-y-2">
-                    <div className={`${insetCardClass} px-3 py-2.5`}>
+                    <div className={`${insetCardClass} px-3 py-2`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex min-w-0 items-start gap-3">
-                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/35 bg-emerald-400/12 text-[11px] font-semibold text-emerald-100 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
+                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-[11px] font-semibold text-emerald-100">
                             1
                           </div>
                           <div className="min-w-0">
-                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/52">Where to post</div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Where to post</div>
                             <div className="mt-1 text-sm text-white">{postingTargetSummary}</div>
-                            <div className="mt-1 text-xs text-white/62">{destinationStepLabel}</div>
+                            <div className="mt-1 text-xs text-white/55">{destinationStepLabel}</div>
                           </div>
                         </div>
                         <button
@@ -1027,10 +1020,10 @@ export function TwfShareModal({
                                 type="button"
                                 onClick={() => setShareMode("existing")}
                                 className={[
-                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors",
+                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium transition-colors",
                                   shareMode === "existing"
-                                    ? "border-emerald-300/40 bg-[linear-gradient(180deg,rgba(101,179,149,0.28),rgba(48,91,73,0.2))] text-emerald-50"
-                                    : "border-white/15 bg-white/[0.07] text-white/82 hover:bg-white/[0.12]",
+                                    ? "border-emerald-300/35 bg-emerald-400/20 text-emerald-50"
+                                    : "border-white/12 bg-white/[0.05] text-white/80 hover:bg-white/[0.09]",
                                 ].join(" ")}
                               >
                                 Existing topic
@@ -1039,10 +1032,10 @@ export function TwfShareModal({
                                 type="button"
                                 onClick={() => setShareMode("new")}
                                 className={[
-                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors",
+                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium transition-colors",
                                   shareMode === "new"
-                                    ? "border-emerald-300/40 bg-[linear-gradient(180deg,rgba(101,179,149,0.28),rgba(48,91,73,0.2))] text-emerald-50"
-                                    : "border-white/15 bg-white/[0.07] text-white/82 hover:bg-white/[0.12]",
+                                    ? "border-emerald-300/35 bg-emerald-400/20 text-emerald-50"
+                                    : "border-white/12 bg-white/[0.05] text-white/80 hover:bg-white/[0.09]",
                                 ].join(" ")}
                               >
                                 New topic
@@ -1062,10 +1055,10 @@ export function TwfShareModal({
                                     setShowOtherForums(false);
                                   }}
                                   className={[
-                                    "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors",
+                                    "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium transition-colors",
                                     selectedForumId === forum.id && !showOtherForums
-                                      ? "border-emerald-300/40 bg-[linear-gradient(180deg,rgba(101,179,149,0.28),rgba(48,91,73,0.2))] text-emerald-50"
-                                      : "border-white/15 bg-white/[0.07] text-white/82 hover:bg-white/[0.12]",
+                                      ? "border-emerald-300/35 bg-emerald-400/20 text-emerald-50"
+                                      : "border-white/12 bg-white/[0.05] text-white/80 hover:bg-white/[0.09]",
                                   ].join(" ")}
                                 >
                                   {forum.label}
@@ -1075,10 +1068,10 @@ export function TwfShareModal({
                                 type="button"
                                 onClick={() => setShowOtherForums((current) => !current)}
                                 className={[
-                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md transition-colors",
+                                  "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium transition-colors",
                                   showOtherForums
-                                    ? "border-emerald-300/40 bg-[linear-gradient(180deg,rgba(101,179,149,0.28),rgba(48,91,73,0.2))] text-emerald-50"
-                                    : "border-white/15 bg-white/[0.07] text-white/82 hover:bg-white/[0.12]",
+                                    ? "border-emerald-300/35 bg-emerald-400/20 text-emerald-50"
+                                    : "border-white/12 bg-white/[0.05] text-white/80 hover:bg-white/[0.09]",
                                 ].join(" ")}
                               >
                                 Other forum...
@@ -1149,14 +1142,14 @@ export function TwfShareModal({
                         </div>
                       ) : null}
                     </div>
-                    <div className={`${insetCardClass} px-3 py-2.5`}>
+                    <div className={`${insetCardClass} px-3 py-2`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex min-w-0 items-start gap-3">
-                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/35 bg-emerald-400/12 text-[11px] font-semibold text-emerald-100 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
+                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-[11px] font-semibold text-emerald-100">
                             2
                           </div>
                           <div className="min-w-0">
-                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/52">Screenshot</div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Screenshot</div>
                             <div className="mt-1 text-sm text-white">{screenshotStepLabel}</div>
                           </div>
                         </div>
@@ -1199,16 +1192,16 @@ export function TwfShareModal({
                         </div>
                       ) : null}
                     </div>
-                    <div className={`${insetCardClass} px-3 py-2.5`}>
+                    <div className={`${insetCardClass} px-3 py-2`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex min-w-0 items-start gap-3">
-                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/35 bg-emerald-400/12 text-[11px] font-semibold text-emerald-100 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
+                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-[11px] font-semibold text-emerald-100">
                             3
                           </div>
                           <div className="min-w-0">
-                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/52">Summary</div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Summary</div>
                             <div className="mt-1 line-clamp-2 text-sm text-white">{currentSummaryPreview}</div>
-                            <div className="mt-1 text-xs text-white/62">Permalink is added automatically below the summary.</div>
+                            <div className="mt-1 text-xs text-white/55">Permalink is added automatically below the summary.</div>
                           </div>
                         </div>
                         <button
@@ -1290,7 +1283,7 @@ export function TwfShareModal({
                   <div className="mt-1 text-xs text-white/55">{screenshotStatus}</div>
                 </div>
                 {screenshotUrl ? (
-                  <label className="flex items-center gap-2 rounded-md border border-white/12 bg-white/[0.06] px-2.5 py-2 text-xs text-white/82 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md">
+                  <label className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-2.5 py-2 text-xs text-white/80">
                     <input
                       type="checkbox"
                       checked={includeScreenshotInPost}
@@ -1311,7 +1304,7 @@ export function TwfShareModal({
                   {screenshotUploadError}
                 </div>
               ) : null}
-              <div className="overflow-hidden rounded-xl border border-white/12 bg-black/28 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+              <div className="overflow-hidden rounded-xl border border-white/10 bg-black/24">
                 <img
                   src={screenshotBlobUrl}
                   alt="Screenshot preview"
@@ -1334,9 +1327,9 @@ export function TwfShareModal({
           <div className={`${sectionCardClass} px-3 py-3`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-white/52">Share preview</div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">Share preview</div>
                 <div className="mt-1 line-clamp-2 text-sm text-white/90">{payload.summary}</div>
-                <div className="mt-1 truncate text-xs text-white/62">{payload.permalink}</div>
+                <div className="mt-1 truncate text-xs text-white/55">{payload.permalink}</div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
