@@ -163,25 +163,35 @@ function DisplayToggle(props: {
         "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150",
         checked
           ? "border-white/20 bg-white/12 text-white hover:bg-white/18"
-          : "border-white/10 bg-black/18 text-white/78 hover:bg-black/28"
+          : "border-white/16 bg-white/[0.07] text-white/88 hover:bg-white/[0.12]"
       )}
     >
       <div className="min-w-0">
         <div className="text-sm font-semibold">{label}</div>
         {description ? <div className="text-[11px] text-white/58">{description}</div> : null}
       </div>
-      <div
-        className={cn(
-          "relative h-5 w-9 shrink-0 rounded-full transition-colors duration-150",
-          checked ? "bg-[#354d42]" : "bg-white/18"
-        )}
-      >
+      <div className="flex items-center gap-2">
         <span
           className={cn(
-            "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-150",
-            checked ? "translate-x-[18px]" : "translate-x-0.5"
+            "text-[10px] font-semibold uppercase tracking-[0.18em] transition-colors duration-150",
+            checked ? "text-[#98c9b2]" : "text-white/62"
           )}
-        />
+        >
+          {checked ? "On" : "Off"}
+        </span>
+        <div
+          className={cn(
+            "relative h-5 w-9 shrink-0 rounded-full border transition-all duration-150",
+            checked ? "border-[#4f7264] bg-[#354d42]" : "border-white/35 bg-white/12"
+          )}
+        >
+          <span
+            className={cn(
+              "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-[0_1px_4px_rgba(0,0,0,0.38)] transition-transform duration-150",
+              checked ? "translate-x-[18px]" : "translate-x-0.5"
+            )}
+          />
+        </div>
       </div>
     </button>
   );
@@ -193,8 +203,8 @@ function ShareButton({ onClick, compact = false }: { onClick: () => void; compac
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border border-emerald-300/25 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] font-semibold text-emerald-50 shadow-sm transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-300/45",
-        compact ? "h-9 px-3 text-xs" : "h-8 px-2.5 text-xs"
+        "inline-flex items-center gap-1.5 border border-emerald-300/25 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] font-semibold text-emerald-50 shadow-sm transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-300/45",
+        compact ? "h-9 rounded-full px-3.5 text-xs" : "h-8 rounded-md px-2.5 text-xs"
       )}
       title="Share"
       aria-label="Share"
