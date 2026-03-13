@@ -162,8 +162,8 @@ function DisplayToggle(props: {
       className={cn(
         "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150",
         checked
-          ? "border-white/20 bg-white/12 text-white hover:bg-white/18"
-          : "border-white/16 bg-white/[0.07] text-white/88 hover:bg-white/[0.12]"
+          ? "border-white/8 bg-white/12 text-white hover:bg-white/18"
+          : "border-white/6 bg-white/[0.07] text-white/88 hover:bg-white/[0.12]"
       )}
     >
       <div className="min-w-0">
