@@ -112,7 +112,7 @@ def _run_case(
     monkeypatch.setattr(
         derive_module,
         "_resolve_cumulative_step_fhs",
-        lambda *, hints, fh, default_step_hours=6: list(step_fhs),
+        lambda *, hints, fh, run_date=None, default_step_hours=6: list(step_fhs),
     )
     monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", prior_loader)
 
@@ -342,7 +342,7 @@ def test_incremental_reuse_with_cumulative_apcp_does_not_overcount(monkeypatch) 
     monkeypatch.setattr(
         derive_module,
         "_resolve_cumulative_step_fhs",
-        lambda *, hints, fh, default_step_hours=6: list(step_fhs),
+        lambda *, hints, fh, run_date=None, default_step_hours=6: list(step_fhs),
     )
 
     def _prior_loader(*, model_id, run_date, var_key, fh, ctx):
@@ -465,7 +465,7 @@ def test_incremental_reuse_with_late_cumulative_apcp_rebuilds_from_start(monkeyp
     monkeypatch.setattr(
         derive_module,
         "_resolve_cumulative_step_fhs",
-        lambda *, hints, fh, default_step_hours=6: list(step_fhs),
+        lambda *, hints, fh, run_date=None, default_step_hours=6: list(step_fhs),
     )
     monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", _prior_loader)
 

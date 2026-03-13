@@ -234,8 +234,11 @@ def _kuchera_load_prior_cumulative(
     var_key: str,
     fh: int,
     ctx: FetchContext | None,
+    scale_divisor: float = 0.03937007874015748,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | None:
     if fh <= 0:
+        return None
+    if not np.isfinite(scale_divisor) or float(scale_divisor) <= 0.0:
         return None
     run_id = _run_id_from_date(run_date)
     cache_key = (str(model_id), str(run_id), str(var_key), int(fh))
@@ -266,8 +269,7 @@ def _kuchera_load_prior_cumulative(
             if not candidate.exists():
                 continue
             loaded_data, loaded_crs, loaded_transform = _read_value_cog(candidate)
-            # Stored val COG is snowfall inches; internal accumulator uses mm-equivalent.
-            loaded_data = (loaded_data / np.float32(0.03937007874015748)).astype(np.float32, copy=False)
+            loaded_data = (loaded_data / np.float32(scale_divisor)).astype(np.float32, copy=False)
             loaded = (loaded_data, loaded_crs, loaded_transform)
             if ctx is not None:
                 cache = getattr(ctx, "kuchera_cumulative_cache", None)
@@ -1301,6 +1303,7 @@ def _resolve_apcp_step_data(
     target_grid_id: str,
     resampling: str,
     cum_diff_state: _ApcpCumDiffState,
+    expected_start_fh_override: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, str]:
     """Resolve per-step APCP data with inventory-driven window selection.
 
@@ -1318,7 +1321,10 @@ def _resolve_apcp_step_data(
     *step_clean* is the cleaned per-step increment (>= 0, invalid → 0)
     and *apcp_valid* is the boolean validity mask.
     """
-    expected_start_fh = 0 if step_index == 0 else int(step_fhs[step_index - 1])
+    if expected_start_fh_override is not None and step_index == 0:
+        expected_start_fh = int(expected_start_fh_override)
+    else:
+        expected_start_fh = 0 if step_index == 0 else int(step_fhs[step_index - 1])
     resolved_apcp_product = str(apcp_product or product)
     apcp_search_pattern = _apcp_exact_window_pattern(expected_start_fh, step_fh)
     apcp_step: np.ndarray | None = None
@@ -1721,6 +1727,14 @@ def _cumulative_apcp_loop(
         tuple[np.ndarray, np.ndarray],
     ],
     error_label: str,
+    first_step_expected_start_fh: int | None = None,
+    initial_apcp_cumulative: tuple[
+        np.ndarray,
+        np.ndarray,
+        rasterio.crs.CRS,
+        rasterio.transform.Affine,
+        int,
+    ] | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, bool]:
     """Shared cumulative APCP accumulation loop.
 
@@ -1738,6 +1752,19 @@ def _cumulative_apcp_loop(
     with NaN at invalid pixels.
     """
     cum_diff_state = _ApcpCumDiffState() if use_inventory_resolution else None
+    if use_inventory_resolution and cum_diff_state is not None and initial_apcp_cumulative is not None:
+        (
+            seed_data,
+            seed_valid,
+            seed_crs,
+            seed_transform,
+            seed_fh,
+        ) = initial_apcp_cumulative
+        cum_diff_state.consumed_sum = np.asarray(seed_data, dtype=np.float32)
+        cum_diff_state.consumed_sum_valid = np.asarray(seed_valid, dtype=bool)
+        cum_diff_state.consumed_sum_crs = seed_crs
+        cum_diff_state.consumed_sum_transform = seed_transform
+        cum_diff_state.consumed_through_fh = int(seed_fh)
 
     cumulative: np.ndarray | None = None
     valid_mask: np.ndarray | None = None
@@ -1763,6 +1790,7 @@ def _cumulative_apcp_loop(
                 target_grid_id=target_grid_id,
                 resampling=resampling,
                 cum_diff_state=cum_diff_state,
+                expected_start_fh_override=(first_step_expected_start_fh if step_index == 0 else None),
             )
             cumulative_fallback_used = cumulative_fallback_used or step_apcp_mode != "exact_step"
         else:
@@ -1829,6 +1857,25 @@ def _interval_sample_fhs(step_fh: int, step_len: int, *, sample_mode: str = "aut
             continue
         sample_fhs.append(sample_fh)
     return sample_fhs
+
+
+def _filter_sample_fhs_to_available_steps(
+    sample_fhs: list[int],
+    *,
+    available_fhs: set[int] | None,
+) -> list[int]:
+    if not available_fhs:
+        return sample_fhs
+
+    filtered: list[int] = []
+    for sample_fh in sample_fhs:
+        if sample_fh not in available_fhs:
+            continue
+        if sample_fh in filtered:
+            continue
+        filtered.append(sample_fh)
+
+    return filtered if filtered else sample_fhs
 
 
 def _log_missing_csnow_sample(
@@ -2222,6 +2269,7 @@ def _derive_snowfall_total_10to1_cumulative(
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     del var_capability
+    frame_start = time.perf_counter()
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     apcp_component = hints.get("apcp_component", "apcp_step")
     snow_component = hints.get("snow_component", "csnow")
@@ -2255,8 +2303,12 @@ def _derive_snowfall_total_10to1_cumulative(
         str(model_id).strip().lower() in {"gfs", "nam"}
         and str(apcp_component).strip() == "apcp_step"
     )
+    cadence_sample_fhs: set[int] | None = None
+    snow_inches_scale = 0.03937007874015748 * slr
 
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
+    if str(model_id).strip().lower() == "gfs" and snow_interval_sample_mode == "three_point":
+        cadence_sample_fhs = {0, *[int(step_fh) for step_fh in step_fhs]}
     # Build interval plan: step_fh → (step_len, sample_fhs).
     interval_plan: dict[int, tuple[int, list[int]]] = {}
     snow_step_fhs: list[int] = []
@@ -2278,10 +2330,72 @@ def _derive_snowfall_total_10to1_cumulative(
             )
             if sf >= 0
         ]
+        sample_fhs = _filter_sample_fhs_to_available_steps(
+            sample_fhs,
+            available_fhs=cadence_sample_fhs,
+        )
         interval_plan[step_fh] = (step_len, sample_fhs)
         for sf in sample_fhs:
             if sf not in snow_step_fhs:
                 snow_step_fhs.append(sf)
+
+    active_step_fhs = list(step_fhs)
+    active_snow_step_fhs = list(snow_step_fhs)
+    reused_prev_cumulative = False
+    base_fh: int | None = None
+    base_cumulative_kgm2: np.ndarray | None = None
+    base_crs: rasterio.crs.CRS | None = None
+    base_transform: rasterio.transform.Affine | None = None
+    first_step_expected_start_fh: int | None = None
+    initial_apcp_cumulative: tuple[
+        np.ndarray,
+        np.ndarray,
+        rasterio.crs.CRS,
+        rasterio.transform.Affine,
+        int,
+    ] | None = None
+    current_step_fetch_counts: dict[str, int] = {"apcp": 0, "csnow": 0}
+
+    if len(step_fhs) >= 2:
+        prev_fh = int(step_fhs[-2])
+        prior_snowfall = _kuchera_load_prior_cumulative(
+            model_id=model_id,
+            run_date=run_date,
+            var_key=var_key,
+            fh=prev_fh,
+            ctx=ctx,
+            scale_divisor=snow_inches_scale,
+        )
+        prior_precip = _kuchera_load_prior_cumulative(
+            model_id=model_id,
+            run_date=run_date,
+            var_key="precip_total",
+            fh=prev_fh,
+            ctx=ctx,
+            scale_divisor=0.03937007874015748,
+        )
+        if prior_snowfall is not None and prior_precip is not None:
+            prior_snowfall_data, prior_snowfall_crs, prior_snowfall_transform = prior_snowfall
+            prior_precip_data, prior_precip_crs, prior_precip_transform = prior_precip
+            same_shape = prior_snowfall_data.shape == prior_precip_data.shape
+            same_crs = prior_snowfall_crs == prior_precip_crs
+            same_transform = prior_snowfall_transform == prior_precip_transform
+            if same_shape and same_crs and same_transform:
+                active_step_fhs = [int(step_fhs[-1])]
+                active_snow_step_fhs = list(interval_plan[int(step_fhs[-1])][1])
+                reused_prev_cumulative = True
+                base_fh = prev_fh
+                base_cumulative_kgm2 = prior_snowfall_data.astype(np.float32, copy=False)
+                base_crs = prior_snowfall_crs
+                base_transform = prior_snowfall_transform
+                first_step_expected_start_fh = prev_fh
+                initial_apcp_cumulative = (
+                    prior_precip_data.astype(np.float32, copy=False),
+                    np.isfinite(prior_precip_data),
+                    prior_precip_crs,
+                    prior_precip_transform,
+                    prev_fh,
+                )
 
     logger.info("snow_ratio method=10to1 fh=%d", fh)
     logger.info(
@@ -2298,14 +2412,14 @@ def _derive_snowfall_total_10to1_cumulative(
     # Prefetch APCP + csnow in parallel.
     _prefetch_tasks: list[_PrefetchTask] = []
     if not use_inventory_resolution:
-        for _pf_fh in step_fhs:
+        for _pf_fh in active_step_fhs:
             _prefetch_tasks.append(_PrefetchTask(
                 model_id=model_id, product=product, run_date=run_date,
                 fh=_pf_fh, model_plugin=model_plugin, var_key=apcp_component,
                 warped=use_warped, target_region=target_region,
                 target_grid_id=target_grid_id, resampling=resampling,
             ))
-    for _pf_fh in snow_step_fhs:
+    for _pf_fh in active_snow_step_fhs:
         _prefetch_tasks.append(_PrefetchTask(
             model_id=model_id, product=product, run_date=run_date,
             fh=_pf_fh, model_plugin=model_plugin, var_key=snow_component,
@@ -2322,6 +2436,8 @@ def _derive_snowfall_total_10to1_cumulative(
         step_crs: rasterio.crs.CRS,
         step_transform: rasterio.transform.Affine,
     ) -> tuple[np.ndarray, np.ndarray]:
+        if int(step_fh) == int(fh):
+            current_step_fetch_counts["apcp"] = int(current_step_fetch_counts.get("apcp", 0)) + 1
         if apcp_valid_hint is None:
             apcp_valid = np.isfinite(step_data) & (step_data >= 0.0)
         else:
@@ -2335,6 +2451,8 @@ def _derive_snowfall_total_10to1_cumulative(
         _step_len, sample_fhs = interval_plan[step_fh]
         sample_masks: list[np.ndarray] = []
         for sample_fh in sample_fhs:
+            if int(step_fh) == int(fh):
+                current_step_fetch_counts["csnow"] = int(current_step_fetch_counts.get("csnow", 0)) + 1
             try:
                 snow_mask, _, _ = _fetch_step_component(
                     model_id=model_id, product=product, run_date=run_date,
@@ -2394,7 +2512,7 @@ def _derive_snowfall_total_10to1_cumulative(
         product=product,
         run_date=run_date,
         fh=fh,
-        step_fhs=step_fhs,
+        step_fhs=active_step_fhs,
         model_plugin=model_plugin,
         ctx=ctx,
         apcp_component=apcp_component,
@@ -2406,10 +2524,42 @@ def _derive_snowfall_total_10to1_cumulative(
         use_inventory_resolution=use_inventory_resolution,
         process_step=_process_step,
         error_label=f"No cumulative snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+        first_step_expected_start_fh=first_step_expected_start_fh,
+        initial_apcp_cumulative=initial_apcp_cumulative,
     )
+
+    if base_cumulative_kgm2 is not None and base_crs is not None and base_transform is not None:
+        shape_match = base_cumulative_kgm2.shape == cumulative_kgm2.shape
+        crs_match = base_crs == src_crs
+        transform_match = base_transform == src_transform
+        if not (shape_match and crs_match and transform_match):
+            raise ValueError(
+                f"Snowfall incremental base-grid mismatch for {model_id}/{var_key} fh{fh:03d}: "
+                f"shape_match={shape_match} crs_match={crs_match} transform_match={transform_match}"
+            )
+        base_valid = np.isfinite(base_cumulative_kgm2)
+        base_clean = np.where(base_valid, base_cumulative_kgm2, 0.0).astype(np.float32, copy=False)
+        current_valid = np.isfinite(cumulative_kgm2)
+        current_clean = np.where(current_valid, cumulative_kgm2, 0.0).astype(np.float32, copy=False)
+        cumulative_kgm2 = (base_clean + current_clean).astype(np.float32, copy=False)
+        cumulative_kgm2 = np.where(base_valid | current_valid, cumulative_kgm2, np.nan).astype(np.float32, copy=False)
 
     # 1 kg/m^2 == 1 mm LWE. Convert to inches liquid then apply fixed 10:1 SLR.
     cumulative_snow_inches = cumulative_kgm2 * 0.03937007874015748 * slr
+    logger.info(
+        "snow10to1_incremental model=%s run=%s fh=%03d total_steps=%d computed_steps=%d reused_prev_cumulative=%s "
+        "base_fh=%s final_step_samples=%d current_step_fetches=%s compute_ms=%d",
+        model_id,
+        _run_id_from_date(run_date),
+        fh,
+        len(step_fhs),
+        len(active_step_fhs),
+        "true" if reused_prev_cumulative else "false",
+        f"{base_fh:03d}" if base_fh is not None else "none",
+        len(interval_plan.get(int(fh), (0, []))[1]),
+        current_step_fetch_counts,
+        int((time.perf_counter() - frame_start) * 1000),
+    )
     return cumulative_snow_inches.astype(np.float32, copy=False), src_crs, src_transform
 
 
@@ -2961,8 +3111,9 @@ def _derive_snowfall_kuchera_total_cumulative(
         fh, profile_levels_hpa, "10to1" if fallback_used else "none",
     )
     logger.info(
-        "kuchera_incremental fh=%03d total_steps=%d computed_steps=%d reused_prev_cumulative=%s "
+        "kuchera_incremental run=%s fh=%03d total_steps=%d computed_steps=%d reused_prev_cumulative=%s "
         "base_fh=%s current_step_fetches=%s compute_ms=%d",
+        _run_id_from_date(run_date),
         fh,
         len(step_fhs),
         steps_processed,

@@ -246,6 +246,31 @@ Run these checks immediately after deployment.
 - [ ] CORS works from `https://cartosky.com`
 - [ ] CORS works from `https://www.cartosky.com`
 
+### Schedulers
+
+- [ ] `csky-gfs-scheduler` is running after deployment
+- [ ] GFS scheduler journal shows `snow10to1_incremental` lines for the active run
+- [ ] If Kuchera snowfall is enabled, the same run shows `kuchera_incremental` lines
+- [ ] Late-hour snow frames show expected incremental reuse fields such as `reused_prev_cumulative=true` and reduced `computed_steps`
+
+Use these journal commands during a live run or immediately after deployment:
+
+```bash
+# Tail both snow derive performance logs for the active GFS run.
+sudo journalctl -u csky-gfs-scheduler -f | grep -E "snow10to1_incremental|kuchera_incremental"
+
+# Replace YYYYMMDD_HHz with the run you want to inspect, for example 20260313_06z.
+sudo journalctl -u csky-gfs-scheduler -S today | grep "snow10to1_incremental model=gfs run=YYYYMMDD_HHz"
+sudo journalctl -u csky-gfs-scheduler -S today | grep "kuchera_incremental run=YYYYMMDD_HHz"
+```
+
+Interpretation:
+
+- `computed_steps=1` with `reused_prev_cumulative=true` means the incremental fast path was used for that frame.
+- `compute_ms` is the per-frame derive timing you can compare across deployments.
+- `current_step_fetches` lets you confirm the final step is no longer replaying unnecessary APCP or snow fetches.
+- `kuchera_incremental` lines will only appear if `snowfall_kuchera_total` is actually enabled for that scheduler.
+
 ### OAuth
 
 - [ ] Login starts from the CartoSky frontend
