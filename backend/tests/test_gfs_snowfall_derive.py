@@ -72,6 +72,7 @@ def test_snowfall_derive_enforces_configured_threshold_for_3h_steps(monkeypatch)
     }
     csnow_by_fh = {
         0: np.array([[0.2, np.nan], [1.2, 0.4]], dtype=np.float32),
+        1: np.array([[0.8, 0.8], [0.8, 0.7]], dtype=np.float32),
         3: np.array([[0.8, 0.6], [0.5, -0.1]], dtype=np.float32),
     }
 
@@ -95,6 +96,7 @@ def test_snowfall_derive_enforces_configured_threshold_for_3h_steps(monkeypatch)
                 "apcp_component": "apcp_step",
                 "snow_component": "csnow",
                 "step_hours": "3",
+                "snow_interval_sample_mode": "three_point",
                 "slr": "10",
                 "snow_mask_threshold": "0.5",
                 "min_step_lwe_kgm2": "0.01",
@@ -115,7 +117,7 @@ def test_snowfall_derive_enforces_configured_threshold_for_3h_steps(monkeypatch)
 
     assert out_crs == crs
     assert out_transform == transform
-    assert seen_csnow_fhs == [0, 3]
+    assert seen_csnow_fhs == [0, 1, 3]
 
     expected = np.array(
         [
@@ -154,6 +156,7 @@ def test_snowfall_derive_skips_missing_csnow_samples_and_preserves_nan(monkeypat
                 "apcp_component": "apcp_step",
                 "snow_component": "csnow",
                 "step_hours": "3",
+                "snow_interval_sample_mode": "three_point",
                 "slr": "10",
                 "min_step_lwe_kgm2": "0.01",
             }
@@ -229,6 +232,7 @@ def test_snowfall_derive_inventory_differences_gfs_cumulative_apcp(monkeypatch) 
                 "apcp_component": "apcp_step",
                 "snow_component": "csnow",
                 "step_hours": "3",
+                "snow_interval_sample_mode": "three_point",
                 "slr": "10",
                 "snow_mask_threshold": "0.5",
                 "min_step_lwe_kgm2": "0.01",
@@ -252,9 +256,11 @@ def test_snowfall_derive_inventory_differences_gfs_cumulative_apcp(monkeypatch) 
     assert fetch_patterns == [
         "3::APCP:surface:0-3 hour acc fcst:$",
         "0::CSNOW:surface:",
+        "1::CSNOW:surface:",
         "3::CSNOW:surface:",
         "6::APCP:surface:0-6 hour acc fcst:$",
         "3::CSNOW:surface:",
+        "4::CSNOW:surface:",
         "6::CSNOW:surface:",
     ]
     expected_inches = 6.0 * 0.03937007874015748 * 10.0

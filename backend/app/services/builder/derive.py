@@ -1808,11 +1808,16 @@ def _cumulative_apcp_loop(
     return cumulative, src_crs, src_transform, cumulative_fallback_used
 
 
-def _interval_sample_fhs(step_fh: int, step_len: int) -> list[int]:
+def _interval_sample_fhs(step_fh: int, step_len: int, *, sample_mode: str = "auto") -> list[int]:
     if step_len <= 0:
         raise ValueError(f"Invalid cumulative step length={step_len} for fh={step_fh}")
     start_fh = step_fh - step_len
-    if step_len == 3:
+    normalized_sample_mode = str(sample_mode).strip().lower()
+    if normalized_sample_mode == "three_point":
+        mid_offset = max(1, step_len // 2)
+        mid_fh = start_fh + mid_offset
+        candidates = [start_fh, mid_fh, step_fh]
+    elif step_len == 3:
         candidates = [start_fh, step_fh]
     else:
         mid_fh = step_fh - (step_len // 2)
@@ -2222,6 +2227,7 @@ def _derive_snowfall_total_10to1_cumulative(
     snow_component = hints.get("snow_component", "csnow")
     slr_raw = hints.get("slr", "10")
     snow_mask_threshold_raw = hints.get("snow_mask_threshold")
+    snow_interval_sample_mode = str(hints.get("snow_interval_sample_mode", "auto")).strip().lower() or "auto"
     min_step_lwe_raw = hints.get("min_step_lwe_kgm2", "0.01")
 
     try:
@@ -2263,7 +2269,15 @@ def _derive_snowfall_total_10to1_cumulative(
                 f"Non-increasing cumulative snowfall step sequence for {model_id}/{var_key}: "
                 f"step_len={step_len} at fh{step_fh:03d}"
             )
-        sample_fhs = [sf for sf in _interval_sample_fhs(step_fh, step_len) if sf >= 0]
+        sample_fhs = [
+            sf
+            for sf in _interval_sample_fhs(
+                step_fh,
+                step_len,
+                sample_mode=snow_interval_sample_mode,
+            )
+            if sf >= 0
+        ]
         interval_plan[step_fh] = (step_len, sample_fhs)
         for sf in sample_fhs:
             if sf not in snow_step_fhs:
