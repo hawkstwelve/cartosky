@@ -754,10 +754,10 @@ export default function AdminPerformancePage() {
               className="rounded-xl border border-white/12 bg-white/[0.06] px-3 py-2 text-sm text-white outline-none"
             >
               <option value="all">All runs</option>
-              <option value="1">Latest run / model</option>
-              <option value="2">Latest 2 runs / model</option>
-              <option value="4">Latest 4 runs / model</option>
-              <option value="8">Latest 8 runs / model</option>
+              <option value="1">Latest run</option>
+              <option value="2">Latest 2 runs</option>
+              <option value="4">Latest 4 runs</option>
+              <option value="8">Latest 8 runs</option>
             </select>
 
             <select
