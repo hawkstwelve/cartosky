@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { AlertCircle, Eye, MapPin, Moon, Send, SlidersHorizontal, Sun } from "lucide-react";
 
@@ -1341,13 +1341,10 @@ export default function App() {
     forecastHourRef.current = forecastHour;
   }, [forecastHour]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     modelRef.current = model;
-  }, [model]);
-
-  useEffect(() => {
     variableRef.current = variable;
-  }, [variable]);
+  }, [model, variable]);
 
   useEffect(() => {
     mapZoomRef.current = mapZoom;

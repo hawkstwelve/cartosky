@@ -961,6 +961,7 @@ def _build_perf_filters(
     device_type: str | None = None,
     model_id: str | None = None,
     variable_id: str | None = None,
+    latest_runs: int | None = None,
 ) -> tuple[str, list[Any]]:
     clauses = ["created_at >= ?"]
     params: list[Any] = [since_ts]
@@ -976,7 +977,67 @@ def _build_perf_filters(
     if variable_id:
         clauses.append("variable_id = ?")
         params.append(variable_id)
+    if latest_runs is not None:
+        eligible_pairs = _resolve_latest_run_pairs(
+            since_ts=since_ts,
+            latest_runs=latest_runs,
+            device_type=device_type,
+            model_id=model_id,
+            variable_id=variable_id,
+        )
+        if not eligible_pairs:
+            clauses.append("1 = 0")
+        else:
+            pair_clauses: list[str] = []
+            for eligible_model_id, eligible_run_id in eligible_pairs:
+                pair_clauses.append("(model_id = ? AND run_id = ?)")
+                params.extend([eligible_model_id, eligible_run_id])
+            clauses.append("(" + " OR ".join(pair_clauses) + ")")
     return " WHERE " + " AND ".join(clauses), params
+
+
+def _resolve_latest_run_pairs(
+    *,
+    since_ts: int,
+    latest_runs: int,
+    device_type: str | None = None,
+    model_id: str | None = None,
+    variable_id: str | None = None,
+) -> list[tuple[str, str]]:
+    clauses = ["created_at >= ?", "model_id IS NOT NULL", "run_id IS NOT NULL"]
+    params: list[Any] = [since_ts]
+    if device_type:
+        clauses.append("device_type = ?")
+        params.append(device_type)
+    if model_id:
+        clauses.append("model_id = ?")
+        params.append(model_id)
+    if variable_id:
+        clauses.append("variable_id = ?")
+        params.append(variable_id)
+
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT model_id, run_id
+            FROM perf_events
+            WHERE {' AND '.join(clauses)}
+            ORDER BY model_id ASC, run_id DESC
+            """,
+            params,
+        ).fetchall()
+
+    counts_by_model: dict[str, int] = {}
+    eligible_pairs: list[tuple[str, str]] = []
+    for row in rows:
+        eligible_model_id = str(row["model_id"])
+        eligible_run_id = str(row["run_id"])
+        seen_count = counts_by_model.get(eligible_model_id, 0)
+        if seen_count >= latest_runs:
+            continue
+        counts_by_model[eligible_model_id] = seen_count + 1
+        eligible_pairs.append((eligible_model_id, eligible_run_id))
+    return eligible_pairs
 
 
 def _metric_summary(values: Iterable[float], *, target_ms: float | None = None) -> dict[str, Any]:
@@ -1009,12 +1070,14 @@ def get_perf_summary(
     device_type: str | None = None,
     model_id: str | None = None,
     variable_id: str | None = None,
+    latest_runs: int | None = None,
 ) -> dict[str, Any]:
     where_sql, params = _build_perf_filters(
         since_ts=since_ts,
         device_type=device_type,
         model_id=model_id,
         variable_id=variable_id,
+        latest_runs=latest_runs,
     )
     with _connect() as conn:
         rows = conn.execute(
@@ -1047,6 +1110,7 @@ def get_perf_timeseries(
     device_type: str | None = None,
     model_id: str | None = None,
     variable_id: str | None = None,
+    latest_runs: int | None = None,
 ) -> list[dict[str, Any]]:
     if metric not in ALLOWED_PERF_EVENT_NAMES:
         raise ValueError("Unsupported performance metric")
@@ -1060,6 +1124,7 @@ def get_perf_timeseries(
         device_type=device_type,
         model_id=model_id,
         variable_id=variable_id,
+        latest_runs=latest_runs,
     )
     with _connect() as conn:
         rows = conn.execute(
@@ -1096,6 +1161,7 @@ def get_perf_breakdown(
     device_type: str | None = None,
     model_id: str | None = None,
     variable_id: str | None = None,
+    latest_runs: int | None = None,
 ) -> list[dict[str, Any]]:
     if metric not in ALLOWED_PERF_EVENT_NAMES:
         raise ValueError("Unsupported performance metric")
@@ -1114,6 +1180,7 @@ def get_perf_breakdown(
         device_type=device_type,
         model_id=model_id,
         variable_id=variable_id,
+        latest_runs=latest_runs,
     )
     with _connect() as conn:
         rows = conn.execute(

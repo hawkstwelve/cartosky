@@ -16,6 +16,7 @@ import {
 
 type WindowValue = "24h" | "7d" | "30d";
 type DeviceValue = "all" | "desktop" | "mobile";
+type LatestRunsValue = "all" | "1" | "2" | "4" | "8";
 type MetricKey =
   | "frame_change"
   | "loop_start"
@@ -358,6 +359,7 @@ export default function AdminPerformancePage() {
   const [status, setStatus] = useState<TwfStatus | null>(null);
   const [windowValue, setWindowValue] = useState<WindowValue>("7d");
   const [deviceValue, setDeviceValue] = useState<DeviceValue>("all");
+  const [latestRunsValue, setLatestRunsValue] = useState<LatestRunsValue>("all");
   const [loading, setLoading] = useState(true);
   const [refreshTick, setRefreshTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -373,10 +375,13 @@ export default function AdminPerformancePage() {
   const [firstFrameModelBreakdown, setFirstFrameModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [firstFrameDeviceBreakdown, setFirstFrameDeviceBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [scrubModelBreakdown, setScrubModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [animationStallModelBreakdown, setAnimationStallModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [animationStallVariableBreakdown, setAnimationStallVariableBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [frameVariableBreakdown, setFrameVariableBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [varSwitchModelBreakdown, setVarSwitchModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [tileFetchModelBreakdown, setTileFetchModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [activeMetric, setActiveMetric] = useState<MetricKey | null>(null);
+  const latestRuns = latestRunsValue === "all" ? undefined : Number(latestRunsValue);
 
   useEffect(() => {
     let cancelled = false;
@@ -398,24 +403,26 @@ export default function AdminPerformancePage() {
           frameSeries, loopSeries, firstFrameSeries, varSwitchSeries, tileFetchSeries,
           modelData, deviceData, loopModelData,
           firstFrameModelData, firstFrameDeviceData,
-          scrubModelData, frameVariableData,
+          scrubModelData, animationStallModelData, animationStallVariableData, frameVariableData,
           varSwitchModelData, tileFetchModelData,
         ] = await Promise.all([
-          fetchAdminPerfSummary({ window: windowValue, device: deviceValue }),
-          fetchAdminPerfTimeseries({ metric: "frame_change", window: windowValue, device: deviceValue }),
-          fetchAdminPerfTimeseries({ metric: "loop_start", window: windowValue, device: deviceValue }),
-          fetchAdminPerfTimeseries({ metric: "viewer_first_frame", window: windowValue, device: deviceValue }),
-          fetchAdminPerfTimeseries({ metric: "variable_switch", window: windowValue, device: deviceValue }),
-          fetchAdminPerfTimeseries({ metric: "tile_fetch", window: windowValue, device: deviceValue }),
-          fetchAdminPerfBreakdown({ metric: "frame_change", by: "model", window: windowValue, device: deviceValue }),
-          fetchAdminPerfBreakdown({ metric: "loop_start", by: "device", window: windowValue, device: deviceValue }),
-          fetchAdminPerfBreakdown({ metric: "loop_start", by: "model", window: windowValue, device: deviceValue }),
-          fetchAdminPerfBreakdown({ metric: "viewer_first_frame", by: "model", window: windowValue, device: deviceValue }),
-          fetchAdminPerfBreakdown({ metric: "viewer_first_frame", by: "device", window: windowValue, device: deviceValue }),
-          fetchAdminPerfBreakdown({ metric: "scrub_latency", by: "model", window: windowValue, device: deviceValue }),
-          fetchAdminPerfBreakdown({ metric: "frame_change", by: "variable", window: windowValue, device: deviceValue }),
-          fetchAdminPerfBreakdown({ metric: "variable_switch", by: "model", window: windowValue, device: deviceValue }),
-          fetchAdminPerfBreakdown({ metric: "tile_fetch", by: "model", window: windowValue, device: deviceValue }),
+          fetchAdminPerfSummary({ window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "frame_change", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "loop_start", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "viewer_first_frame", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "variable_switch", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "tile_fetch", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "frame_change", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "loop_start", by: "device", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "loop_start", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "viewer_first_frame", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "viewer_first_frame", by: "device", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "scrub_latency", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "animation_stall", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "animation_stall", by: "variable", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "frame_change", by: "variable", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "variable_switch", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "tile_fetch", by: "model", window: windowValue, device: deviceValue, latestRuns }),
         ]);
         if (cancelled) return;
 
@@ -431,6 +438,8 @@ export default function AdminPerformancePage() {
         setFirstFrameModelBreakdown(firstFrameModelData.items);
         setFirstFrameDeviceBreakdown(firstFrameDeviceData.items);
         setScrubModelBreakdown(scrubModelData.items);
+        setAnimationStallModelBreakdown(animationStallModelData.items);
+        setAnimationStallVariableBreakdown(animationStallVariableData.items);
         setFrameVariableBreakdown(frameVariableData.items);
         setVarSwitchModelBreakdown(varSwitchModelData.items);
         setTileFetchModelBreakdown(tileFetchModelData.items);
@@ -448,7 +457,7 @@ export default function AdminPerformancePage() {
     return () => {
       cancelled = true;
     };
-  }, [windowValue, deviceValue, refreshTick]);
+  }, [windowValue, deviceValue, latestRuns, refreshTick]);
 
   useEffect(() => {
     if (!activeMetric) {
@@ -607,6 +616,20 @@ export default function AdminPerformancePage() {
           description: "Counts slow playback frames that exceed the stall threshold.",
           icon: PauseCircle,
           metric: summary.animation_stall,
+          detailContent: (
+            <div className="grid gap-6 xl:grid-cols-2">
+              <BreakdownList
+                title="Animation Stall by Model"
+                subtitle="Playback stalls split by model to isolate loop decode or readiness bottlenecks."
+                items={animationStallModelBreakdown}
+              />
+              <BreakdownList
+                title="Animation Stall by Variable"
+                subtitle="Playback stalls split by variable to surface render-heavy products."
+                items={animationStallVariableBreakdown}
+              />
+            </div>
+          ),
         },
       ],
     },
@@ -726,6 +749,18 @@ export default function AdminPerformancePage() {
 
           <div className="flex flex-wrap items-center gap-3">
             <select
+              value={latestRunsValue}
+              onChange={(event) => setLatestRunsValue(event.target.value as LatestRunsValue)}
+              className="rounded-xl border border-white/12 bg-white/[0.06] px-3 py-2 text-sm text-white outline-none"
+            >
+              <option value="all">All runs</option>
+              <option value="1">Latest run / model</option>
+              <option value="2">Latest 2 runs / model</option>
+              <option value="4">Latest 4 runs / model</option>
+              <option value="8">Latest 8 runs / model</option>
+            </select>
+
+            <select
               value={deviceValue}
               onChange={(event) => setDeviceValue(event.target.value as DeviceValue)}
               className="rounded-xl border border-white/12 bg-white/[0.06] px-3 py-2 text-sm text-white outline-none"
@@ -759,6 +794,12 @@ export default function AdminPerformancePage() {
         {error ? (
           <div className="mt-5 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
             {error}
+          </div>
+        ) : null}
+
+        {latestRuns ? (
+          <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3 text-sm text-white/68">
+            Showing only telemetry from the latest {latestRuns} run{latestRuns === 1 ? "" : "s"} per model within the selected window.
           </div>
         ) : null}
         </section>

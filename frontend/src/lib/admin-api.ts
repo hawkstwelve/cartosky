@@ -24,6 +24,7 @@ export type PerfSummaryResponse = {
     device: string | null;
     model: string | null;
     variable: string | null;
+    latest_runs: number | null;
   };
   metrics: Record<string, PerfMetricSummary>;
 };
@@ -40,6 +41,7 @@ export type PerfTimeseriesResponse = {
     device: string | null;
     model: string | null;
     variable: string | null;
+    latest_runs: number | null;
   };
   points: PerfTimeseriesPoint[];
 };
@@ -56,6 +58,7 @@ export type PerfBreakdownResponse = {
     device: string | null;
     model: string | null;
     variable: string | null;
+    latest_runs: number | null;
   };
   items: PerfBreakdownItem[];
 };
@@ -134,12 +137,14 @@ export async function fetchAdminPerfSummary(params: {
   device?: string;
   model?: string;
   variable?: string;
+  latestRuns?: number;
 }): Promise<PerfSummaryResponse> {
   const search = new URLSearchParams();
   search.set("window", params.window);
   if (params.device && params.device !== "all") search.set("device", params.device);
   if (params.model && params.model !== "all") search.set("model", params.model);
   if (params.variable && params.variable !== "all") search.set("variable", params.variable);
+  if (Number.isFinite(params.latestRuns)) search.set("latest_runs", String(params.latestRuns));
   return fetchJson<PerfSummaryResponse>(`${API_ORIGIN}/api/v4/admin/performance/summary?${search.toString()}`);
 }
 
@@ -150,6 +155,7 @@ export async function fetchAdminPerfTimeseries(params: {
   device?: string;
   model?: string;
   variable?: string;
+  latestRuns?: number;
 }): Promise<PerfTimeseriesResponse> {
   const search = new URLSearchParams();
   search.set("metric", params.metric);
@@ -158,6 +164,7 @@ export async function fetchAdminPerfTimeseries(params: {
   if (params.device && params.device !== "all") search.set("device", params.device);
   if (params.model && params.model !== "all") search.set("model", params.model);
   if (params.variable && params.variable !== "all") search.set("variable", params.variable);
+  if (Number.isFinite(params.latestRuns)) search.set("latest_runs", String(params.latestRuns));
   return fetchJson<PerfTimeseriesResponse>(`${API_ORIGIN}/api/v4/admin/performance/timeseries?${search.toString()}`);
 }
 
@@ -169,6 +176,7 @@ export async function fetchAdminPerfBreakdown(params: {
   model?: string;
   variable?: string;
   limit?: number;
+  latestRuns?: number;
 }): Promise<PerfBreakdownResponse> {
   const search = new URLSearchParams();
   search.set("metric", params.metric);
@@ -178,6 +186,7 @@ export async function fetchAdminPerfBreakdown(params: {
   if (params.device && params.device !== "all") search.set("device", params.device);
   if (params.model && params.model !== "all") search.set("model", params.model);
   if (params.variable && params.variable !== "all") search.set("variable", params.variable);
+  if (Number.isFinite(params.latestRuns)) search.set("latest_runs", String(params.latestRuns));
   return fetchJson<PerfBreakdownResponse>(`${API_ORIGIN}/api/v4/admin/performance/breakdown?${search.toString()}`);
 }
 

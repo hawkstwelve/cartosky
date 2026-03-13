@@ -141,3 +141,197 @@ async def test_usage_telemetry_summary_returns_counts(client: httpx.AsyncClient)
 
     assert summary.status_code == 200
     assert summary.json()["events"] == [{"event_name": "model_selected", "count": 1}]
+
+
+async def test_admin_perf_breakdown_supports_animation_stall_by_model_and_variable(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    payloads = [
+        {
+            "event_name": "animation_stall",
+            "duration_ms": 910.0,
+            "session_id": "viewer-session-1",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "run_id": "20260308_00z",
+            "region_id": "conus",
+            "forecast_hour": 1,
+            "device_type": "desktop",
+            "viewport_bucket": "xl",
+            "page": "/viewer",
+        },
+        {
+            "event_name": "animation_stall",
+            "duration_ms": 980.0,
+            "session_id": "viewer-session-2",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "run_id": "20260308_00z",
+            "region_id": "conus",
+            "forecast_hour": 2,
+            "device_type": "desktop",
+            "viewport_bucket": "xl",
+            "page": "/viewer",
+        },
+        {
+            "event_name": "animation_stall",
+            "duration_ms": 840.0,
+            "session_id": "viewer-session-3",
+            "model_id": "gfs",
+            "variable_id": "apcp",
+            "run_id": "20260308_00z",
+            "region_id": "conus",
+            "forecast_hour": 3,
+            "device_type": "desktop",
+            "viewport_bucket": "xl",
+            "page": "/viewer",
+        },
+    ]
+
+    for payload in payloads:
+        response = await client.post(
+            "/api/v4/telemetry/perf",
+            cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+            json=payload,
+        )
+        assert response.status_code == 204
+
+    model_breakdown = await client.get(
+        "/api/v4/admin/performance/breakdown?metric=animation_stall&by=model&window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert model_breakdown.status_code == 200
+    assert model_breakdown.json()["items"][:2] == [
+        {
+            "key": "hrrr",
+            "count": 2,
+            "avg_ms": 945.0,
+            "min_ms": 910.0,
+            "max_ms": 980.0,
+            "p50_ms": 945.0,
+            "p95_ms": 976.5,
+            "target_ms": 750.0,
+        },
+        {
+            "key": "gfs",
+            "count": 1,
+            "avg_ms": 840.0,
+            "min_ms": 840.0,
+            "max_ms": 840.0,
+            "p50_ms": 840.0,
+            "p95_ms": 840.0,
+            "target_ms": 750.0,
+        },
+    ]
+
+    variable_breakdown = await client.get(
+        "/api/v4/admin/performance/breakdown?metric=animation_stall&by=variable&window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert variable_breakdown.status_code == 200
+    assert variable_breakdown.json()["items"][:2] == [
+        {
+            "key": "tmp2m",
+            "count": 2,
+            "avg_ms": 945.0,
+            "min_ms": 910.0,
+            "max_ms": 980.0,
+            "p50_ms": 945.0,
+            "p95_ms": 976.5,
+            "target_ms": 750.0,
+        },
+        {
+            "key": "apcp",
+            "count": 1,
+            "avg_ms": 840.0,
+            "min_ms": 840.0,
+            "max_ms": 840.0,
+            "p50_ms": 840.0,
+            "p95_ms": 840.0,
+            "target_ms": 750.0,
+        },
+    ]
+
+
+async def test_admin_perf_queries_can_limit_to_latest_runs_per_model(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    payloads = [
+        ("hrrr", "20260308_00z", 110.0),
+        ("hrrr", "20260308_06z", 210.0),
+        ("hrrr", "20260308_12z", 310.0),
+        ("gfs", "20260308_00z", 410.0),
+        ("gfs", "20260308_06z", 510.0),
+        ("gfs", "20260308_12z", 610.0),
+    ]
+
+    for index, (model_id, run_id, duration_ms) in enumerate(payloads, start=1):
+        response = await client.post(
+            "/api/v4/telemetry/perf",
+            cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+            json={
+                "event_name": "frame_change",
+                "duration_ms": duration_ms,
+                "session_id": f"viewer-session-{index}",
+                "model_id": model_id,
+                "variable_id": "tmp2m",
+                "run_id": run_id,
+                "region_id": "conus",
+                "forecast_hour": index,
+                "device_type": "desktop",
+                "viewport_bucket": "xl",
+                "page": "/viewer",
+            },
+        )
+        assert response.status_code == 204
+
+    summary = await client.get(
+        "/api/v4/admin/performance/summary?window=7d&latest_runs=2",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert summary.status_code == 200
+    summary_body = summary.json()
+    assert summary_body["filters"]["latest_runs"] == 2
+    assert summary_body["metrics"]["frame_change"] == {
+        "count": 4,
+        "avg_ms": 410.0,
+        "min_ms": 210.0,
+        "max_ms": 610.0,
+        "p50_ms": 410.0,
+        "p95_ms": 595.0,
+        "target_ms": 250.0,
+    }
+
+    breakdown = await client.get(
+        "/api/v4/admin/performance/breakdown?metric=frame_change&by=model&window=7d&latest_runs=2",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert breakdown.status_code == 200
+    breakdown_body = breakdown.json()
+    assert breakdown_body["filters"]["latest_runs"] == 2
+    assert breakdown_body["items"][:2] == [
+        {
+            "key": "hrrr",
+            "count": 2,
+            "avg_ms": 260.0,
+            "min_ms": 210.0,
+            "max_ms": 310.0,
+            "p50_ms": 260.0,
+            "p95_ms": 305.0,
+            "target_ms": 250.0,
+        },
+        {
+            "key": "gfs",
+            "count": 2,
+            "avg_ms": 560.0,
+            "min_ms": 510.0,
+            "max_ms": 610.0,
+            "p50_ms": 560.0,
+            "p95_ms": 605.0,
+            "target_ms": 250.0,
+        },
+    ]

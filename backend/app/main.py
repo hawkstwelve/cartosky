@@ -966,6 +966,7 @@ async def admin_perf_summary(
     device: str | None = Query(None),
     model: str | None = Query(None),
     variable: str | None = Query(None),
+    latest_runs: int | None = Query(None, ge=1, le=12),
 ) -> dict[str, Any]:
     _require_admin_session(request)
     normalized_window = window.strip().lower()
@@ -975,6 +976,7 @@ async def admin_perf_summary(
         device_type=_normalize_filter_value(device),
         model_id=_normalize_filter_value(model),
         variable_id=_normalize_filter_value(variable),
+        latest_runs=latest_runs,
     )
     return {
         "window": normalized_window,
@@ -982,6 +984,7 @@ async def admin_perf_summary(
             "device": _normalize_filter_value(device),
             "model": _normalize_filter_value(model),
             "variable": _normalize_filter_value(variable),
+            "latest_runs": latest_runs,
         },
         **summary,
     }
@@ -996,6 +999,7 @@ async def admin_perf_timeseries(
     device: str | None = Query(None),
     model: str | None = Query(None),
     variable: str | None = Query(None),
+    latest_runs: int | None = Query(None, ge=1, le=12),
 ) -> dict[str, Any]:
     _require_admin_session(request)
     normalized_window = window.strip().lower()
@@ -1009,6 +1013,7 @@ async def admin_perf_timeseries(
             device_type=_normalize_filter_value(device),
             model_id=_normalize_filter_value(model),
             variable_id=_normalize_filter_value(variable),
+            latest_runs=latest_runs,
         )
     except ValueError as exc:
         raise TwfApiError(status_code=400, code="INVALID_PERF_QUERY", message=str(exc)) from exc
@@ -1020,6 +1025,7 @@ async def admin_perf_timeseries(
             "device": _normalize_filter_value(device),
             "model": _normalize_filter_value(model),
             "variable": _normalize_filter_value(variable),
+            "latest_runs": latest_runs,
         },
         "points": points,
     }
@@ -1034,6 +1040,7 @@ async def admin_perf_breakdown(
     device: str | None = Query(None),
     model: str | None = Query(None),
     variable: str | None = Query(None),
+    latest_runs: int | None = Query(None, ge=1, le=12),
     limit: int = Query(8, ge=1, le=20),
 ) -> dict[str, Any]:
     _require_admin_session(request)
@@ -1048,6 +1055,7 @@ async def admin_perf_breakdown(
             device_type=_normalize_filter_value(device),
             model_id=_normalize_filter_value(model),
             variable_id=_normalize_filter_value(variable),
+            latest_runs=latest_runs,
         )
     except ValueError as exc:
         raise TwfApiError(status_code=400, code="INVALID_PERF_QUERY", message=str(exc)) from exc
@@ -1059,6 +1067,7 @@ async def admin_perf_breakdown(
             "device": _normalize_filter_value(device),
             "model": _normalize_filter_value(model),
             "variable": _normalize_filter_value(variable),
+            "latest_runs": latest_runs,
         },
         "items": items,
     }
