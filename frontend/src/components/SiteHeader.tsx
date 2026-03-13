@@ -46,6 +46,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   const menuRef = useRef<HTMLDivElement | null>(null);
   const isAppVariant = variant === "app";
   const isMarketingVariant = variant === "marketing";
+  const showAppNav = isAppVariant && location.pathname !== "/viewer";
   const hideInlineAuthOnMobile = variant === "marketing" && location.pathname === "/";
   const logoClassName = isMarketingVariant
     ? "block h-14 w-auto max-w-none"
@@ -147,7 +148,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
           </nav>
         ) : null}
 
-        {isAppVariant ? (
+        {showAppNav ? (
           <nav className="ml-auto hidden items-center gap-1 md:flex">
             <NavItem to="/viewer" label="Viewer" />
             {adminEnabled ? <NavItem to="/admin/performance" label="Admin" /> : null}
