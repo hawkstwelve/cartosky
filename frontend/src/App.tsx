@@ -3906,6 +3906,8 @@ export default function App() {
         onPointLabelsEnabledChange={setPointLabelsEnabled}
         legendVisible={legendVisible}
         onLegendVisibleChange={setLegendVisible}
+        basemapMode={basemapMode}
+        onBasemapModeChange={setBasemapMode}
         opacity={opacity}
         onOpacityChange={setOpacity}
         onPostToTwf={handleOpenShareModal}
@@ -4166,17 +4168,6 @@ export default function App() {
             </button>
           </div>
         </div>
-
-        <button
-          type="button"
-          className="glass absolute bottom-28 right-4 z-40 inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/15 text-white/95 hover:bg-white/10 sm:hidden"
-          aria-pressed={basemapMode === "dark"}
-          aria-label={basemapMode === "dark" ? "Switch to light basemap" : "Switch to dark basemap"}
-          title={basemapMode === "dark" ? "Switch to light basemap" : "Switch to dark basemap"}
-          onClick={() => setBasemapMode(basemapMode === "dark" ? "light" : "dark")}
-        >
-          {basemapMode === "dark" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
-        </button>
 
         {legendVisible ? (
           <Suspense fallback={null}>

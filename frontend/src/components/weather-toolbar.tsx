@@ -9,6 +9,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 
+import type { BasemapMode } from "@/components/map-canvas";
 import { cn } from "@/lib/utils";
 import { Slider } from "@/components/ui/slider";
 import {
@@ -47,6 +48,8 @@ type WeatherToolbarProps = {
   onPointLabelsEnabledChange: (next: boolean) => void;
   legendVisible: boolean;
   onLegendVisibleChange: (next: boolean) => void;
+  basemapMode: BasemapMode;
+  onBasemapModeChange: (next: BasemapMode) => void;
   opacity: number;
   onOpacityChange: (next: number) => void;
   onPostToTwf?: () => void;
@@ -221,6 +224,8 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     onPointLabelsEnabledChange,
     legendVisible,
     onLegendVisibleChange,
+    basemapMode,
+    onBasemapModeChange,
     opacity,
     onOpacityChange,
     onPostToTwf,
@@ -391,6 +396,11 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                   label="Legend"
                   checked={legendVisible}
                   onToggle={() => onLegendVisibleChange(!legendVisible)}
+                />
+                <DisplayToggle
+                  label="Dark Mode"
+                  checked={basemapMode === "dark"}
+                  onToggle={() => onBasemapModeChange(basemapMode === "dark" ? "light" : "dark")}
                 />
                 <div className="rounded-lg border border-white/10 bg-black/18 px-3 py-2">
                   <div className="mb-1 flex items-center justify-between">
