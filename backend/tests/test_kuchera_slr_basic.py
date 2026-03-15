@@ -186,6 +186,14 @@ def test_kuchera_surface_temp_cap_limits_step_ratio_in_derive(monkeypatch) -> No
     np.testing.assert_allclose(data, expected, rtol=0.0, atol=1e-6)
 
 
+def test_kuchera_simplified_profile_prefers_925_over_500() -> None:
+    levels = [925, 850, 700, 600, 500]
+
+    selected = derive_module._kuchera_select_profile_levels(levels, simplified=True)
+
+    assert selected == [925, 850, 700, 600]
+
+
 def test_kuchera_can_use_distinct_profile_product_without_rh_fetch(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()

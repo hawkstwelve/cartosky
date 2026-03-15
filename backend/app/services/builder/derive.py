@@ -246,14 +246,14 @@ def _kuchera_select_profile_levels(levels_hpa: list[int], *, simplified: bool) -
     """Select Kuchera profile levels deterministically for operational mode.
 
     In simplified mode we cap profile fetches to a small fixed set (prefer
-    850/700/600/500 hPa) to keep per-frame cost low while retaining a stable
+    925/850/700/600 hPa) to keep per-frame cost low while retaining a stable
     warm-layer estimate.
     """
     if not levels_hpa:
         return []
     if not simplified:
         return list(levels_hpa)
-    preferred_order = (850, 700, 600, 500, 925)
+    preferred_order = (925, 850, 700, 600, 500)
     selected: list[int] = []
     for level in preferred_order:
         if level in levels_hpa and level not in selected:
