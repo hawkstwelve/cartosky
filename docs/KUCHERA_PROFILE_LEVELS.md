@@ -8,6 +8,8 @@ This note captures the current operational profile-level choice for
 - Shared default Kuchera level set remains `925,850,700,600,500`.
 - HRRR currently runs Kuchera in simplified mode with the configured level set
   `925,850,700,600`.
+- HRRR also applies a narrow surface-temperature SLR cap in near-freezing
+  setups to keep warm-edge ratios from running too high.
 - Simplified mode is still capped at four temperature-profile fetches per step.
 
 ## Why HRRR Uses 925/850/700/600
@@ -36,6 +38,9 @@ This note captures the current operational profile-level choice for
 
 - `925 mb` inclusion is an accuracy-oriented swap, not an added performance
   cost.
+- The HRRR surface-temperature cap is a targeted single-field guard layered on
+  top of the shared Kuchera calculation, intended for marginal setups after
+  frozen-fraction gating is applied.
 - Future rollout decisions for GFS and NAM should treat the level set as a
   model-specific configuration knob layered on top of the common Kuchera derive
   implementation.

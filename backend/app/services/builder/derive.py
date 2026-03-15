@@ -48,6 +48,10 @@ _KUCHERA_RATIO_CLAMP_MAX = np.float32(30.0)
 _KUCHERA_INCREMENTAL_WINDOW_DEFAULT = 6
 _KUCHERA_SIMPLIFIED_PROFILE_MAX_LEVELS = 4
 _KUCHERA_SFC_PRESSURE_MARGIN_PA_DEFAULT = np.float32(2500.0)
+_KUCHERA_SURFACE_TEMP_CAP_COLD_F_DEFAULT = np.float32(30.0)
+_KUCHERA_SURFACE_TEMP_CAP_WARM_F_DEFAULT = np.float32(34.0)
+_KUCHERA_SURFACE_TEMP_CAP_COLD_RATIO_DEFAULT = np.float32(18.0)
+_KUCHERA_SURFACE_TEMP_CAP_WARM_RATIO_DEFAULT = np.float32(10.0)
 _APCP_ACCUM_HOUR_WINDOW_RE = re.compile(
     r":APCP:surface:(\d+)-(\d+)\s*hour acc(?:\s*fcst|@\([^)]*\))",
     re.IGNORECASE,
@@ -187,6 +191,50 @@ def _compute_kuchera_slr(
     max_temp_k = _kuchera_maxt_low500_from_temp_stack_k(temp_stack_c)
     ratio = _kuchera_ratio_from_maxt_low500_k(max_temp_k)
     return np.where(np.isfinite(ratio), ratio, 10.0).astype(np.float32, copy=False)
+
+
+def _apply_kuchera_surface_temp_slr_cap(
+    step_slr: np.ndarray,
+    surface_temp_c: np.ndarray,
+    *,
+    cold_threshold_f: float,
+    warm_threshold_f: float,
+    cold_cap_ratio: float,
+    warm_cap_ratio: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if step_slr.shape != surface_temp_c.shape:
+        raise ValueError(
+            f"kuchera surface-temp cap shape mismatch: {step_slr.shape} != {surface_temp_c.shape}"
+        )
+
+    slr = np.asarray(step_slr, dtype=np.float32)
+    temp_c = np.asarray(surface_temp_c, dtype=np.float32)
+    temp_f = (temp_c * np.float32(9.0 / 5.0) + np.float32(32.0)).astype(np.float32, copy=False)
+
+    cold_f = np.float32(cold_threshold_f)
+    warm_f = np.float32(max(float(warm_threshold_f), float(cold_f)))
+    cold_ratio = np.float32(cold_cap_ratio)
+    warm_ratio = np.float32(min(float(warm_cap_ratio), float(cold_ratio)))
+
+    cap_ratio = np.full(slr.shape, np.nan, dtype=np.float32)
+    finite_temp = np.isfinite(temp_f)
+    warm_zone = finite_temp & (temp_f >= warm_f)
+    if np.any(warm_zone):
+        cap_ratio[warm_zone] = warm_ratio
+
+    if warm_f > cold_f:
+        taper_zone = finite_temp & (temp_f > cold_f) & (temp_f < warm_f)
+        if np.any(taper_zone):
+            fraction = (temp_f[taper_zone] - cold_f) / np.float32(warm_f - cold_f)
+            cap_ratio[taper_zone] = cold_ratio + (warm_ratio - cold_ratio) * fraction
+    else:
+        cap_ratio[finite_temp & (temp_f > cold_f)] = warm_ratio
+
+    capped = slr.copy()
+    applied_mask = np.isfinite(slr) & np.isfinite(cap_ratio) & (slr > cap_ratio)
+    if np.any(applied_mask):
+        capped[applied_mask] = cap_ratio[applied_mask]
+    return capped.astype(np.float32, copy=False), applied_mask, cap_ratio
 
 
 def _run_id_from_date(run_date: datetime) -> str:
@@ -2636,10 +2684,36 @@ def _derive_snowfall_kuchera_total_cumulative(
     ptype_interval_sample_mode = str(
         hints.get("kuchera_ptype_interval_sample_mode", "auto"),
     ).strip().lower() or "auto"
+    use_surface_temp_cap = _parse_hint_bool(
+        hints.get("kuchera_use_surface_temp_cap"),
+        default=False,
+    )
     use_sfc_pressure_mask = _parse_hint_bool(
         hints.get("kuchera_use_sfc_pressure_mask"),
         default=False,
     )
+    surface_temp_product_raw = str(hints.get("kuchera_surface_temp_product", "")).strip()
+    resolved_surface_temp_product = surface_temp_product_raw or product
+    surface_temp_cap_cold_f_raw = hints.get("kuchera_surface_temp_cap_cold_f")
+    surface_temp_cap_warm_f_raw = hints.get("kuchera_surface_temp_cap_warm_f")
+    surface_temp_cap_cold_ratio_raw = hints.get("kuchera_surface_temp_cap_cold_ratio")
+    surface_temp_cap_warm_ratio_raw = hints.get("kuchera_surface_temp_cap_warm_ratio")
+    try:
+        surface_temp_cap_cold_f = np.float32(float(surface_temp_cap_cold_f_raw))
+    except (TypeError, ValueError):
+        surface_temp_cap_cold_f = _KUCHERA_SURFACE_TEMP_CAP_COLD_F_DEFAULT
+    try:
+        surface_temp_cap_warm_f = np.float32(float(surface_temp_cap_warm_f_raw))
+    except (TypeError, ValueError):
+        surface_temp_cap_warm_f = _KUCHERA_SURFACE_TEMP_CAP_WARM_F_DEFAULT
+    try:
+        surface_temp_cap_cold_ratio = np.float32(float(surface_temp_cap_cold_ratio_raw))
+    except (TypeError, ValueError):
+        surface_temp_cap_cold_ratio = _KUCHERA_SURFACE_TEMP_CAP_COLD_RATIO_DEFAULT
+    try:
+        surface_temp_cap_warm_ratio = np.float32(float(surface_temp_cap_warm_ratio_raw))
+    except (TypeError, ValueError):
+        surface_temp_cap_warm_ratio = _KUCHERA_SURFACE_TEMP_CAP_WARM_RATIO_DEFAULT
     sfc_pressure_product_raw = str(hints.get("kuchera_sfc_pressure_product", "")).strip()
     resolved_sfc_pressure_product = sfc_pressure_product_raw or product
     sfc_pressure_margin_pa_raw = hints.get("kuchera_sfc_pressure_margin_pa")
@@ -2721,6 +2795,7 @@ def _derive_snowfall_kuchera_total_cumulative(
     resolved_profile_product = str(profile_product or product)
     sfc_pressure_mask_logged = False
     sfc_pressure_fetch_failed_logged = False
+    surface_temp_cap_fetch_failed_logged = False
     fallback_used = False
     fallback_profile_logged = False
     missing_level_warning_logged = False
@@ -2750,6 +2825,13 @@ def _derive_snowfall_kuchera_total_cumulative(
     }
     apcp_cumulative_fallback_used = False
     current_step_fetch_counts: dict[str, int] = {"apcp": 0, "profile_temp": 0, "ptype": 0}
+    surface_temp_cap_stats: dict[str, float] = {
+        "applied_count": 0.0,
+        "tmp2m_min": float("inf"),
+        "tmp2m_max": float("-inf"),
+        "cap_ratio_min": float("inf"),
+        "cap_ratio_max": float("-inf"),
+    }
 
     reused_prev_cumulative = False
     base_fh: int | None = None
@@ -3019,6 +3101,65 @@ def _derive_snowfall_kuchera_total_cumulative(
                 step_slr = _kuchera_ratio_from_maxt_low500_k(step_max_t_k)
                 step_slr = np.where(np.isfinite(step_slr), step_slr, 10.0).astype(np.float32, copy=False)
 
+            if use_surface_temp_cap and np.any(
+                apcp_valid & np.isfinite(step_apcp_for_snow) & (step_apcp_for_snow > 0.0)
+            ):
+                try:
+                    step_tmp2m_c, _, _ = _fetch_step_component(
+                        model_id=model_id,
+                        product=resolved_surface_temp_product,
+                        run_date=run_date,
+                        step_fh=step_fh,
+                        model_plugin=model_plugin,
+                        var_key="tmp2m",
+                        use_warped=use_warped,
+                        target_region=target_region,
+                        target_grid_id=target_grid_id,
+                        resampling=resampling,
+                        ctx=ctx,
+                    )
+                    if step_tmp2m_c.shape != step_slr.shape:
+                        raise ValueError(
+                            f"Kuchera surface temp shape mismatch for {model_id}/{var_key} at fh{step_fh:03d}: "
+                            f"{step_tmp2m_c.shape} != {step_slr.shape}"
+                        )
+                    if int(step_fh) == int(fh):
+                        current_step_fetch_counts["surface_temp"] = current_step_fetch_counts.get("surface_temp", 0) + 1
+                    step_slr, cap_applied_mask, cap_ratio = _apply_kuchera_surface_temp_slr_cap(
+                        step_slr,
+                        step_tmp2m_c.astype(np.float32, copy=False),
+                        cold_threshold_f=float(surface_temp_cap_cold_f),
+                        warm_threshold_f=float(surface_temp_cap_warm_f),
+                        cold_cap_ratio=float(surface_temp_cap_cold_ratio),
+                        warm_cap_ratio=float(surface_temp_cap_warm_ratio),
+                    )
+                    if np.any(cap_applied_mask):
+                        temp_f_values = (
+                            step_tmp2m_c[cap_applied_mask] * np.float32(9.0 / 5.0) + np.float32(32.0)
+                        ).astype(np.float32, copy=False)
+                        cap_values = cap_ratio[cap_applied_mask]
+                        surface_temp_cap_stats["applied_count"] += float(np.count_nonzero(cap_applied_mask))
+                        surface_temp_cap_stats["tmp2m_min"] = min(
+                            surface_temp_cap_stats["tmp2m_min"], float(np.min(temp_f_values))
+                        )
+                        surface_temp_cap_stats["tmp2m_max"] = max(
+                            surface_temp_cap_stats["tmp2m_max"], float(np.max(temp_f_values))
+                        )
+                        surface_temp_cap_stats["cap_ratio_min"] = min(
+                            surface_temp_cap_stats["cap_ratio_min"], float(np.min(cap_values))
+                        )
+                        surface_temp_cap_stats["cap_ratio_max"] = max(
+                            surface_temp_cap_stats["cap_ratio_max"], float(np.max(cap_values))
+                        )
+                except (HerbieTransientUnavailableError, RuntimeError, ValueError) as exc:
+                    if not surface_temp_cap_fetch_failed_logged:
+                        logger.warning(
+                            "kuchera_surface_temp_cap fetch_failed step_fh=%03d reason=%s; proceeding without surface cap",
+                            step_fh,
+                            exc,
+                        )
+                        surface_temp_cap_fetch_failed_logged = True
+
             valid_precip_ratio = (
                 apcp_valid
                 & np.isfinite(step_apcp_for_snow)
@@ -3137,6 +3278,18 @@ def _derive_snowfall_kuchera_total_cumulative(
         )
         if ptype_any_precip_pixels and not ptype_any_reduced_pixels:
             logger.warning("ptype gate ineffective")
+
+    if surface_temp_cap_stats["applied_count"] > 0:
+        logger.info(
+            "kuchera_surface_temp_cap fh=%03d applied_px=%d tmp2m_f_min=%.2f tmp2m_f_max=%.2f "
+            "cap_ratio_min=%.2f cap_ratio_max=%.2f",
+            fh,
+            int(surface_temp_cap_stats["applied_count"]),
+            surface_temp_cap_stats["tmp2m_min"],
+            surface_temp_cap_stats["tmp2m_max"],
+            surface_temp_cap_stats["cap_ratio_min"],
+            surface_temp_cap_stats["cap_ratio_max"],
+        )
 
     ratio_count = kuchera_maxt_stats["ratio_count"]
     ratio_mean = kuchera_maxt_stats["ratio_sum"] / ratio_count if ratio_count > 0 else float("nan")

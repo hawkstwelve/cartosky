@@ -234,6 +234,11 @@ HRRR_VARS: dict[str, VarSpec] = {
                 "step_hours": "1",
                 "kuchera_profile_product": "prs",
                 "kuchera_use_ptype_gate": "true",
+                "kuchera_use_surface_temp_cap": "true",
+                "kuchera_surface_temp_cap_cold_f": "30",
+                "kuchera_surface_temp_cap_warm_f": "34",
+                "kuchera_surface_temp_cap_cold_ratio": "18",
+                "kuchera_surface_temp_cap_warm_ratio": "10",
                 "kuchera_profile_mode": "simplified",
                 "kuchera_use_sfc_pressure_mask": "true",
                 **kuchera_hint_overrides(
