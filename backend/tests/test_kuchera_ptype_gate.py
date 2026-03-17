@@ -162,6 +162,73 @@ def test_kuchera_ptype_gate_masks_rain_only_step(monkeypatch) -> None:
     np.testing.assert_allclose(data, np.zeros((2, 2), dtype=np.float32), rtol=1e-6, atol=1e-6)
 
 
+def test_kuchera_ptype_gate_excludes_sleet_only_step(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    apcp = np.array([[2.0, 1.0], [0.5, 3.0]], dtype=np.float32)
+    temp_850 = np.full((2, 2), -10.0, dtype=np.float32)
+    zeros = np.zeros((2, 2), dtype=np.float32)
+    ones = np.ones((2, 2), dtype=np.float32)
+    exact_apcp_pattern = ":APCP:surface:0-1 hour acc fcst:"
+
+    def _fake_fetch_variable(
+        *,
+        model_id,
+        product,
+        search_pattern,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        return_meta=False,
+    ):
+        del model_id, product, run_date, fh, herbie_kwargs
+        pattern = str(search_pattern)
+        if pattern == exact_apcp_pattern or pattern == f"{exact_apcp_pattern}$":
+            meta = {"inventory_line": exact_apcp_pattern, "search_pattern": pattern}
+            return (apcp, crs, transform, meta) if return_meta else (apcp, crs, transform)
+        if pattern == ":TMP:850 mb:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (temp_850, crs, transform, meta) if return_meta else (temp_850, crs, transform)
+        if pattern == ":CSNOW:surface:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (zeros, crs, transform, meta) if return_meta else (zeros, crs, transform)
+        if pattern == ":CRAIN:surface:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (zeros, crs, transform, meta) if return_meta else (zeros, crs, transform)
+        if pattern == ":CICEP:surface:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (ones, crs, transform, meta) if return_meta else (ones, crs, transform)
+        if pattern == ":CFRZR:surface:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (zeros, crs, transform, meta) if return_meta else (zeros, crs, transform)
+        raise AssertionError(f"unexpected search pattern: {pattern}")
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(
+        derive_module,
+        "_kuchera_inventory_lines",
+        lambda *, model_id, product, run_date, fh, search_pattern: [exact_apcp_pattern],
+    )
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [1],
+    )
+
+    data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="hrrr",
+        var_key="snowfall_kuchera_total",
+        product="sfc",
+        run_date=datetime(2026, 3, 5, 17, 0),
+        fh=1,
+        var_spec_model=_kuchera_var_spec(),
+        var_capability=None,
+        model_plugin=_Plugin(),
+    )
+
+    np.testing.assert_allclose(data, np.zeros((2, 2), dtype=np.float32), rtol=1e-6, atol=1e-6)
+
+
 def test_kuchera_ptype_gate_interval_averages_frozen_fraction(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()

@@ -915,11 +915,9 @@ def _kuchera_frozen_fraction_for_step(
 
         csnow_prob = _normalize_ptype_probability(fetched["csnow"])
         _ = _normalize_ptype_probability(fetched["crain"])
-        cicep_prob = _normalize_ptype_probability(fetched["cicep"])
+        _ = _normalize_ptype_probability(fetched["cicep"])
         _ = _normalize_ptype_probability(fetched["cfrzr"])
-        sample_frozen_fracs.append(
-            np.clip(csnow_prob + cicep_prob, 0.0, 1.0).astype(np.float32, copy=False)
-        )
+        sample_frozen_fracs.append(csnow_prob.astype(np.float32, copy=False))
 
     if not sample_frozen_fracs:
         reason = sample_errors[0] if sample_errors else "no_valid_samples"
