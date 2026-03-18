@@ -306,7 +306,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
         </div>
       </div>
 
-      <div className="glass-strong relative rounded-2xl border border-white/12 px-3 py-2.5 pb-2 shadow-[0_18px_40px_rgba(0,0,0,0.34)] sm:hidden">
+      <div className="glass-overlay relative rounded-2xl px-3 py-2.5 pb-2 sm:hidden">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -347,7 +347,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
         {mobilePanelOpen ? (
           <div
             id="mobile-layers-panel"
-            className="glass-strong mt-3 mb-3 rounded-2xl border border-white/12 px-3 py-3 shadow-[0_16px_48px_rgba(0,0,0,0.45)]"
+            className="glass-overlay-section mt-3 mb-3 rounded-2xl px-3 py-3"
           >
             <div className="grid grid-cols-1 gap-3">
               <ToolbarSelect

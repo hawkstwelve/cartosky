@@ -68,10 +68,10 @@ const QUICK_FORUMS: Array<{ id: number; label: string }> = [
 ];
 
 const modalCardClass =
-  "my-2 flex max-h-[calc(100dvh-1rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-white/8 bg-[rgba(31,36,44,0.7)] text-white shadow-[0_18px_44px_rgba(0,0,0,0.34)] backdrop-blur-[20px] backdrop-brightness-[0.52] backdrop-saturate-120 sm:my-4 sm:max-h-[calc(100dvh-2rem)]";
+  "glass-overlay my-2 flex max-h-[calc(100dvh-1rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl text-white sm:my-4 sm:max-h-[calc(100dvh-2rem)]";
 
 const sectionCardClass =
-  "rounded-2xl border border-white/8 bg-white/[0.038]";
+  "glass-overlay-section rounded-2xl";
 
 const insetCardClass =
   "rounded-xl border border-white/8 bg-white/[0.032]";
