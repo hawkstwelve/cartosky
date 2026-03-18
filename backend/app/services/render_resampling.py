@@ -29,6 +29,9 @@ _TARGETED_LOOP_FIXED_WIDTHS: dict[int, int] = {
     1: 3400,
 }
 _TARGETED_LOOP_FIXED_WIDTHS_BY_VAR: dict[tuple[str, int], int] = {
+    ("precip_total", 1): 3600,
+    ("snowfall_total", 1): 3600,
+    ("snowfall_kuchera_total", 1): 3600,
     ("radar_ptype", 0): 3072,
     ("radar_ptype", 1): 3200,
 }

@@ -144,7 +144,7 @@ def test_targeted_accumulations_use_larger_loop_widths(monkeypatch):
                 var_key=var_key,
                 tier=1,
                 default_width=2400,
-            ) == 3400
+            ) == 3600
 
     assert render_resampling.loop_fixed_width_for_tier(
         model_id="gfs",
@@ -166,7 +166,7 @@ def test_gfs_continuous_loops_use_larger_widths(monkeypatch):
         },
     )
 
-    for var_key in ("snowfall_total", "snowfall_kuchera_total", "precip_total", "tmp2m"):
+    for var_key in ("snowfall_total", "snowfall_kuchera_total", "precip_total"):
         assert render_resampling.loop_fixed_width_for_tier(
             model_id="gfs",
             var_key=var_key,
@@ -178,7 +178,20 @@ def test_gfs_continuous_loops_use_larger_widths(monkeypatch):
             var_key=var_key,
             tier=1,
             default_width=2400,
-        ) == 3400
+        ) == 3600
+
+    assert render_resampling.loop_fixed_width_for_tier(
+        model_id="gfs",
+        var_key="tmp2m",
+        tier=0,
+        default_width=1600,
+    ) == 2300
+    assert render_resampling.loop_fixed_width_for_tier(
+        model_id="gfs",
+        var_key="tmp2m",
+        tier=1,
+        default_width=2400,
+    ) == 3400
 
     assert render_resampling.loop_fixed_width_for_tier(
         model_id="gfs",

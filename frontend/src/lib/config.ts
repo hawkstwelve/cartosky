@@ -10,6 +10,8 @@ export const WEBP_RENDER_MODE_THRESHOLDS = {
   tier1Max: 6.6,
   hysteresis: 0.2,
   dwellMs: 200,
+  desktopHiDpiMinDpr: 1.75,
+  desktopHiDpiTier1Bias: 0.35,
 };
 
 export const MAP_VIEW_DEFAULTS = {

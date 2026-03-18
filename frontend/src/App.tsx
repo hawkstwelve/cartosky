@@ -468,8 +468,35 @@ function getEffectiveZoom(zoom: number): number {
   return zoom + Math.log2(dpr);
 }
 
+function isLikelyMobileLoopDevice(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return false;
+  }
+  const coarsePointer = typeof window.matchMedia === "function"
+    ? window.matchMedia("(pointer: coarse)").matches
+    : false;
+  return coarsePointer || /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+}
+
+function getRenderModeThresholds() {
+  const base = WEBP_RENDER_MODE_THRESHOLDS;
+  if (typeof window === "undefined" || isLikelyMobileLoopDevice()) {
+    return base;
+  }
+
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  if (dpr < base.desktopHiDpiMinDpr) {
+    return base;
+  }
+
+  return {
+    ...base,
+    tier1Max: base.tier1Max + base.desktopHiDpiTier1Bias,
+  };
+}
+
 function nextRenderModeByHysteresis(current: RenderModeState, effectiveZoom: number): RenderModeState {
-  const { tier0Max, tier1Max, hysteresis } = WEBP_RENDER_MODE_THRESHOLDS;
+  const { tier0Max, tier1Max, hysteresis } = getRenderModeThresholds();
 
   if (current === "webp_tier0") {
     if (effectiveZoom > tier0Max + hysteresis) {
@@ -1333,7 +1360,8 @@ export default function App() {
   }, [loopFrameHours, loopTier0UrlByHour, loopUrlByHour]);
   const isHighDetailZoom = useMemo(() => {
     const effectiveZoom = getEffectiveZoom(mapZoom);
-    const highDetailCutoff = WEBP_RENDER_MODE_THRESHOLDS.tier1Max + WEBP_RENDER_MODE_THRESHOLDS.hysteresis;
+    const thresholds = getRenderModeThresholds();
+    const highDetailCutoff = thresholds.tier1Max + thresholds.hysteresis;
     return effectiveZoom > highDetailCutoff;
   }, [mapZoom]);
 
