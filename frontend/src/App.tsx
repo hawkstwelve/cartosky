@@ -190,6 +190,33 @@ function emptyScrubPhase0aSnapshot(): ScrubPhase0aSnapshot {
   };
 }
 
+function buildVariableSwitchPhase0aMeta(
+  pending: PendingVariableSwitchMetric,
+  renderTarget: "tiles" | "loop"
+): Record<string, unknown> {
+  const offsetMs = (at: number | null): number | null => {
+    if (!Number.isFinite(at)) {
+      return null;
+    }
+    return Math.max(0, Math.round((at as number) - pending.startedAt));
+  };
+
+  return {
+    from_variable: pending.fromVariableId,
+    render_target: renderTarget,
+    phase0a_trace_version: 1,
+    stage_manifest_resolved_ms: offsetMs(pending.manifestResolvedAt),
+    stage_frames_resolved_ms: offsetMs(pending.framesResolvedAt),
+    stage_first_target_request_ms: offsetMs(pending.firstTargetRequestAt),
+    stage_first_target_ready_ms: offsetMs(pending.firstTargetReadyAt),
+    stage_first_visible_ms: offsetMs(pending.firstVisibleAt),
+    stage_loop_decode_requested_ms: offsetMs(pending.loopDecodeRequestedAt),
+    expected_tile_url: pending.expectedTileUrl,
+    warm_at_visible: pending.warmAtVisible,
+    warm_source_at_visible: pending.warmSourceAtVisible,
+  };
+}
+
 type ForecastHourChangeReason = "standard" | "scrub-live" | "scrub-commit";
 
 const BASEMAP_MODE_STORAGE_KEY = "twf.map.basemap_mode";
@@ -2602,7 +2629,7 @@ export default function App() {
       region_id: pendingVarSwitch.regionId,
       meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch, "loop"),
     });
-  }, [loopDisplayHour, buildVariableSwitchPhase0aMeta]);
+  }, [loopDisplayHour]);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -3792,33 +3819,6 @@ export default function App() {
     setMapViewTick((current) => current + 1);
   }, []);
 
-  const buildVariableSwitchPhase0aMeta = useCallback(
-    (pending: PendingVariableSwitchMetric, renderTarget: "tiles" | "loop"): Record<string, unknown> => {
-      const offsetMs = (at: number | null): number | null => {
-        if (!Number.isFinite(at)) {
-          return null;
-        }
-        return Math.max(0, Math.round((at as number) - pending.startedAt));
-      };
-
-      return {
-        from_variable: pending.fromVariableId,
-        render_target: renderTarget,
-        phase0a_trace_version: 1,
-        stage_manifest_resolved_ms: offsetMs(pending.manifestResolvedAt),
-        stage_frames_resolved_ms: offsetMs(pending.framesResolvedAt),
-        stage_first_target_request_ms: offsetMs(pending.firstTargetRequestAt),
-        stage_first_target_ready_ms: offsetMs(pending.firstTargetReadyAt),
-        stage_first_visible_ms: offsetMs(pending.firstVisibleAt),
-        stage_loop_decode_requested_ms: offsetMs(pending.loopDecodeRequestedAt),
-        expected_tile_url: pending.expectedTileUrl,
-        warm_at_visible: pending.warmAtVisible,
-        warm_source_at_visible: pending.warmSourceAtVisible,
-      };
-    },
-    []
-  );
-
   const handleTileViewportReady = useCallback((readyTileUrl: string) => {
     if (readyTileUrl === tileUrl) {
       trackFirstViewerFrame(forecastHour);
@@ -3874,7 +3874,6 @@ export default function App() {
     visibleRenderMode,
     region,
     forecastHour,
-    buildVariableSwitchPhase0aMeta,
     finalizePendingFrameMetric,
     telemetryRunId,
     trackFirstViewerFrame,
