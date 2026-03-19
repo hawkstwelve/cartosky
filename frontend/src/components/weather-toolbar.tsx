@@ -315,10 +315,10 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
         className={cn(
           "glass-overlay relative rounded-2xl px-3 py-2.5 pb-2",
           isDesktopLayout ? "hidden" : "block",
-          isTabletTouchLayout ? "mx-auto w-fit max-w-[min(90vw,620px)]" : ""
+          isTabletTouchLayout ? "mr-auto ml-0 w-fit max-w-[min(90vw,620px)]" : ""
         )}
       >
-        <div className="flex items-center justify-between gap-2">
+        <div className={cn("flex items-center gap-2", isTabletTouchLayout ? "justify-start" : "justify-between")}>
           <button
             type="button"
             onClick={() => setMobilePanelOpen((value) => !value)}
@@ -336,10 +336,24 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
             <ChevronDown className={cn("h-4 w-4 transition-transform duration-150", mobilePanelOpen ? "rotate-180" : "")} />
           </button>
 
-          {onPostToTwf && isTabletTouchLayout ? <ShareButton onClick={onPostToTwf} compact /> : null}
+          {isTabletTouchLayout ? (
+            <div className="min-w-0 flex flex-1 items-center gap-1 text-[11px]">
+              <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/68">
+                {selectedRunLabel}
+              </span>
+              <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/82">
+                {selectedModelLabel}
+              </span>
+              <span className="truncate rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/74">
+                {selectedVariableLabel}
+              </span>
+            </div>
+          ) : null}
+
+          {onPostToTwf && !isTabletTouchLayout ? <ShareButton onClick={onPostToTwf} compact /> : null}
         </div>
 
-        <div className={cn("flex items-center gap-2 pt-2 text-[11px]", isTabletTouchLayout ? "pr-0" : "pr-24")}>
+        <div className={cn("flex items-center gap-2 pt-2 text-[11px]", isTabletTouchLayout ? "hidden" : "pr-24")}>
           <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/68">
             {selectedRunLabel}
           </span>
@@ -441,6 +455,12 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 </div>
               </div>
             </div>
+
+            {onPostToTwf && isTabletTouchLayout ? (
+              <div className="mt-4 border-t border-white/10 pt-3">
+                <ShareButton onClick={onPostToTwf} compact />
+              </div>
+            ) : null}
 
             <div className="mt-4 border-t border-white/10 pt-3 text-[10px] leading-relaxed text-white/52">
               Maps:{" "}

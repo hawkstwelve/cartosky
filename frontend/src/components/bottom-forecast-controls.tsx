@@ -4,6 +4,7 @@ import { AlertCircle, Clock, Pause, Play } from "lucide-react";
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { cn } from "@/lib/utils";
 import {
   Tooltip,
   TooltipContent,
@@ -81,6 +82,7 @@ export function BottomForecastControls({
 
   const hasFrames = availableFrames.length > 0;
   const isDesktopLayout = layoutMode === "desktop";
+  const isTabletTouchLayout = layoutMode === "tablet-touch";
   const effectiveHour = previewHour ?? forecastHour;
   const sliderIndex = Math.max(0, availableFrames.indexOf(effectiveHour));
 
@@ -118,9 +120,18 @@ export function BottomForecastControls({
   return (
     <TooltipProvider delayDuration={300}>
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
-        <div className="pointer-events-auto flex w-full max-w-3xl flex-col gap-2.5 rounded-2xl glass-strong px-3 py-2.5 sm:px-4 sm:py-3">
+        <div
+          className={cn(
+            "pointer-events-auto flex flex-col glass-strong",
+            isDesktopLayout
+              ? "w-full max-w-3xl gap-2.5 rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3"
+              : isTabletTouchLayout
+                ? "w-[min(90vw,560px)] gap-2 rounded-xl px-2.5 py-2"
+                : "w-full max-w-3xl gap-2.5 rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3"
+          )}
+        >
           <div className={isDesktopLayout ? "hidden" : "block"}>
-            <div className="mb-2 flex items-start justify-between gap-2">
+            <div className={cn("flex items-start justify-between gap-2", isTabletTouchLayout ? "mb-1.5" : "mb-2")}>
               <div className="min-w-0">
                 {validTime ? (
                   <div className="truncate text-xs font-semibold text-foreground">{validTime.primary}</div>
@@ -138,7 +149,7 @@ export function BottomForecastControls({
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className={cn("flex items-center", isTabletTouchLayout ? "gap-2.5" : "gap-3")}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -147,7 +158,10 @@ export function BottomForecastControls({
                     onClick={() => setIsPlaying(!isPlaying)}
                     disabled={disabled || !hasFrames || playDisabled}
                     aria-label={isPlaying ? "Pause animation" : "Play animation"}
-                    className="h-10 w-10 shrink-0 rounded-xl p-0 transition-all duration-150"
+                    className={cn(
+                      "shrink-0 p-0 transition-all duration-150",
+                      isTabletTouchLayout ? "h-9 w-9 rounded-lg" : "h-10 w-10 rounded-xl"
+                    )}
                   >
                     {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-px" />}
                   </Button>
