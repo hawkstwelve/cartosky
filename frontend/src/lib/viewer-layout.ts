@@ -3,8 +3,8 @@ import { useEffect, useState } from "react";
 export type ViewerLayoutMode = "mobile" | "tablet-touch" | "desktop";
 
 const MOBILE_MAX_WIDTH = 639;
-const TOUCH_TABLET_MAX_WIDTH = 1099;
-const TOUCH_TABLET_MAX_HEIGHT = 900;
+const TOUCH_TABLET_MAX_WIDTH = 1279;
+const TOUCH_TABLET_MAX_HEIGHT = 950;
 
 function supportsMatchMedia(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function";
@@ -15,6 +15,27 @@ function hasCoarsePointer(): boolean {
     return false;
   }
   return window.matchMedia("(pointer: coarse)").matches;
+}
+
+function hasAnyCoarsePointer(): boolean {
+  if (!supportsMatchMedia()) {
+    return false;
+  }
+  return window.matchMedia("(any-pointer: coarse)").matches;
+}
+
+function hasTouchSupport(): boolean {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  return (navigator.maxTouchPoints ?? 0) > 0;
+}
+
+function isAndroidDevice(): boolean {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  return /android/i.test(navigator.userAgent || "");
 }
 
 function canHover(): boolean {
@@ -37,9 +58,13 @@ export function detectViewerLayoutMode(): ViewerLayoutMode {
   }
 
   const coarsePointer = hasCoarsePointer();
+  const anyCoarsePointer = hasAnyCoarsePointer();
+  const touchSupport = hasTouchSupport();
+  const androidDevice = isAndroidDevice();
   const hoverCapable = canHover();
+  const touchFirstDevice = coarsePointer || (androidDevice && (touchSupport || anyCoarsePointer));
 
-  if (coarsePointer && !hoverCapable) {
+  if (touchFirstDevice && (!hoverCapable || androidDevice)) {
     const tabletTouchViewport = width <= TOUCH_TABLET_MAX_WIDTH || height <= TOUCH_TABLET_MAX_HEIGHT;
     if (tabletTouchViewport) {
       return "tablet-touch";
