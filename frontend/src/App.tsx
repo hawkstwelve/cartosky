@@ -934,6 +934,8 @@ export default function App() {
   const pendingInitialLoopRef = useRef<boolean | undefined>(initialPermalink.loop);
   const viewerMountedAtRef = useRef(typeof performance === "undefined" ? 0 : performance.now());
   const firstViewerFrameTrackedRef = useRef(false);
+  const pendingFirstViewerFrameRef = useRef(false);
+  const pendingFirstViewerFrameHourRef = useRef<number | null>(null);
   const pendingFrameMetricRef = useRef<PendingViewerPerfMetric | null>(null);
   const pendingLoopStartMetricRef = useRef<PendingLoopStartMetric | null>(null);
   const pendingVariableSwitchRef = useRef<PendingVariableSwitchMetric | null>(null);
@@ -2719,7 +2721,22 @@ export default function App() {
     if (firstViewerFrameTrackedRef.current) {
       return;
     }
+
+    const hasSelectionIdentity =
+      hasRenderableSelection
+      && loadedFramesKey.length > 0
+      && Boolean(modelRef.current)
+      && Boolean(variableRef.current);
+
+    if (!hasSelectionIdentity) {
+      pendingFirstViewerFrameRef.current = true;
+      pendingFirstViewerFrameHourRef.current = Number.isFinite(frameHour) ? Number(frameHour) : null;
+      return;
+    }
+
     firstViewerFrameTrackedRef.current = true;
+    pendingFirstViewerFrameRef.current = false;
+    pendingFirstViewerFrameHourRef.current = null;
     const durationMs = performance.now() - viewerMountedAtRef.current;
     if (!Number.isFinite(durationMs) || durationMs < 0) {
       return;
@@ -2733,7 +2750,20 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(frameHour) ? frameHour : null,
     });
-  }, [telemetryRunId, region]);
+  }, [telemetryRunId, region, hasRenderableSelection, loadedFramesKey]);
+
+  useEffect(() => {
+    if (firstViewerFrameTrackedRef.current) {
+      return;
+    }
+    if (!pendingFirstViewerFrameRef.current) {
+      return;
+    }
+    if (!hasRenderableSelection || loadedFramesKey.length === 0) {
+      return;
+    }
+    trackFirstViewerFrame(pendingFirstViewerFrameHourRef.current);
+  }, [hasRenderableSelection, loadedFramesKey, trackFirstViewerFrame]);
 
   useEffect(() => {
     if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
