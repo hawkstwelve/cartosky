@@ -245,6 +245,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
   } = props;
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const isDesktopLayout = layoutMode === "desktop";
+  const isTabletTouchLayout = layoutMode === "tablet-touch";
 
   const selectedModelLabel = models.find((opt) => opt.value === model)?.label ?? "Model";
   const selectedVariableLabel = variables.find((opt) => opt.value === variable)?.label ?? "Variable";
@@ -310,8 +311,14 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
         </div>
       </div>
 
-      <div className={cn("glass-overlay relative rounded-2xl px-3 py-2.5 pb-2", isDesktopLayout ? "hidden" : "block")}>
-        <div className="flex items-center gap-2">
+      <div
+        className={cn(
+          "glass-overlay relative rounded-2xl px-3 py-2.5 pb-2",
+          isDesktopLayout ? "hidden" : "block",
+          isTabletTouchLayout ? "mx-auto max-w-[760px]" : ""
+        )}
+      >
+        <div className="flex items-center justify-between gap-2">
           <button
             type="button"
             onClick={() => setMobilePanelOpen((value) => !value)}
@@ -328,9 +335,11 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
             Layers
             <ChevronDown className={cn("h-4 w-4 transition-transform duration-150", mobilePanelOpen ? "rotate-180" : "")} />
           </button>
+
+          {onPostToTwf && isTabletTouchLayout ? <ShareButton onClick={onPostToTwf} compact /> : null}
         </div>
 
-        <div className="flex items-center gap-2 pt-2 pr-24 text-[11px]">
+        <div className={cn("flex items-center gap-2 pt-2 text-[11px]", isTabletTouchLayout ? "pr-0" : "pr-24")}>
           <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/68">
             {selectedRunLabel}
           </span>
@@ -342,7 +351,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
           </span>
         </div>
 
-        {onPostToTwf ? (
+        {onPostToTwf && !isTabletTouchLayout ? (
           <div className="absolute right-3 bottom-2">
             <ShareButton onClick={onPostToTwf} compact />
           </div>
