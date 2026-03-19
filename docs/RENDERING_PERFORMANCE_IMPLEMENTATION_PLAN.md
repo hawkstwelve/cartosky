@@ -705,6 +705,8 @@ For every phase, validate:
 - desktop-width viewport
 - mobile memory-pressure case with lower loop decode cache budget
 
+Use the standardized execution script in `docs/RENDERING_PERFORMANCE_QA_RUNBOOK.md` so each phase comparison uses the same interaction profile and sample targets.
+
 ## Testing and Telemetry Checklist
 
 - Add targeted frontend tests where logic is isolated enough to test deterministically.

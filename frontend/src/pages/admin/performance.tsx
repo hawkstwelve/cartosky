@@ -17,6 +17,7 @@ import {
 type WindowValue = "24h" | "7d" | "30d";
 type DeviceValue = "all" | "desktop" | "mobile";
 type LatestRunsValue = "all" | "1" | "2" | "4" | "8";
+type TrendPercentile = "p95" | "p50";
 type MetricKey =
   | "frame_change"
   | "loop_start"
@@ -44,6 +45,10 @@ function formatCount(value: number | null | undefined): string {
     return "0";
   }
   return new Intl.NumberFormat("en-US").format(Number(value));
+}
+
+function trendValue(point: PerfTimeseriesPoint, percentile: TrendPercentile): number | null {
+  return percentile === "p50" ? point.p50_ms : point.p95_ms;
 }
 
 type MetricStatusTone = "good" | "warning" | "bad" | "unknown";
@@ -166,9 +171,12 @@ function TrendChart(props: {
   subtitle: string;
   points: PerfTimeseriesPoint[];
   lineColor: string;
+  percentile: TrendPercentile;
 }) {
-  const { title, subtitle, points, lineColor } = props;
-  const values = points.map((point) => point.p95_ms).filter((value): value is number => Number.isFinite(value));
+  const { title, subtitle, points, lineColor, percentile } = props;
+  const values = points
+    .map((point) => trendValue(point, percentile))
+    .filter((value): value is number => Number.isFinite(value));
 
   if (values.length === 0) {
     return (
@@ -192,7 +200,7 @@ function TrendChart(props: {
   const path = points
     .map((point, index) => {
       const x = paddingX + (index * (width - paddingX * 2)) / Math.max(1, points.length - 1);
-      const rawValue = Number(point.p95_ms ?? min);
+      const rawValue = Number(trendValue(point, percentile) ?? min);
       const y = height - paddingY - ((rawValue - min) / span) * (height - paddingY * 2);
       return `${index === 0 ? "M" : "L"} ${x} ${y}`;
     })
@@ -207,7 +215,7 @@ function TrendChart(props: {
           <p className="mt-1 text-sm text-white/58">{subtitle}</p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white/60">
-          p95 trend
+          {percentile} trend
         </div>
       </div>
 
@@ -230,7 +238,7 @@ function TrendChart(props: {
 
           {points.map((point, index) => {
             const x = paddingX + (index * (width - paddingX * 2)) / Math.max(1, points.length - 1);
-            const rawValue = Number(point.p95_ms ?? min);
+            const rawValue = Number(trendValue(point, percentile) ?? min);
             const y = height - paddingY - ((rawValue - min) / span) * (height - paddingY * 2);
             return <circle key={point.bucket_start} cx={x} cy={y} r="3.5" fill={lineColor} />;
           })}
@@ -366,6 +374,7 @@ export default function AdminPerformancePage() {
   const [windowValue, setWindowValue] = useState<WindowValue>("7d");
   const [deviceValue, setDeviceValue] = useState<DeviceValue>("all");
   const [latestRunsValue, setLatestRunsValue] = useState<LatestRunsValue>("all");
+  const [trendPercentile, setTrendPercentile] = useState<TrendPercentile>("p95");
   const [loading, setLoading] = useState(true);
   const [refreshTick, setRefreshTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -383,10 +392,13 @@ export default function AdminPerformancePage() {
   const [loopDropTrend, setLoopDropTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [modelBreakdown, setModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [deviceBreakdown, setDeviceBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [frameDeviceBreakdown, setFrameDeviceBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [loopModelBreakdown, setLoopModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [loopVariableBreakdown, setLoopVariableBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [firstFrameModelBreakdown, setFirstFrameModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [firstFrameDeviceBreakdown, setFirstFrameDeviceBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [scrubModelBreakdown, setScrubModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [scrubVariableBreakdown, setScrubVariableBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [animationStallModelBreakdown, setAnimationStallModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [animationStallVariableBreakdown, setAnimationStallVariableBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [frameVariableBreakdown, setFrameVariableBreakdown] = useState<PerfBreakdownItem[]>([]);
@@ -420,9 +432,9 @@ export default function AdminPerformancePage() {
           summaryData,
           frameSeries, loopSeries, firstFrameSeries, varSwitchSeries, tileFetchSeries,
           loopManifestSeries, loopDecodeSeries, loopQueueSeries, loopPaintSeries, longTaskSeries, loopDropSeries,
-          modelData, deviceData, loopModelData,
+          modelData, frameDeviceData, deviceData, loopModelData, loopVariableData,
           firstFrameModelData, firstFrameDeviceData,
-          scrubModelData, animationStallModelData, animationStallVariableData, frameVariableData,
+          scrubModelData, scrubVariableData, animationStallModelData, animationStallVariableData, frameVariableData,
           varSwitchModelData, tileFetchModelData,
           loopManifestModelData, loopDecodeModelData, loopQueueModelData, loopPaintModelData,
           longTaskDeviceData, loopDropModelData,
@@ -440,11 +452,14 @@ export default function AdminPerformancePage() {
           fetchAdminPerfTimeseries({ metric: "long_task_blocking", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfTimeseries({ metric: "loop_frame_drop_gap", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "frame_change", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "frame_change", by: "device", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "loop_start", by: "device", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "loop_start", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "loop_start", by: "variable", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "viewer_first_frame", by: "model", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "viewer_first_frame", by: "device", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "scrub_latency", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "scrub_latency", by: "variable", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "animation_stall", by: "model", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "animation_stall", by: "variable", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "frame_change", by: "variable", window: windowValue, device: deviceValue, latestRuns }),
@@ -472,11 +487,14 @@ export default function AdminPerformancePage() {
         setLongTaskTrend(longTaskSeries.points);
         setLoopDropTrend(loopDropSeries.points);
         setModelBreakdown(modelData.items);
+        setFrameDeviceBreakdown(frameDeviceData.items);
         setDeviceBreakdown(deviceData.items);
         setLoopModelBreakdown(loopModelData.items);
+        setLoopVariableBreakdown(loopVariableData.items);
         setFirstFrameModelBreakdown(firstFrameModelData.items);
         setFirstFrameDeviceBreakdown(firstFrameDeviceData.items);
         setScrubModelBreakdown(scrubModelData.items);
+        setScrubVariableBreakdown(scrubVariableData.items);
         setAnimationStallModelBreakdown(animationStallModelData.items);
         setAnimationStallVariableBreakdown(animationStallVariableData.items);
         setFrameVariableBreakdown(frameVariableData.items);
@@ -596,12 +614,18 @@ export default function AdminPerformancePage() {
                 subtitle="How quickly the map responds to manual frame changes."
                 points={frameTrend}
                 lineColor="#7ec8ff"
+                percentile={trendPercentile}
               />
-              <div className="grid gap-6 xl:grid-cols-2">
+              <div className="grid gap-6 xl:grid-cols-3">
                 <BreakdownList
                   title="Frame Change by Model"
                   subtitle="Most active models ordered by sample count."
                   items={modelBreakdown}
+                />
+                <BreakdownList
+                  title="Frame Change by Device"
+                  subtitle="Frame change latency split by device class."
+                  items={frameDeviceBreakdown}
                 />
                 <BreakdownList
                   title="Frame Change by Variable"
@@ -625,8 +649,9 @@ export default function AdminPerformancePage() {
                 subtitle="Time from play action to actual loop playback start."
                 points={loopTrend}
                 lineColor="#b7e38f"
+                percentile={trendPercentile}
               />
-              <div className="grid gap-6 xl:grid-cols-2">
+              <div className="grid gap-6 xl:grid-cols-3">
                 <BreakdownList
                   title="Loop Start by Model"
                   subtitle="Playback startup latency split by model."
@@ -636,6 +661,11 @@ export default function AdminPerformancePage() {
                   title="Loop Start by Device"
                   subtitle="Quick split of playback startup behavior."
                   items={deviceBreakdown}
+                />
+                <BreakdownList
+                  title="Loop Start by Variable"
+                  subtitle="Playback startup latency split by variable."
+                  items={loopVariableBreakdown}
                 />
               </div>
             </>
@@ -648,11 +678,18 @@ export default function AdminPerformancePage() {
           icon: TimerReset,
           metric: summary.scrub_latency,
           detailContent: (
-            <BreakdownList
-              title="Scrub Latency by Model"
-              subtitle="Committed scrub latency per model — reveals which datasets take longest to land on the requested frame."
-              items={scrubModelBreakdown}
-            />
+            <div className="grid gap-6 xl:grid-cols-2">
+              <BreakdownList
+                title="Scrub Latency by Model"
+                subtitle="Committed scrub latency per model — reveals which datasets take longest to land on the requested frame."
+                items={scrubModelBreakdown}
+              />
+              <BreakdownList
+                title="Scrub Latency by Variable"
+                subtitle="Committed scrub latency split by variable."
+                items={scrubVariableBreakdown}
+              />
+            </div>
           ),
         },
         {
@@ -695,6 +732,7 @@ export default function AdminPerformancePage() {
                 subtitle="Time from viewer open to the first visible weather frame."
                 points={firstFrameTrend}
                 lineColor="#f0a575"
+                percentile={trendPercentile}
               />
               <div className="grid gap-6 xl:grid-cols-2">
                 <BreakdownList
@@ -724,6 +762,7 @@ export default function AdminPerformancePage() {
                 subtitle="Time from variable selector click to first frame of new variable."
                 points={varSwitchTrend}
                 lineColor="#c4a8f5"
+                percentile={trendPercentile}
               />
               <BreakdownList
                 title="Variable Switch by Model"
@@ -752,6 +791,7 @@ export default function AdminPerformancePage() {
                 subtitle="Individual weather tile network fetch duration (sampled 1-in-8)."
                 points={tileFetchTrend}
                 lineColor="#f5c842"
+                percentile={trendPercentile}
               />
               <BreakdownList
                 title="Tile Fetch by Model"
@@ -780,6 +820,7 @@ export default function AdminPerformancePage() {
                 subtitle="Loop manifest resolve latency over time."
                 points={loopManifestTrend}
                 lineColor="#8fd0ff"
+                percentile={trendPercentile}
               />
               <BreakdownList
                 title="Loop Manifest Resolve by Model"
@@ -802,6 +843,7 @@ export default function AdminPerformancePage() {
                 subtitle="Decoded-frame readiness timing for loop images."
                 points={loopDecodeTrend}
                 lineColor="#9ce3b4"
+                percentile={trendPercentile}
               />
               <BreakdownList
                 title="Loop Decode Ready by Model"
@@ -824,6 +866,7 @@ export default function AdminPerformancePage() {
                 subtitle="Queue-to-visible delay for promoted loop frames."
                 points={loopQueueTrend}
                 lineColor="#f2c27a"
+                percentile={trendPercentile}
               />
               <BreakdownList
                 title="Loop Queue to Visible by Model"
@@ -846,6 +889,7 @@ export default function AdminPerformancePage() {
                 subtitle="Visibility confirmation timing after loop frame promotion."
                 points={loopPaintTrend}
                 lineColor="#d5b2ff"
+                percentile={trendPercentile}
               />
               <BreakdownList
                 title="Loop First Visible Paint by Model"
@@ -868,6 +912,7 @@ export default function AdminPerformancePage() {
                 subtitle="Sampled long-task durations (>=50ms)."
                 points={longTaskTrend}
                 lineColor="#ff9da8"
+                percentile={trendPercentile}
               />
               <BreakdownList
                 title="Long Task Blocking by Device"
@@ -890,6 +935,7 @@ export default function AdminPerformancePage() {
                 subtitle="Gap duration while playback waits for decoded loop frames."
                 points={loopDropTrend}
                 lineColor="#ffcf8b"
+                percentile={trendPercentile}
               />
               <BreakdownList
                 title="Loop Frame Drop Gap by Model"
@@ -915,7 +961,7 @@ export default function AdminPerformancePage() {
             <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#95b1a2]">Performance</div>
             <h2 className="mt-2 text-4xl font-semibold tracking-tight text-white">Viewer telemetry</h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-white/62">
-              Real-user viewer timing from the current frontend build. Focus on p95 for frame changes and loop start.
+              Real-user viewer timing from the current frontend build. Trend charts can be toggled between p95 and p50.
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-white/58">
               <span className="rounded-full border border-emerald-400/25 bg-emerald-500/12 px-3 py-1 text-emerald-100">
@@ -931,6 +977,33 @@ export default function AdminPerformancePage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            <div className="inline-flex items-center rounded-xl border border-white/12 bg-white/[0.04] p-1">
+              <button
+                type="button"
+                onClick={() => setTrendPercentile("p95")}
+                className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                  trendPercentile === "p95"
+                    ? "bg-white/14 text-white"
+                    : "text-white/70 hover:bg-white/[0.06]"
+                }`}
+                aria-pressed={trendPercentile === "p95"}
+              >
+                p95 trend
+              </button>
+              <button
+                type="button"
+                onClick={() => setTrendPercentile("p50")}
+                className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                  trendPercentile === "p50"
+                    ? "bg-white/14 text-white"
+                    : "text-white/70 hover:bg-white/[0.06]"
+                }`}
+                aria-pressed={trendPercentile === "p50"}
+              >
+                p50 trend
+              </button>
+            </div>
+
             <select
               value={latestRunsValue}
               onChange={(event) => setLatestRunsValue(event.target.value as LatestRunsValue)}
