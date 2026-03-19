@@ -47,6 +47,7 @@ import { buildTileUrlFromFrame } from "@/lib/tiles";
 import { readPermalink } from "@/lib/permalink-read";
 import { trackPerfEvent, trackUsageEvent } from "@/lib/telemetry";
 import { useSampleTooltip } from "@/lib/use-sample-tooltip";
+import { detectViewerLayoutMode, useViewerLayoutMode } from "@/lib/viewer-layout";
 
 const TwfShareModal = lazy(() =>
   import("@/components/twf-share-modal").then((module) => ({ default: module.TwfShareModal }))
@@ -783,6 +784,8 @@ function buildLegend(meta: LegendMeta | null | undefined, opacity: number): Lege
 
 export default function App() {
   const webpDefaultEnabled = isWebpDefaultRenderEnabled();
+  const viewerLayoutMode = useViewerLayoutMode();
+  const isDesktopViewerLayout = viewerLayoutMode === "desktop";
   const initialPermalink = useMemo(() => readPermalink(), []);
   const initialPermalinkMapView = useMemo(() => {
     if (
@@ -835,7 +838,7 @@ export default function App() {
   const [pointLabelsEnabled, setPointLabelsEnabled] = useState(true);
   const [zoomControlsVisible, setZoomControlsVisible] = useState(false);
   const [legendVisible, setLegendVisible] = useState(() =>
-    typeof window === "undefined" ? true : window.innerWidth >= 640
+    typeof window === "undefined" ? true : detectViewerLayoutMode() === "desktop"
   );
   const [displayPanelOpen, setDisplayPanelOpen] = useState(false);
   const [isPageVisible, setIsPageVisible] = useState(() =>
@@ -950,9 +953,7 @@ export default function App() {
   const anchorBatchLastAppliedHourRef = useRef<number | null>(null);
   const anchorBatchLastAppliedSelectionKeyRef = useRef("");
   const anchorBatchContextRef = useRef<AnchorBatchRequestContext | null>(null);
-  const wasCompactViewportRef = useRef<boolean>(
-    typeof window === "undefined" ? false : window.innerWidth < 640
-  );
+  const wasCompactViewportRef = useRef<boolean>(viewerLayoutMode !== "desktop");
   // Pre-built Set of valid forecast hours, kept in sync with frameHours.
   // updateBufferSnapshot reads from this ref instead of constructing a new Set
   // on every tile event (which fired 20-40×/sec during animation).
@@ -963,25 +964,24 @@ export default function App() {
   }, [basemapMode]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    setLegendVisible((current) => {
+      if (viewerLayoutMode !== "desktop") {
+        wasCompactViewportRef.current = true;
+        return false;
+      }
+
+      const next = wasCompactViewportRef.current ? true : current;
+      wasCompactViewportRef.current = false;
+      return next;
+    });
+  }, [viewerLayoutMode]);
+
+  useEffect(() => {
+    if (isDesktopViewerLayout || !displayPanelOpen) {
       return;
     }
-    const mediaQuery = window.matchMedia("(max-width: 639px)");
-    const updateLegendVisibility = (query: MediaQueryList | MediaQueryListEvent) => {
-      setLegendVisible((current) => {
-        if (query.matches) {
-          wasCompactViewportRef.current = true;
-          return false;
-        }
-        const next = wasCompactViewportRef.current ? true : current;
-        wasCompactViewportRef.current = false;
-        return next;
-      });
-    };
-    updateLegendVisibility(mediaQuery);
-    mediaQuery.addEventListener("change", updateLegendVisibility);
-    return () => mediaQuery.removeEventListener("change", updateLegendVisibility);
-  }, []);
+    setDisplayPanelOpen(false);
+  }, [displayPanelOpen, isDesktopViewerLayout]);
 
   const modelCatalog = capabilities?.model_catalog ?? {};
   const selectedModelCapability: CapabilityModel | null = model ? modelCatalog[model] ?? null : null;
@@ -4401,6 +4401,7 @@ export default function App() {
         opacity={opacity}
         onOpacityChange={setOpacity}
         onPostToTwf={handleOpenShareModal}
+        layoutMode={viewerLayoutMode}
       />
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
@@ -4409,7 +4410,6 @@ export default function App() {
           contourGeoJsonUrl={contourGeoJsonUrl}
           anchorGeoJson={anchorDisplayGeoJson}
           pointLabelsEnabled={pointLabelsEnabled}
-          showZoomControls={zoomControlsVisible}
           region={region}
           regionViews={regionViews}
           opacity={opacity}
@@ -4433,6 +4433,7 @@ export default function App() {
           onMapReady={handleMapReady}
           onMapHover={onHover}
           onMapHoverEnd={onHoverEnd}
+          showZoomControls={isDesktopViewerLayout && zoomControlsVisible}
         />
 
         {/* Subtle radial vignette — darkens map edges for depth; never blocks interaction */}
@@ -4491,7 +4492,8 @@ export default function App() {
           </div>
         )}
 
-        <div className="fixed right-4 bottom-6 z-40 hidden sm:flex sm:items-end sm:gap-3">
+        {isDesktopViewerLayout ? (
+          <div className="fixed right-4 bottom-6 z-40 flex items-end gap-3">
           {handleOpenShareModal ? (
             <button
               type="button"
@@ -4648,7 +4650,8 @@ export default function App() {
               Display
             </button>
           </div>
-        </div>
+          </div>
+        ) : null}
 
         {legendVisible ? (
           <Suspense fallback={null}>
@@ -4672,6 +4675,7 @@ export default function App() {
           disabled={loading}
           playDisabled={loading || selectableFrameHours.length === 0}
           transientStatus={frameStatusMessage}
+          layoutMode={viewerLayoutMode}
         />
       </div>
 

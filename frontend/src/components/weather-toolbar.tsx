@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import type { BasemapMode } from "@/components/map-canvas";
+import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import { cn } from "@/lib/utils";
 import { Slider } from "@/components/ui/slider";
 import {
@@ -53,6 +54,7 @@ type WeatherToolbarProps = {
   opacity: number;
   onOpacityChange: (next: number) => void;
   onPostToTwf?: () => void;
+  layoutMode?: ViewerLayoutMode;
 };
 
 function ToolbarSelect(props: {
@@ -239,8 +241,10 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     opacity,
     onOpacityChange,
     onPostToTwf,
+    layoutMode = "desktop",
   } = props;
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
+  const isDesktopLayout = layoutMode === "desktop";
 
   const selectedModelLabel = models.find((opt) => opt.value === model)?.label ?? "Model";
   const selectedVariableLabel = variables.find((opt) => opt.value === variable)?.label ?? "Variable";
@@ -251,7 +255,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
 
   return (
     <header role="toolbar" aria-label="Weather model controls" className="fixed top-[4.35rem] z-50 w-full px-3 sm:px-4">
-      <div className="hidden sm:block">
+      <div className={isDesktopLayout ? "block" : "hidden"}>
         <div className="flex items-start">
           <div className="glass-strong inline-flex items-center gap-2 rounded-full border border-white/12 px-3 py-2.5 shadow-[0_18px_40px_rgba(0,0,0,0.34)]">
             <ToolbarSelect
@@ -306,7 +310,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
         </div>
       </div>
 
-      <div className="glass-overlay relative rounded-2xl px-3 py-2.5 pb-2 sm:hidden">
+      <div className={cn("glass-overlay relative rounded-2xl px-3 py-2.5 pb-2", isDesktopLayout ? "hidden" : "block")}>
         <div className="flex items-center gap-2">
           <button
             type="button"

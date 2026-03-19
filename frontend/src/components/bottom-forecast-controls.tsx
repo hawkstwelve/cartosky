@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Clock, Pause, Play } from "lucide-react";
 
+import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import {
@@ -21,6 +22,7 @@ type BottomForecastControlsProps = {
   disabled: boolean;
   playDisabled?: boolean;
   transientStatus?: string | null;
+  layoutMode?: ViewerLayoutMode;
 };
 
 function formatValidTime(runDateISO: string | null, forecastHour: number): {
@@ -64,6 +66,7 @@ export function BottomForecastControls({
   disabled,
   playDisabled = false,
   transientStatus,
+  layoutMode = "desktop",
 }: BottomForecastControlsProps) {
   const DRAG_UPDATE_MS = 80;
   const [previewHour, setPreviewHour] = useState<number | null>(null);
@@ -77,6 +80,7 @@ export function BottomForecastControls({
   );
 
   const hasFrames = availableFrames.length > 0;
+  const isDesktopLayout = layoutMode === "desktop";
   const effectiveHour = previewHour ?? forecastHour;
   const sliderIndex = Math.max(0, availableFrames.indexOf(effectiveHour));
 
@@ -115,7 +119,7 @@ export function BottomForecastControls({
     <TooltipProvider delayDuration={300}>
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
         <div className="pointer-events-auto flex w-full max-w-3xl flex-col gap-2.5 rounded-2xl glass-strong px-3 py-2.5 sm:px-4 sm:py-3">
-          <div className="sm:hidden">
+          <div className={isDesktopLayout ? "hidden" : "block"}>
             <div className="mb-2 flex items-start justify-between gap-2">
               <div className="min-w-0">
                 {validTime ? (
@@ -189,7 +193,7 @@ export function BottomForecastControls({
             </div>
           </div>
 
-          <div className="hidden sm:flex sm:items-center sm:gap-5">
+          <div className={isDesktopLayout ? "flex items-center gap-5" : "hidden"}>
             <div className="flex shrink-0 items-center gap-2">
               <Tooltip>
                 <TooltipTrigger asChild>
