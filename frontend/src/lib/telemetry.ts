@@ -13,7 +13,20 @@ type TelemetryBase = {
 };
 
 type PerfEventInput = TelemetryBase & {
-  event_name: "viewer_first_frame" | "frame_change" | "loop_start" | "scrub_latency" | "variable_switch" | "tile_fetch" | "animation_stall";
+  event_name:
+    | "viewer_first_frame"
+    | "frame_change"
+    | "loop_start"
+    | "scrub_latency"
+    | "variable_switch"
+    | "tile_fetch"
+    | "animation_stall"
+    | "loop_manifest_resolve"
+    | "loop_decode_ready"
+    | "loop_queue_to_visible"
+    | "loop_first_visible_paint"
+    | "long_task_blocking"
+    | "loop_frame_drop_gap";
   duration_ms: number;
 };
 

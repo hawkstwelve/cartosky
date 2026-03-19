@@ -912,6 +912,9 @@ export default function App() {
   const loopDecodeReadySamplesRef = useRef<number[]>([]);
   const loopDecodeFetchSamplesRef = useRef<number[]>([]);
   const loopDecodeOnlySamplesRef = useRef<number[]>([]);
+  const loopDecodeCompletedAtRef = useRef<Map<string, number>>(new Map());
+  const longTaskSampleCounterRef = useRef(0);
+  const loopVisiblePaintTokenRef = useRef(0);
   const tierFailoverCycleRef = useRef<{ key: string; emitted: boolean }>({ key: "", emitted: false });
   const runsLoadedForModelRef = useRef<string>("");
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
@@ -934,6 +937,7 @@ export default function App() {
   const modelRef = useRef(model);
   const variableRef = useRef(variable);
   const lastLoopAdvanceRef = useRef<number | null>(null);
+  const loopFrameDropSampleCounterRef = useRef(0);
   const tileFetchSampleCounterRef = useRef(0);
   const permalinkHydratedRef = useRef(false);
   const lastSyncedPermalinkSearchRef = useRef("");
@@ -1337,6 +1341,20 @@ export default function App() {
       const cached = loopDecodedCacheRef.current.get(key);
       if (cached) {
         cached.lastUsedAt = Date.now();
+        loopDecodeCompletedAtRef.current.set(key, performance.now());
+        trackPerfEvent({
+          event_name: "loop_decode_ready",
+          duration_ms: 0,
+          model_id: model || null,
+          variable_id: variable || null,
+          run_id: telemetryRunId,
+          region_id: region || null,
+          forecast_hour: Number.isFinite(fh) ? fh : null,
+          meta: {
+            render_mode: mode,
+            cache_hit: true,
+          },
+        });
         loopReadyHoursRef.current.add(fh);
         return true;
       }
@@ -1346,6 +1364,7 @@ export default function App() {
         return false;
       }
 
+      const decodeStartedAt = performance.now();
       const decoded = await preloadLoopFrame(url, signal);
       if (!decoded.ok) {
         return false;
@@ -1374,10 +1393,26 @@ export default function App() {
       if (decoded.bitmap) {
         upsertLoopDecodedCache(key, decoded.bitmap, decoded.bytes);
       }
+      loopDecodeCompletedAtRef.current.set(key, performance.now());
+      trackPerfEvent({
+        event_name: "loop_decode_ready",
+        duration_ms: decoded.readyMs > 0 ? decoded.readyMs : Math.max(0, performance.now() - decodeStartedAt),
+        model_id: model || null,
+        variable_id: variable || null,
+        run_id: telemetryRunId,
+        region_id: region || null,
+        forecast_hour: Number.isFinite(fh) ? fh : null,
+        meta: {
+          render_mode: mode,
+          cache_hit: false,
+          fetch_ms: decoded.fetchMs,
+          decode_ms: decoded.decodeMs,
+        },
+      });
       loopReadyHoursRef.current.add(fh);
       return true;
     },
-    [loopCacheKey, resolveLoopUrlForHour, upsertLoopDecodedCache]
+    [loopCacheKey, resolveLoopUrlForHour, upsertLoopDecodedCache, model, variable, telemetryRunId, region]
   );
 
   const hasDecodedLoopFrame = useCallback(
@@ -1481,6 +1516,49 @@ export default function App() {
       return;
     }
     return () => observer.disconnect();
+  }, []);
+
+  // Observe long tasks to capture main-thread blocking that can delay frame
+  // presentation even when network requests are already warm.
+  useEffect(() => {
+    if (typeof PerformanceObserver === "undefined") {
+      return;
+    }
+
+    let observer: PerformanceObserver;
+    try {
+      observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const durationMs = Number(entry.duration);
+          if (!Number.isFinite(durationMs) || durationMs <= 0) {
+            continue;
+          }
+          if (durationMs < 50) {
+            continue;
+          }
+          longTaskSampleCounterRef.current += 1;
+          if (longTaskSampleCounterRef.current % 4 !== 0) {
+            continue;
+          }
+          trackPerfEvent({
+            event_name: "long_task_blocking",
+            duration_ms: durationMs,
+            model_id: modelRef.current || null,
+            variable_id: variableRef.current || null,
+            meta: {
+              entry_name: entry.name || "longtask",
+            },
+          });
+        }
+      });
+      observer.observe({ type: "longtask", buffered: false } as PerformanceObserverInit);
+    } catch {
+      return;
+    }
+
+    return () => {
+      observer.disconnect();
+    };
   }, []);
 
   useEffect(() => {
@@ -2343,6 +2421,7 @@ export default function App() {
       cached.bitmap.close();
     }
     loopDecodedCacheRef.current.clear();
+    loopDecodeCompletedAtRef.current.clear();
     loopDecodedCacheBytesRef.current = 0;
     setIsPreloadingForPlay(false);
     lastTileViewportCommitUrlRef.current = null;
@@ -2575,6 +2654,67 @@ export default function App() {
     finalizePendingFrameMetric("loop");
   }, [loopDisplayHour, finalizePendingFrameMetric]);
 
+  useEffect(() => {
+    if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
+      return;
+    }
+    const displayHour = loopDisplayHour as number;
+
+    const cacheKey = loopCacheKey(displayHour, visibleRenderMode);
+    const decodedAt = loopDecodeCompletedAtRef.current.get(cacheKey) ?? null;
+    if (Number.isFinite(decodedAt)) {
+      const queueDurationMs = performance.now() - (decodedAt as number);
+      if (Number.isFinite(queueDurationMs) && queueDurationMs >= 0) {
+        trackPerfEvent({
+          event_name: "loop_queue_to_visible",
+          duration_ms: queueDurationMs,
+          model_id: modelRef.current || null,
+          variable_id: variableRef.current || null,
+          run_id: telemetryRunId,
+          region_id: region || null,
+          forecast_hour: displayHour,
+          meta: {
+            render_mode: visibleRenderMode,
+          },
+        });
+      }
+    }
+
+    const paintToken = ++loopVisiblePaintTokenRef.current;
+    const paintedStartAt = performance.now();
+    let rafBId: number | null = null;
+    const rafA = window.requestAnimationFrame(() => {
+      rafBId = window.requestAnimationFrame(() => {
+        if (paintToken !== loopVisiblePaintTokenRef.current) {
+          return;
+        }
+        const durationMs = performance.now() - paintedStartAt;
+        if (!Number.isFinite(durationMs) || durationMs < 0) {
+          return;
+        }
+        trackPerfEvent({
+          event_name: "loop_first_visible_paint",
+          duration_ms: durationMs,
+          model_id: modelRef.current || null,
+          variable_id: variableRef.current || null,
+          run_id: telemetryRunId,
+          region_id: region || null,
+          forecast_hour: displayHour,
+          meta: {
+            render_mode: visibleRenderMode,
+          },
+        });
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafA);
+      if (rafBId !== null) {
+        window.cancelAnimationFrame(rafBId);
+      }
+    };
+  }, [isLoopDisplayActive, loopDisplayHour, visibleRenderMode, loopCacheKey, telemetryRunId, region]);
+
   const trackFirstViewerFrame = useCallback((frameHour: number | null) => {
     if (firstViewerFrameTrackedRef.current) {
       return;
@@ -2768,9 +2908,27 @@ export default function App() {
         lastLoopAdvanceRef.current = Date.now();
         setTargetForecastHour(nextHour);
       } else {
-        // Frame not yet decoded — detect stall and emit once per stall episode.
         const now = Date.now();
         const lastAdvance = lastLoopAdvanceRef.current;
+        if (lastAdvance !== null) {
+          const gapMs = now - lastAdvance;
+          if (gapMs > AUTOPLAY_TICK_MS) {
+            loopFrameDropSampleCounterRef.current += 1;
+            if (loopFrameDropSampleCounterRef.current % 4 === 0) {
+              trackPerfEvent({
+                event_name: "loop_frame_drop_gap",
+                duration_ms: gapMs,
+                model_id: modelRef.current || null,
+                variable_id: variableRef.current || null,
+                forecast_hour: nextHour,
+                meta: {
+                  render_mode: visibleRenderMode,
+                },
+              });
+            }
+          }
+        }
+        // Frame not yet decoded — detect stall and emit once per stall episode.
         if (lastAdvance !== null && now - lastAdvance > AUTOPLAY_TICK_MS * 2) {
           const stallMs = now - lastAdvance;
           // Reset the baseline so we emit once per stall episode, not every tick.
@@ -3246,9 +3404,24 @@ export default function App() {
     const generation = requestGenerationRef.current;
 
     async function loadLoopManifest() {
+      const startedAt = performance.now();
       const manifest = await fetchLoopManifest(model, resolvedRunForRequests, variable, { signal: controller.signal });
       if (controller.signal.aborted || generation !== requestGenerationRef.current) {
         return;
+      }
+      const durationMs = performance.now() - startedAt;
+      if (Number.isFinite(durationMs) && durationMs >= 0) {
+        trackPerfEvent({
+          event_name: "loop_manifest_resolve",
+          duration_ms: durationMs,
+          model_id: model || null,
+          variable_id: variable || null,
+          run_id: telemetryRunId,
+          region_id: region || null,
+          meta: {
+            resolved: Boolean(manifest),
+          },
+        });
       }
       setLoopManifest(manifest);
     }
@@ -3263,7 +3436,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [model, variable, resolvedRunForRequests, hasRenderableSelection]);
+  }, [model, variable, resolvedRunForRequests, hasRenderableSelection, telemetryRunId, region]);
 
   useEffect(() => {
     if (!model || !variable || !hasRenderableSelection) return;
@@ -3965,6 +4138,7 @@ export default function App() {
         cached.bitmap.close();
       }
       loopDecodedCacheRef.current.clear();
+      loopDecodeCompletedAtRef.current.clear();
       loopDecodedCacheBytesRef.current = 0;
     };
   }, [clearFrameStatusTimer, resetAnchorBatchQueue]);

@@ -24,7 +24,13 @@ type MetricKey =
   | "animation_stall"
   | "viewer_first_frame"
   | "variable_switch"
-  | "tile_fetch";
+  | "tile_fetch"
+  | "loop_manifest_resolve"
+  | "loop_decode_ready"
+  | "loop_queue_to_visible"
+  | "loop_first_visible_paint"
+  | "long_task_blocking"
+  | "loop_frame_drop_gap";
 
 function formatMs(value: number | null | undefined): string {
   if (!Number.isFinite(value)) {
@@ -369,6 +375,12 @@ export default function AdminPerformancePage() {
   const [firstFrameTrend, setFirstFrameTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [varSwitchTrend, setVarSwitchTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [tileFetchTrend, setTileFetchTrend] = useState<PerfTimeseriesPoint[]>([]);
+  const [loopManifestTrend, setLoopManifestTrend] = useState<PerfTimeseriesPoint[]>([]);
+  const [loopDecodeTrend, setLoopDecodeTrend] = useState<PerfTimeseriesPoint[]>([]);
+  const [loopQueueTrend, setLoopQueueTrend] = useState<PerfTimeseriesPoint[]>([]);
+  const [loopPaintTrend, setLoopPaintTrend] = useState<PerfTimeseriesPoint[]>([]);
+  const [longTaskTrend, setLongTaskTrend] = useState<PerfTimeseriesPoint[]>([]);
+  const [loopDropTrend, setLoopDropTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [modelBreakdown, setModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [deviceBreakdown, setDeviceBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [loopModelBreakdown, setLoopModelBreakdown] = useState<PerfBreakdownItem[]>([]);
@@ -380,6 +392,12 @@ export default function AdminPerformancePage() {
   const [frameVariableBreakdown, setFrameVariableBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [varSwitchModelBreakdown, setVarSwitchModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [tileFetchModelBreakdown, setTileFetchModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [loopManifestModelBreakdown, setLoopManifestModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [loopDecodeModelBreakdown, setLoopDecodeModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [loopQueueModelBreakdown, setLoopQueueModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [loopPaintModelBreakdown, setLoopPaintModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [longTaskDeviceBreakdown, setLongTaskDeviceBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [loopDropModelBreakdown, setLoopDropModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [activeMetric, setActiveMetric] = useState<MetricKey | null>(null);
   const latestRuns = latestRunsValue === "all" ? undefined : Number(latestRunsValue);
 
@@ -401,10 +419,13 @@ export default function AdminPerformancePage() {
         const [
           summaryData,
           frameSeries, loopSeries, firstFrameSeries, varSwitchSeries, tileFetchSeries,
+          loopManifestSeries, loopDecodeSeries, loopQueueSeries, loopPaintSeries, longTaskSeries, loopDropSeries,
           modelData, deviceData, loopModelData,
           firstFrameModelData, firstFrameDeviceData,
           scrubModelData, animationStallModelData, animationStallVariableData, frameVariableData,
           varSwitchModelData, tileFetchModelData,
+          loopManifestModelData, loopDecodeModelData, loopQueueModelData, loopPaintModelData,
+          longTaskDeviceData, loopDropModelData,
         ] = await Promise.all([
           fetchAdminPerfSummary({ window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfTimeseries({ metric: "frame_change", window: windowValue, device: deviceValue, latestRuns }),
@@ -412,6 +433,12 @@ export default function AdminPerformancePage() {
           fetchAdminPerfTimeseries({ metric: "viewer_first_frame", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfTimeseries({ metric: "variable_switch", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfTimeseries({ metric: "tile_fetch", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "loop_manifest_resolve", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "loop_decode_ready", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "loop_queue_to_visible", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "loop_first_visible_paint", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "long_task_blocking", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "loop_frame_drop_gap", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "frame_change", by: "model", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "loop_start", by: "device", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "loop_start", by: "model", window: windowValue, device: deviceValue, latestRuns }),
@@ -423,6 +450,12 @@ export default function AdminPerformancePage() {
           fetchAdminPerfBreakdown({ metric: "frame_change", by: "variable", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "variable_switch", by: "model", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "tile_fetch", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "loop_manifest_resolve", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "loop_decode_ready", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "loop_queue_to_visible", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "loop_first_visible_paint", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "long_task_blocking", by: "device", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "loop_frame_drop_gap", by: "model", window: windowValue, device: deviceValue, latestRuns }),
         ]);
         if (cancelled) return;
 
@@ -432,6 +465,12 @@ export default function AdminPerformancePage() {
         setFirstFrameTrend(firstFrameSeries.points);
         setVarSwitchTrend(varSwitchSeries.points);
         setTileFetchTrend(tileFetchSeries.points);
+        setLoopManifestTrend(loopManifestSeries.points);
+        setLoopDecodeTrend(loopDecodeSeries.points);
+        setLoopQueueTrend(loopQueueSeries.points);
+        setLoopPaintTrend(loopPaintSeries.points);
+        setLongTaskTrend(longTaskSeries.points);
+        setLoopDropTrend(loopDropSeries.points);
         setModelBreakdown(modelData.items);
         setDeviceBreakdown(deviceData.items);
         setLoopModelBreakdown(loopModelData.items);
@@ -443,6 +482,12 @@ export default function AdminPerformancePage() {
         setFrameVariableBreakdown(frameVariableData.items);
         setVarSwitchModelBreakdown(varSwitchModelData.items);
         setTileFetchModelBreakdown(tileFetchModelData.items);
+        setLoopManifestModelBreakdown(loopManifestModelData.items);
+        setLoopDecodeModelBreakdown(loopDecodeModelData.items);
+        setLoopQueueModelBreakdown(loopQueueModelData.items);
+        setLoopPaintModelBreakdown(loopPaintModelData.items);
+        setLongTaskDeviceBreakdown(longTaskDeviceData.items);
+        setLoopDropModelBreakdown(loopDropModelData.items);
       } catch (nextError) {
         if (cancelled) return;
         setError(nextError instanceof Error ? nextError.message : "Failed to load admin dashboard");
@@ -712,6 +757,144 @@ export default function AdminPerformancePage() {
                 title="Tile Fetch by Model"
                 subtitle="Sampled network fetch time per weather tile, split by model."
                 items={tileFetchModelBreakdown}
+              />
+            </>
+          ),
+        },
+      ],
+    },
+    {
+      label: "Phase 0b Signals",
+      description: "Loop pipeline and main-thread telemetry added for deeper render-path diagnosis.",
+      metrics: [
+        {
+          key: "loop_manifest_resolve",
+          title: "Loop Manifest Resolve",
+          description: "Time to resolve loop manifest metadata for the selected model/run/variable.",
+          icon: Activity,
+          metric: summary.loop_manifest_resolve,
+          detailContent: (
+            <>
+              <TrendChart
+                title="Loop Manifest Resolve Trend"
+                subtitle="Loop manifest resolve latency over time."
+                points={loopManifestTrend}
+                lineColor="#8fd0ff"
+              />
+              <BreakdownList
+                title="Loop Manifest Resolve by Model"
+                subtitle="Model-level manifest resolve latency."
+                items={loopManifestModelBreakdown}
+              />
+            </>
+          ),
+        },
+        {
+          key: "loop_decode_ready",
+          title: "Loop Decode Ready",
+          description: "Time from loop frame decode request to decoded frame readiness.",
+          icon: Gauge,
+          metric: summary.loop_decode_ready,
+          detailContent: (
+            <>
+              <TrendChart
+                title="Loop Decode Ready Trend"
+                subtitle="Decoded-frame readiness timing for loop images."
+                points={loopDecodeTrend}
+                lineColor="#9ce3b4"
+              />
+              <BreakdownList
+                title="Loop Decode Ready by Model"
+                subtitle="Decode readiness split by model."
+                items={loopDecodeModelBreakdown}
+              />
+            </>
+          ),
+        },
+        {
+          key: "loop_queue_to_visible",
+          title: "Loop Queue to Visible",
+          description: "Time from decoded frame availability to loop frame visibility.",
+          icon: TimerReset,
+          metric: summary.loop_queue_to_visible,
+          detailContent: (
+            <>
+              <TrendChart
+                title="Loop Queue to Visible Trend"
+                subtitle="Queue-to-visible delay for promoted loop frames."
+                points={loopQueueTrend}
+                lineColor="#f2c27a"
+              />
+              <BreakdownList
+                title="Loop Queue to Visible by Model"
+                subtitle="Promotion delay split by model."
+                items={loopQueueModelBreakdown}
+              />
+            </>
+          ),
+        },
+        {
+          key: "loop_first_visible_paint",
+          title: "Loop First Visible Paint",
+          description: "Time from loop frame promotion to first visible paint confirmation.",
+          icon: Zap,
+          metric: summary.loop_first_visible_paint,
+          detailContent: (
+            <>
+              <TrendChart
+                title="Loop First Visible Paint Trend"
+                subtitle="Visibility confirmation timing after loop frame promotion."
+                points={loopPaintTrend}
+                lineColor="#d5b2ff"
+              />
+              <BreakdownList
+                title="Loop First Visible Paint by Model"
+                subtitle="First-paint visibility timing split by model."
+                items={loopPaintModelBreakdown}
+              />
+            </>
+          ),
+        },
+        {
+          key: "long_task_blocking",
+          title: "Long Task Blocking",
+          description: "Main-thread long task durations sampled from browser PerformanceObserver.",
+          icon: AlertCircle,
+          metric: summary.long_task_blocking,
+          detailContent: (
+            <>
+              <TrendChart
+                title="Long Task Blocking Trend"
+                subtitle="Sampled long-task durations (>=50ms)."
+                points={longTaskTrend}
+                lineColor="#ff9da8"
+              />
+              <BreakdownList
+                title="Long Task Blocking by Device"
+                subtitle="Main-thread blocking split by device class."
+                items={longTaskDeviceBreakdown}
+              />
+            </>
+          ),
+        },
+        {
+          key: "loop_frame_drop_gap",
+          title: "Loop Frame Drop Gap",
+          description: "Playback gap when next loop frames are not decoded in time.",
+          icon: PauseCircle,
+          metric: summary.loop_frame_drop_gap,
+          detailContent: (
+            <>
+              <TrendChart
+                title="Loop Frame Drop Gap Trend"
+                subtitle="Gap duration while playback waits for decoded loop frames."
+                points={loopDropTrend}
+                lineColor="#ffcf8b"
+              />
+              <BreakdownList
+                title="Loop Frame Drop Gap by Model"
+                subtitle="Frame-drop gap split by model."
+                items={loopDropModelBreakdown}
               />
             </>
           ),

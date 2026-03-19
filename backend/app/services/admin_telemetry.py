@@ -28,6 +28,12 @@ ALLOWED_PERF_EVENT_NAMES = {
     "variable_switch",
     "tile_fetch",
     "animation_stall",
+    "loop_manifest_resolve",
+    "loop_decode_ready",
+    "loop_queue_to_visible",
+    "loop_first_visible_paint",
+    "long_task_blocking",
+    "loop_frame_drop_gap",
 }
 
 ALLOWED_USAGE_EVENT_NAMES = {
@@ -45,6 +51,12 @@ PERF_TARGETS_MS = {
     "variable_switch": 600.0,
     "tile_fetch": 800.0,
     "animation_stall": 750.0,
+    "loop_manifest_resolve": 400.0,
+    "loop_decode_ready": 250.0,
+    "loop_queue_to_visible": 120.0,
+    "loop_first_visible_paint": 80.0,
+    "long_task_blocking": 50.0,
+    "loop_frame_drop_gap": 500.0,
 }
 
 STATUS_KEEP_RUNS_PER_MODEL = 4
