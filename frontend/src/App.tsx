@@ -3023,10 +3023,12 @@ export default function App() {
       if (reason === "scrub-commit") {
         const scrubSnapshot = scrubPhase0aRef.current;
         const commitStartedAt = performance.now();
+        const treatCommitAsFrameChange = scrubSnapshot.liveEventCount <= 1;
         const scrubTraceMeta: Record<string, unknown> = {
           trace_phase: "scrub_commit",
           scrub_live_event_count: scrubSnapshot.liveEventCount,
           scrub_live_superseded_count: scrubSnapshot.supersededCount,
+          scrub_classification: treatCommitAsFrameChange ? "single_seek" : "drag_commit",
           scrub_live_to_commit_ms: Number.isFinite(scrubSnapshot.liveStartedAt)
             ? Math.max(0, Math.round(commitStartedAt - (scrubSnapshot.liveStartedAt as number)))
             : null,
@@ -3042,7 +3044,7 @@ export default function App() {
           }
           const snappedTileHour = nearestFrame(frameHours, requestedHour);
           startPendingFrameMetric({
-            eventName: "scrub_latency",
+            eventName: treatCommitAsFrameChange ? "frame_change" : "scrub_latency",
             renderTarget: "tiles",
             expectedTileUrl: tileUrlForHour(snappedTileHour),
             expectedLoopHour: null,
@@ -3057,7 +3059,7 @@ export default function App() {
           ? nearestFrame(loopFrameHours, requestedHour)
           : requestedHour;
         startPendingFrameMetric({
-          eventName: "scrub_latency",
+          eventName: treatCommitAsFrameChange ? "frame_change" : "scrub_latency",
           renderTarget: "loop",
           expectedTileUrl: null,
           expectedLoopHour: nextHour,
