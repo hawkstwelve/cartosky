@@ -48,6 +48,10 @@ type RegionView = {
 };
 
 export type BasemapMode = "light" | "dark";
+export type TileReadySource = "active" | "swap" | "prefetch" | "loop-warm";
+export type TileReadyMeta = {
+  source: TileReadySource;
+};
 
 const SCRUB_SWAP_TIMEOUT_MS = 650;
 const AUTOPLAY_SWAP_TIMEOUT_MS = 1500;
@@ -670,7 +674,7 @@ type MapCanvasProps = {
   loopImageBbox?: [number, number, number, number] | null;
   loopActive?: boolean;
   onFrameSettled?: (tileUrl: string) => void;
-  onTileReady?: (tileUrl: string) => void;
+  onTileReady?: (tileUrl: string, meta?: TileReadyMeta) => void;
   onTileViewportReady?: (tileUrl: string) => void;
   onFrameLoadingChange?: (tileUrl: string, isLoading: boolean) => void;
   onZoomBucketChange?: (bucket: number) => void;
@@ -1014,7 +1018,7 @@ export function MapCanvas({
   }, [isLoaded]);
 
   const notifySettled = useCallback(
-    (map: maplibregl.Map, source: string, url: string) => {
+    (map: maplibregl.Map, source: string, url: string, readySource: TileReadySource) => {
       let done = false;
       let timeoutId: number | null = null;
 
@@ -1030,7 +1034,7 @@ export function MapCanvas({
         if (done) return;
         done = true;
         cleanup();
-        onTileReady?.(url);
+        onTileReady?.(url, { source: readySource });
         onFrameSettled?.(url);
       };
 
@@ -1598,7 +1602,7 @@ export function MapCanvas({
     onFrameLoadingChange?.(tileUrl, false);
 
     const emitReady = () => {
-      onTileReady?.(tileUrl);
+      onTileReady?.(tileUrl, { source: "loop-warm" });
       onFrameSettled?.(tileUrl);
       onTileViewportReady?.(tileUrl);
     };
@@ -1722,7 +1726,7 @@ export function MapCanvas({
         -1,
         mode,
         () => {
-          settledCleanup = notifySettled(map, source, tileUrl);
+          settledCleanup = notifySettled(map, source, tileUrl, "active");
         },
         () => {
           onFrameLoadingChange?.(tileUrl, true);
@@ -1797,7 +1801,7 @@ export function MapCanvas({
       }
       onFrameLoadingChange?.(tileUrl, false);
       if (!skipSettleNotify) {
-        settledCleanup = notifySettled(map, sourceId(inactiveBuffer), tileUrl);
+        settledCleanup = notifySettled(map, sourceId(inactiveBuffer), tileUrl, "swap");
       }
 
       // After promotion, keep only the active buffer visible so MapLibre stops
@@ -1908,7 +1912,7 @@ export function MapCanvas({
           }
           // Important: App.tsx autoplay waits on URLs being marked ready.
           // Prefetch sources should contribute to that readiness cache.
-          onTileReady?.(url);
+          onTileReady?.(url, { source: "prefetch" });
           // Tiles are now in the browser cache — hide the layer so MapLibre stops
           // issuing new requests when the viewport changes.
           setLayerOpacity(map, prefetchLayerId(idx + 1), HIDDEN_PREFETCH_OPACITY);
