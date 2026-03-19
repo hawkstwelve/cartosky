@@ -315,7 +315,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
         className={cn(
           "glass-overlay relative rounded-2xl px-3 py-2.5 pb-2",
           isDesktopLayout ? "hidden" : "block",
-          isTabletTouchLayout ? "mx-auto max-w-[760px]" : ""
+          isTabletTouchLayout ? "mx-auto w-fit max-w-[min(90vw,620px)]" : ""
         )}
       >
         <div className="flex items-center justify-between gap-2">
