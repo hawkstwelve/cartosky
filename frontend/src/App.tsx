@@ -4460,8 +4460,12 @@ export default function App() {
   const bufferStatusText = isScrubLoading
     ? "Loading frame"
     : `Loading frames ${preloadBufferedCount}/${preloadTotal}`;
-  const activeLoopHour = loopDisplayHour ?? forecastHour;
-  const activeLoopUrl = isLoopDisplayActive && !loopDisplayBitmap
+  const preferLoopImagePresentation = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
+  const activeLoopHour = preferLoopImagePresentation
+    ? resolvedLoopForecastHour
+    : (loopDisplayHour ?? forecastHour);
+  const activeLoopBitmap = preferLoopImagePresentation ? null : loopDisplayBitmap;
+  const activeLoopUrl = isLoopDisplayActive
     ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
     : null;
   const permalinkLoopActive = controlsIsPlaying || isLoopAutoplayBuffering;
@@ -4711,7 +4715,7 @@ export default function App() {
           prefetchTileUrls={prefetchTileUrls}
           crossfade={isVariableSwitching}
           loopImageUrl={activeLoopUrl}
-          loopFrameBitmap={loopDisplayBitmap}
+          loopFrameBitmap={activeLoopBitmap}
           loopImageBbox={loopManifest?.bbox ?? null}
           loopActive={isLoopDisplayActive}
           onFrameSettled={handleFrameSettled}
