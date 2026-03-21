@@ -68,6 +68,7 @@ const PRELOAD_STALL_MS = 8000;
 const FRAME_MAX_RETRIES = 3;
 const FRAME_HARD_DEADLINE_MS = 30_000;
 const FRAME_RETRY_BASE_MS = 1200;
+const SCRUB_COMMIT_NEIGHBOR_WINDOW = 2;
 const LOOP_PRELOAD_MIN_READY = 2;
 const LOOP_AHEAD_READY_TARGET = 8;
 const MAX_CONCURRENT_DECODES = 4;
@@ -180,6 +181,12 @@ type ScrubPhase0aSnapshot = {
   liveEventCount: number;
   supersededCount: number;
   lastRequestedHour: number | null;
+};
+
+type ScrubCommitIntent = {
+  hour: number;
+  direction: 1 | -1 | 0;
+  startedAt: number;
 };
 
 function emptyScrubPhase0aSnapshot(): ScrubPhase0aSnapshot {
@@ -833,6 +840,7 @@ export default function App() {
   const [isPreloadingForPlay, setIsPreloadingForPlay] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubRequestedHour, setScrubRequestedHour] = useState<number | null>(null);
+  const [scrubCommitIntent, setScrubCommitIntent] = useState<ScrubCommitIntent | null>(null);
   const [opacity, setOpacity] = useState(OVERLAY_DEFAULT_OPACITY);
   const [basemapMode, setBasemapMode] = useState<BasemapMode>(() => readBasemapModePreference());
   const [pointLabelsEnabled, setPointLabelsEnabled] = useState(true);
@@ -1931,8 +1939,17 @@ export default function App() {
       return activeInFlight;
     }
 
-    const requestedPivotHour = isScrubbing && Number.isFinite(scrubRequestedHour)
-      ? nearestFrame(frameHours, scrubRequestedHour as number)
+    const commitIntentActive = Boolean(
+      scrubCommitIntent
+      && !isScrubbing
+      && Date.now() - scrubCommitIntent.startedAt <= INFLIGHT_FRAME_TTL_MS
+    );
+
+    const activeCommitIntent = commitIntentActive ? scrubCommitIntent : null;
+    const commitIntentHour = activeCommitIntent?.hour;
+
+    const requestedPivotHour = Number.isFinite(commitIntentHour)
+      ? nearestFrame(frameHours, commitIntentHour as number)
       : forecastHour;
     const currentIndex = frameHours.indexOf(requestedPivotHour);
     const pivot = currentIndex >= 0 ? currentIndex : 0;
@@ -1956,6 +1973,50 @@ export default function App() {
     };
 
     pushCandidate(frameHours[pivot]);
+
+    const pushDirectionalNeighbors = (direction: 1 | -1) => {
+      for (let step = 1; step <= SCRUB_COMMIT_NEIGHBOR_WINDOW; step += 1) {
+        const index = pivot + direction * step;
+        if (index < 0 || index >= frameHours.length) {
+          continue;
+        }
+        pushCandidate(frameHours[index]);
+        if (candidates.length >= maxRequests) {
+          return;
+        }
+      }
+    };
+
+    const fillDirection = (direction: 1 | -1) => {
+      const start = direction === 1 ? pivot + 1 : pivot - 1;
+      for (let i = start; i >= 0 && i < frameHours.length; i += direction) {
+        pushCandidate(frameHours[i]);
+        if (candidates.length >= maxRequests) {
+          return;
+        }
+      }
+    };
+
+    const preferredDirection = activeCommitIntent?.direction ?? 0;
+    if (!isPreloadingForPlay && (preferredDirection === 1 || preferredDirection === -1)) {
+      pushDirectionalNeighbors(preferredDirection);
+      if (candidates.length >= maxRequests) {
+        return candidates.slice(0, maxRequests);
+      }
+
+      pushDirectionalNeighbors(preferredDirection === 1 ? -1 : 1);
+      if (candidates.length >= maxRequests) {
+        return candidates.slice(0, maxRequests);
+      }
+
+      fillDirection(preferredDirection);
+      if (candidates.length >= maxRequests) {
+        return candidates.slice(0, maxRequests);
+      }
+
+      fillDirection(preferredDirection === 1 ? -1 : 1);
+      return candidates.slice(0, maxRequests);
+    }
 
     for (let i = pivot + 1; i < frameHours.length; i += 1) {
       pushCandidate(frameHours[i]);
@@ -1989,6 +2050,7 @@ export default function App() {
     isPreloadingForPlay,
     isScrubbing,
     scrubRequestedHour,
+    scrubCommitIntent,
     isLoopDisplayActive,
     hasRenderableSelection,
   ]);
@@ -3033,8 +3095,23 @@ export default function App() {
 
   const requestForecastHour = useCallback(
     (requestedHour: number, reason: ForecastHourChangeReason = "standard") => {
+      const inferDirection = (nextHour: number): 1 | -1 | 0 => {
+        const currentHour = forecastHourRef.current;
+        if (!Number.isFinite(currentHour)) {
+          return 0;
+        }
+        if (nextHour > currentHour) {
+          return 1;
+        }
+        if (nextHour < currentHour) {
+          return -1;
+        }
+        return 0;
+      };
+
       if (reason === "standard") {
         setScrubRequestedHour(null);
+        setScrubCommitIntent(null);
         pendingScrubHourRef.current = null;
         scrubPhase0aRef.current = emptyScrubPhase0aSnapshot();
         const snappedHour = frameHours.length > 0 ? nearestFrame(frameHours, requestedHour) : requestedHour;
@@ -3073,6 +3150,11 @@ export default function App() {
             return;
           }
           const snappedTileHour = nearestFrame(frameHours, requestedHour);
+          setScrubCommitIntent({
+            hour: snappedTileHour,
+            direction: inferDirection(snappedTileHour),
+            startedAt: Date.now(),
+          });
           startPendingFrameMetric({
             eventName: treatCommitAsFrameChange ? "frame_change" : "scrub_latency",
             renderTarget: "tiles",
@@ -3088,6 +3170,11 @@ export default function App() {
         const nextHour = loopFrameHours.length > 0
           ? nearestFrame(loopFrameHours, requestedHour)
           : requestedHour;
+        setScrubCommitIntent({
+          hour: nextHour,
+          direction: inferDirection(nextHour),
+          startedAt: Date.now(),
+        });
         startPendingFrameMetric({
           eventName: treatCommitAsFrameChange ? "frame_change" : "scrub_latency",
           renderTarget: "loop",
@@ -3126,6 +3213,7 @@ export default function App() {
       }
 
       const previousRequestedHour = pendingScrubHourRef.current;
+      setScrubCommitIntent(null);
       const now = performance.now();
       const scrubTrace = scrubPhase0aRef.current;
       if (!Number.isFinite(scrubTrace.liveStartedAt)) {
@@ -3181,26 +3269,6 @@ export default function App() {
             setLoopDisplayHour(resolvedReadyHour);
           }
         }
-
-        loopDisplayDecodeTokenRef.current += 1;
-        const decodeToken = loopDisplayDecodeTokenRef.current;
-        // No signal: decode completes and caches regardless of subsequent scrub
-        // positions. The token check below ensures only the last scrub target
-        // actually updates the display — earlier frames stay warm in the LRU cache.
-        ensureLoopFrameDecoded(nextHour, visibleRenderMode)
-          .then((ready) => {
-            if (!ready) {
-              return;
-            }
-            if (decodeToken !== loopDisplayDecodeTokenRef.current) {
-              return;
-            }
-            setLoopDisplayHour(nextHour);
-            setTargetForecastHour(nextHour);
-          })
-          .catch(() => {
-            // best-effort decode path for scrub; keep previous visible frame on failure.
-          });
       });
     },
     [
@@ -4142,6 +4210,16 @@ export default function App() {
       setIsScrubbing(false);
     }
   }, [isPlaying, isScrubbing]);
+
+  useEffect(() => {
+    if (!scrubCommitIntent || !Number.isFinite(forecastHour)) {
+      return;
+    }
+    if (forecastHour !== scrubCommitIntent.hour) {
+      return;
+    }
+    setScrubCommitIntent(null);
+  }, [forecastHour, scrubCommitIntent]);
 
   // When the user starts scrubbing, cancel any pending buffering-recovery auto-restart
   // so it cannot preempt the in-progress scrub and re-lock the slider.
