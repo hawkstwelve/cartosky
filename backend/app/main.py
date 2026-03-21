@@ -329,6 +329,14 @@ def _maybe_304(request: Request, *, etag: str, cache_control: str) -> Response |
     return None
 
 
+def _format_server_timing(metrics: list[tuple[str, float]]) -> str:
+    parts: list[str] = []
+    for name, duration_ms in metrics:
+        safe_duration = max(0.0, float(duration_ms))
+        parts.append(f"{name};dur={safe_duration:.1f}")
+    return ", ".join(parts)
+
+
 app = FastAPI(title="CartoSky API", version="4.0.0")
 
 origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
@@ -2659,6 +2667,149 @@ def get_capabilities_v4(request: Request):
     )
 
 
+@app.get("/api/v4/bootstrap")
+def get_bootstrap_v4(
+    request: Request,
+    model: str | None = Query(None, description="Optional preferred model ID"),
+    run: str = Query("latest", description="Preferred run ID or latest"),
+    var: str | None = Query(None, description="Optional preferred variable ID"),
+    region: str | None = Query(None, description="Optional preferred region preset ID"),
+):
+    started_at = time.perf_counter()
+
+    capabilities_started_at = time.perf_counter()
+    capabilities_payload = _build_capabilities_payload()
+    capabilities_ms = (time.perf_counter() - capabilities_started_at) * 1000.0
+
+    supported_models = capabilities_payload.get("supported_models", [])
+    model_catalog = capabilities_payload.get("model_catalog", {})
+    requested_model = (model or "").strip().lower()
+    selected_model = requested_model if requested_model in supported_models else ""
+    if not selected_model:
+        selected_model = "hrrr" if "hrrr" in supported_models else (supported_models[0] if supported_models else "")
+
+    selected_run = None
+    run_manifest = None
+    selected_var = ""
+    frames_payload: list[dict[str, Any]] = []
+
+    manifest_load_ms = 0.0
+    frames_build_ms = 0.0
+
+    if selected_model:
+        manifest_started_at = time.perf_counter()
+        selected_run = _resolve_run(selected_model, run) or _resolve_latest_run(selected_model)
+        if selected_run:
+            run_manifest = _load_manifest(selected_model, selected_run)
+        manifest_load_ms = (time.perf_counter() - manifest_started_at) * 1000.0
+
+        model_capability = model_catalog.get(selected_model, {}) if isinstance(model_catalog, dict) else {}
+        default_var = ""
+        if isinstance(model_capability, dict):
+            defaults = model_capability.get("defaults", {})
+            if isinstance(defaults, dict):
+                default_var = str(defaults.get("default_var_key") or "").strip()
+
+        requested_var = (var or "").strip()
+        if run_manifest and isinstance(run_manifest.get("variables"), dict):
+            manifest_vars = run_manifest.get("variables", {})
+            ordered_manifest_vars = _ordered_manifest_var_keys(selected_model, manifest_vars)
+            if requested_var and requested_var in ordered_manifest_vars:
+                selected_var = requested_var
+            elif default_var and default_var in ordered_manifest_vars:
+                selected_var = default_var
+            elif ordered_manifest_vars:
+                selected_var = ordered_manifest_vars[0]
+
+        if selected_var and selected_run and run_manifest:
+            frames_started_at = time.perf_counter()
+            variables = run_manifest.get("variables", {})
+            var_entry = variables.get(selected_var) if isinstance(variables, dict) else None
+            frame_entries = var_entry.get("frames") if isinstance(var_entry, dict) else []
+            if not isinstance(frame_entries, list):
+                frame_entries = []
+            version_token = _run_version_token(selected_model, selected_run)
+            for item in frame_entries:
+                if not isinstance(item, dict):
+                    continue
+                fh = item.get("fh")
+                if not isinstance(fh, int):
+                    continue
+                tier0_url, tier1_url = _resolve_loop_urls_for_frame(
+                    selected_model,
+                    selected_run,
+                    selected_var,
+                    fh,
+                    version_token=version_token,
+                    include_tier0_runtime_fallback=True,
+                )
+                frames_payload.append(
+                    {
+                        "fh": fh,
+                        "has_cog": True,
+                        "run": selected_run,
+                        "loop_webp_url": tier0_url,
+                        "loop_webp_tier0_url": tier0_url,
+                        "loop_webp_tier1_url": tier1_url,
+                        "meta": {"meta": _resolve_sidecar(selected_model, selected_run, selected_var, fh)},
+                    }
+                )
+            frames_payload.sort(key=lambda row: int(row["fh"]))
+            frames_build_ms = (time.perf_counter() - frames_started_at) * 1000.0
+
+    model_constraints = {}
+    if selected_model and isinstance(model_catalog, dict):
+        selected_model_catalog = model_catalog.get(selected_model, {})
+        if isinstance(selected_model_catalog, dict):
+            model_constraints = selected_model_catalog.get("constraints", {})
+    default_region = "conus"
+    canonical_region = str(model_constraints.get("canonical_region") or default_region).strip().lower()
+    requested_region = (region or "").strip().lower()
+    if requested_region in REGION_PRESETS:
+        selected_region = requested_region
+    elif canonical_region in REGION_PRESETS:
+        selected_region = canonical_region
+    else:
+        selected_region = default_region
+
+    payload = {
+        "contract_version": CAPABILITIES_CONTRACT_VERSION,
+        "capabilities": capabilities_payload,
+        "regions": {"regions": REGION_PRESETS},
+        "selection": {
+            "model": selected_model,
+            "run": selected_run or run,
+            "variable": selected_var,
+            "region": selected_region,
+        },
+        "manifest": run_manifest,
+        "frames": frames_payload,
+    }
+
+    cache_control = "public, max-age=60"
+    etag = _make_etag(payload)
+    timing_header = _format_server_timing(
+        [
+            ("bootstrap_capabilities", capabilities_ms),
+            ("bootstrap_manifest", manifest_load_ms),
+            ("bootstrap_frames", frames_build_ms),
+            ("bootstrap_total", (time.perf_counter() - started_at) * 1000.0),
+        ]
+    )
+    r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
+    if r304 is not None:
+        r304.headers["Server-Timing"] = timing_header
+        return r304
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Cache-Control": cache_control,
+            "ETag": etag,
+            "Server-Timing": timing_header,
+        },
+    )
+
+
 @app.get("/api/v4/models/{model}/capabilities")
 def get_model_capabilities_v4(request: Request, model: str):
     model_id = model.strip().lower()
@@ -2709,23 +2860,37 @@ def list_runs(request: Request, model: str):
 
 @app.get("/api/v4/{model}/{run}/manifest")
 def get_manifest(request: Request, model: str, run: str):
+    started_at = time.perf_counter()
+    resolve_started_at = time.perf_counter()
     resolved = _resolve_run(model, run)
+    resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
+    load_started_at = time.perf_counter()
     manifest = _load_manifest(model, resolved)
+    load_ms = (time.perf_counter() - load_started_at) * 1000.0
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
 
     cache_control = "public, max-age=60"
     etag = _make_etag(manifest)
+    timing_header = _format_server_timing(
+        [
+            ("manifest_resolve", resolve_ms),
+            ("manifest_load", load_ms),
+            ("manifest_total", (time.perf_counter() - started_at) * 1000.0),
+        ]
+    )
     r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
     if r304 is not None:
+        r304.headers["Server-Timing"] = timing_header
         return r304
     return JSONResponse(
         content=manifest,
         headers={
             "Cache-Control": cache_control,
             "ETag": etag,
+            "Server-Timing": timing_header,
         },
     )
 
@@ -2759,11 +2924,16 @@ def list_vars(model: str, run: str):
 
 @app.get("/api/v4/{model}/{run}/{var}/frames")
 def list_frames(request: Request, model: str, run: str, var: str):
+    started_at = time.perf_counter()
+    resolve_started_at = time.perf_counter()
     resolved = _resolve_run(model, run)
+    resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
 
+    manifest_started_at = time.perf_counter()
     manifest = _load_manifest(model, resolved)
+    manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
 
@@ -2782,6 +2952,7 @@ def list_frames(request: Request, model: str, run: str, var: str):
 
     version_token = _run_version_token(model, resolved)
 
+    frames_build_started_at = time.perf_counter()
     frames: list[dict] = []
     for item in frame_entries:
         if not isinstance(item, dict):
@@ -2813,10 +2984,20 @@ def list_frames(request: Request, model: str, run: str, var: str):
         )
 
     frames.sort(key=lambda row: row["fh"])
+    frames_build_ms = (time.perf_counter() - frames_build_started_at) * 1000.0
     cache_control = _frames_cache_control(run, run_complete=run_complete)
     etag = _make_etag(frames)
+    timing_header = _format_server_timing(
+        [
+            ("frames_resolve", resolve_ms),
+            ("frames_manifest", manifest_ms),
+            ("frames_build", frames_build_ms),
+            ("frames_total", (time.perf_counter() - started_at) * 1000.0),
+        ]
+    )
     r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
     if r304 is not None:
+        r304.headers["Server-Timing"] = timing_header
         return r304
 
     return JSONResponse(
@@ -2824,17 +3005,23 @@ def list_frames(request: Request, model: str, run: str, var: str):
         headers={
             "Cache-Control": cache_control,
             "ETag": etag,
+            "Server-Timing": timing_header,
         },
     )
 
 
 @app.get("/api/v4/{model}/{run}/{var}/loop-manifest")
 def get_loop_manifest(request: Request, model: str, run: str, var: str):
+    started_at = time.perf_counter()
+    resolve_started_at = time.perf_counter()
     resolved = _resolve_run(model, run)
+    resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
 
+    manifest_started_at = time.perf_counter()
     manifest = _load_manifest(model, resolved)
+    manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
 
@@ -2858,6 +3045,7 @@ def get_loop_manifest(request: Request, model: str, run: str, var: str):
 
     version_token = _run_version_token(model, resolved)
 
+    build_started_at = time.perf_counter()
     tier_frames: dict[int, list[dict[str, Any]]] = {0: [], 1: []}
     for item in frame_entries:
         if not isinstance(item, dict):
@@ -2904,11 +3092,21 @@ def get_loop_manifest(request: Request, model: str, run: str, var: str):
             },
         ],
     }
+    build_ms = (time.perf_counter() - build_started_at) * 1000.0
 
     cache_control = "public, max-age=60"
     etag = _make_etag(payload)
+    timing_header = _format_server_timing(
+        [
+            ("loop_manifest_resolve", resolve_ms),
+            ("loop_manifest_manifest", manifest_ms),
+            ("loop_manifest_build", build_ms),
+            ("loop_manifest_total", (time.perf_counter() - started_at) * 1000.0),
+        ]
+    )
     r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
     if r304 is not None:
+        r304.headers["Server-Timing"] = timing_header
         return r304
 
     return JSONResponse(
@@ -2916,6 +3114,7 @@ def get_loop_manifest(request: Request, model: str, run: str, var: str):
         headers={
             "Cache-Control": cache_control,
             "ETag": etag,
+            "Server-Timing": timing_header,
         },
     )
 

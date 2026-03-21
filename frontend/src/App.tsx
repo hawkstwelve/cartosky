@@ -10,6 +10,7 @@ import { WeatherToolbar } from "@/components/weather-toolbar";
 import {
   buildContourUrl,
   fetchAnchorFeatureCollection,
+  fetchBootstrap,
   type CapabilitiesResponse,
   type CapabilityModel,
   type CapabilityVariable,
@@ -39,11 +40,13 @@ import {
   isDeferredNonCriticalBootstrapEnabled,
   isDeferredPrefetchUntilFirstPaintEnabled,
   isTileFirstInitialPaintEnabled,
+  isViewportAwareTileReadinessEnabled,
   isWebpDefaultRenderEnabled,
   MAP_VIEW_DEFAULTS,
   OVERLAY_DEFAULT_OPACITY,
   WEBP_RENDER_MODE_THRESHOLDS,
 } from "@/lib/config";
+import { selectPrefetchFrameHours } from "@/lib/render-scheduler";
 import { buildRunOptions } from "@/lib/run-options";
 import { type ScreenshotExportState } from "@/lib/screenshot_export";
 import { buildTileUrlFromFrame } from "@/lib/tiles";
@@ -79,6 +82,13 @@ const WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES = 256 * 1024 * 1024;
 const WEBP_DECODE_CACHE_BUDGET_MOBILE_BYTES = 128 * 1024 * 1024;
 const EMPTY_TILE_DATA_URL = "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=";
 const PERMALINK_SYNC_DEBOUNCE_MS = 200;
+
+function viewportSignatureFromState(view: { lat: number; lon: number; z: number }): string {
+  const zoomBucket = Math.round(view.z * 2) / 2;
+  const latBucket = Math.round(view.lat * 4) / 4;
+  const lonBucket = Math.round(view.lon * 4) / 4;
+  return `${zoomBucket}|${latBucket}|${lonBucket}`;
+}
 
 type RenderModeState = "webp_tier0" | "webp_tier1" | "tiles";
 
@@ -804,6 +814,7 @@ export default function App() {
   const tileFirstInitialPaintEnabled = isTileFirstInitialPaintEnabled();
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
   const deferPrefetchUntilFirstPaintEnabled = isDeferredPrefetchUntilFirstPaintEnabled();
+  const viewportAwareTileReadinessEnabled = isViewportAwareTileReadinessEnabled();
   const viewerLayoutMode = useViewerLayoutMode();
   const isDesktopViewerLayout = viewerLayoutMode === "desktop";
   const initialPermalink = useMemo(() => readPermalink(), []);
@@ -899,6 +910,7 @@ export default function App() {
   const latestTileUrlRef = useRef<string>("");
   const readyTileUrlsRef = useRef<Map<string, number>>(new Map());
   const tileReadySourceRef = useRef<Map<string, TileReadySource>>(new Map());
+  const tileReadyViewportSignatureRef = useRef<Map<string, string>>(new Map());
   const readyFramesRef = useRef<Set<number>>(new Set());
   const inFlightFramesRef = useRef<Set<number>>(new Set());
   const failedFramesRef = useRef<Set<number>>(new Set());
@@ -951,6 +963,7 @@ export default function App() {
     lon: MAP_VIEW_DEFAULTS.center[1],
     z: MAP_VIEW_DEFAULTS.zoom,
   });
+  const viewportSignatureRef = useRef(viewportSignatureFromState(mapViewRef.current));
   const pendingMapViewRef = useRef(initialPermalinkMapView);
   const mapViewHydratedRef = useRef(initialPermalinkMapView === null);
   const pendingInitialForecastHourRef = useRef(
@@ -1626,6 +1639,7 @@ export default function App() {
         lon: center.lng,
         z: map.getZoom(),
       };
+      viewportSignatureRef.current = viewportSignatureFromState(mapViewRef.current);
       mapViewHydratedRef.current = true;
       pendingMapViewRef.current = null;
       setMapViewTick((current) => current + 1);
@@ -1988,109 +2002,22 @@ export default function App() {
       return activeInFlight;
     }
 
-    const commitIntentActive = Boolean(
-      scrubCommitIntent
-      && !isScrubbing
-      && Date.now() - scrubCommitIntent.startedAt <= INFLIGHT_FRAME_TTL_MS
-    );
-
-    const activeCommitIntent = commitIntentActive ? scrubCommitIntent : null;
-    const commitIntentHour = activeCommitIntent?.hour;
-
-    const requestedPivotHour = Number.isFinite(commitIntentHour)
-      ? nearestFrame(frameHours, commitIntentHour as number)
-      : forecastHour;
-    const currentIndex = frameHours.indexOf(requestedPivotHour);
-    const pivot = currentIndex >= 0 ? currentIndex : 0;
-    const candidates: number[] = [...activeInFlight];
-    const seen = new Set<number>(activeInFlight);
-
-    const pushCandidate = (fh: number) => {
-      if (seen.has(fh)) return;
-      seen.add(fh);
-      if (ready.has(fh) || inFlight.has(fh)) return;
-      if (failed.has(fh)) {
-        if (isScrubbing) {
-          return;
-        }
-        const retryAt = frameNextRetryAtRef.current.get(fh) ?? 0;
-        if (Date.now() < retryAt) {
-          return;
-        }
-      }
-      candidates.push(fh);
-    };
-
-    pushCandidate(frameHours[pivot]);
-
-    const pushDirectionalNeighbors = (direction: 1 | -1) => {
-      for (let step = 1; step <= SCRUB_COMMIT_NEIGHBOR_WINDOW; step += 1) {
-        const index = pivot + direction * step;
-        if (index < 0 || index >= frameHours.length) {
-          continue;
-        }
-        pushCandidate(frameHours[index]);
-        if (candidates.length >= maxRequests) {
-          return;
-        }
-      }
-    };
-
-    const fillDirection = (direction: 1 | -1) => {
-      const start = direction === 1 ? pivot + 1 : pivot - 1;
-      for (let i = start; i >= 0 && i < frameHours.length; i += direction) {
-        pushCandidate(frameHours[i]);
-        if (candidates.length >= maxRequests) {
-          return;
-        }
-      }
-    };
-
-    const preferredDirection = activeCommitIntent?.direction ?? 0;
-    if (!isPreloadingForPlay && (preferredDirection === 1 || preferredDirection === -1)) {
-      pushDirectionalNeighbors(preferredDirection);
-      if (candidates.length >= maxRequests) {
-        return candidates.slice(0, maxRequests);
-      }
-
-      pushDirectionalNeighbors(preferredDirection === 1 ? -1 : 1);
-      if (candidates.length >= maxRequests) {
-        return candidates.slice(0, maxRequests);
-      }
-
-      fillDirection(preferredDirection);
-      if (candidates.length >= maxRequests) {
-        return candidates.slice(0, maxRequests);
-      }
-
-      fillDirection(preferredDirection === 1 ? -1 : 1);
-      return candidates.slice(0, maxRequests);
-    }
-
-    for (let i = pivot + 1; i < frameHours.length; i += 1) {
-      pushCandidate(frameHours[i]);
-      if (candidates.length >= maxRequests) {
-        return candidates.slice(0, maxRequests);
-      }
-    }
-
-    if (isPreloadingForPlay) {
-      for (let i = 0; i < frameHours.length; i += 1) {
-        pushCandidate(frameHours[i]);
-        if (candidates.length >= maxRequests) {
-          return candidates.slice(0, maxRequests);
-        }
-      }
-    } else {
-      for (let i = pivot - 1; i >= 0; i -= 1) {
-        pushCandidate(frameHours[i]);
-        if (candidates.length >= maxRequests) {
-          return candidates.slice(0, maxRequests);
-        }
-      }
-    }
-
-    return candidates.slice(0, maxRequests);
+    return selectPrefetchFrameHours({
+      frameHours,
+      forecastHour,
+      maxRequests,
+      targetReady,
+      readyHours: ready,
+      failedHours: failed,
+      inFlightHours: inFlight,
+      isPreloadingForPlay,
+      isScrubbing,
+      scrubCommitIntent,
+      commitIntentTtlMs: INFLIGHT_FRAME_TTL_MS,
+      neighborWindow: SCRUB_COMMIT_NEIGHBOR_WINDOW,
+      nowMs: Date.now(),
+      retryAtByHour: frameNextRetryAtRef.current,
+    });
   }, [
     frameHours,
     forecastHour,
@@ -2125,6 +2052,7 @@ export default function App() {
     const now = Date.now();
     const ready = readyTileUrlsRef.current;
     ready.set(readyUrl, now);
+    tileReadyViewportSignatureRef.current.set(readyUrl, viewportSignatureRef.current);
 
     // Only pay the eviction cost when the map is actually over budget.
     // The previous code iterated all 160 entries + spread them into an array on
@@ -2135,6 +2063,7 @@ export default function App() {
         if (now - ts > READY_URL_TTL_MS) {
           ready.delete(url);
           tileReadySourceRef.current.delete(url);
+          tileReadyViewportSignatureRef.current.delete(url);
         }
       }
       // If still over limit, find and remove the single oldest entry per iteration.
@@ -2152,6 +2081,7 @@ export default function App() {
         if (oldestUrl !== null) {
           ready.delete(oldestUrl);
           tileReadySourceRef.current.delete(oldestUrl);
+          tileReadyViewportSignatureRef.current.delete(oldestUrl);
         } else {
           break;
         }
@@ -2197,10 +2127,17 @@ export default function App() {
     if (Date.now() - ts > READY_URL_TTL_MS) {
       readyTileUrlsRef.current.delete(url);
       tileReadySourceRef.current.delete(url);
+      tileReadyViewportSignatureRef.current.delete(url);
       return false;
     }
+    if (viewportAwareTileReadinessEnabled) {
+      const readyViewport = tileReadyViewportSignatureRef.current.get(url);
+      if (readyViewport && readyViewport !== viewportSignatureRef.current) {
+        return false;
+      }
+    }
     return true;
-  }, []);
+  }, [viewportAwareTileReadinessEnabled]);
 
   useEffect(() => {
     latestTileUrlRef.current = tileUrl;
@@ -2490,6 +2427,7 @@ export default function App() {
       if (expectedTileUrl && Number.isFinite(readyTs) && !warmAtStart) {
         readyTileUrlsRef.current.delete(expectedTileUrl);
         tileReadySourceRef.current.delete(expectedTileUrl);
+        tileReadyViewportSignatureRef.current.delete(expectedTileUrl);
       }
       pendingFrameMetricRef.current = {
         eventName: args.eventName,
@@ -3449,10 +3387,34 @@ export default function App() {
         const requestedRegion = initialPermalink.region?.trim();
         const requestedRun = initialPermalink.run?.trim();
 
-        const [capabilitiesData, regionPresetData] = await Promise.all([
-          fetchCapabilities({ signal: controller.signal }),
-          fetchRegionPresets({ signal: controller.signal }),
-        ]);
+        let capabilitiesData: CapabilitiesResponse;
+        let regionPresetData: Record<string, RegionPreset>;
+        let bootstrapSelection: { model: string; variable: string; region: string; run: string } | null = null;
+
+        try {
+          const bootstrapPayload = await fetchBootstrap({
+            model: requestedModel,
+            variable: requestedVariable,
+            region: requestedRegion,
+            run: requestedRun || "latest",
+            signal: controller.signal,
+          });
+          capabilitiesData = bootstrapPayload.capabilities;
+          regionPresetData = bootstrapPayload.regions?.regions ?? {};
+          if (bootstrapPayload.selection) {
+            bootstrapSelection = {
+              model: bootstrapPayload.selection.model,
+              variable: bootstrapPayload.selection.variable,
+              region: bootstrapPayload.selection.region,
+              run: bootstrapPayload.selection.run,
+            };
+          }
+        } catch {
+          [capabilitiesData, regionPresetData] = await Promise.all([
+            fetchCapabilities({ signal: controller.signal }),
+            fetchRegionPresets({ signal: controller.signal }),
+          ]);
+        }
         if (controller.signal.aborted || generation !== requestGenerationRef.current) {
           return;
         }
@@ -3474,7 +3436,9 @@ export default function App() {
         });
         const nextModel = requestedModel && orderedVisibleModelIds.includes(requestedModel)
           ? requestedModel
-          : (preferredDefaultModel || availableModelId || orderedVisibleModelIds[0] || "");
+          : (bootstrapSelection?.model && orderedVisibleModelIds.includes(bootstrapSelection.model)
+            ? bootstrapSelection.model
+            : (preferredDefaultModel || availableModelId || orderedVisibleModelIds[0] || ""));
         const modelOptions = modelRows.map((entry) => ({
           value: entry.id,
           label: entry.displayName || entry.id,
@@ -3489,7 +3453,9 @@ export default function App() {
         const defaultVarKey = String(modelCapability?.defaults?.default_var_key ?? "").trim();
         const nextVariable = requestedVariable && variableIds.includes(requestedVariable)
           ? requestedVariable
-          : (variableIds.includes(defaultVarKey) ? defaultVarKey : (variableIds[0] ?? ""));
+          : (bootstrapSelection?.variable && variableIds.includes(bootstrapSelection.variable)
+            ? bootstrapSelection.variable
+            : (variableIds.includes(defaultVarKey) ? defaultVarKey : (variableIds[0] ?? "")));
         setVariables(variableOptions);
         setVariable(nextVariable);
 
@@ -3507,10 +3473,12 @@ export default function App() {
         ).trim();
         const nextRegion = requestedRegion && regionIds.includes(requestedRegion)
           ? requestedRegion
-          : pickPreferred(regionIds, canonicalRegion || MAP_VIEW_DEFAULTS.region);
+          : (bootstrapSelection?.region && regionIds.includes(bootstrapSelection.region)
+            ? bootstrapSelection.region
+            : pickPreferred(regionIds, canonicalRegion || MAP_VIEW_DEFAULTS.region));
         setRegion(nextRegion);
 
-        setRun(requestedRun || "latest");
+        setRun(requestedRun || bootstrapSelection?.run || "latest");
         setRuns([]);
         setRunManifest(null);
         setFrameRows([]);
@@ -4254,6 +4222,7 @@ export default function App() {
       lon: center.lng,
       z: map.getZoom(),
     };
+    viewportSignatureRef.current = viewportSignatureFromState(mapViewRef.current);
     setMapViewTick((current) => current + 1);
     setIsMapReady(true);
   }, []);
@@ -4267,6 +4236,7 @@ export default function App() {
       lon: payload.lon,
       z: payload.z,
     };
+    viewportSignatureRef.current = viewportSignatureFromState(mapViewRef.current);
     setMapViewTick((current) => current + 1);
   }, []);
 

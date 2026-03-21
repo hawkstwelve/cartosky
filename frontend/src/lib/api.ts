@@ -54,6 +54,24 @@ export type CapabilitiesResponse = {
   >;
 };
 
+export type BootstrapSelection = {
+  model: string;
+  run: string;
+  variable: string;
+  region: string;
+};
+
+export type BootstrapResponse = {
+  contract_version: string;
+  capabilities: CapabilitiesResponse;
+  regions: {
+    regions: Record<string, RegionPreset>;
+  };
+  selection?: BootstrapSelection;
+  manifest?: RunManifestResponse | null;
+  frames?: FrameRow[];
+};
+
 export type RegionPreset = {
   label?: string;
   bbox: [number, number, number, number];
@@ -259,6 +277,31 @@ export async function fetchModels(options?: FetchOptions): Promise<ModelOption[]
 
 export async function fetchCapabilities(options?: FetchOptions): Promise<CapabilitiesResponse> {
   return fetchJson<CapabilitiesResponse>(`${API_V4_BASE}/capabilities`, options);
+}
+
+export async function fetchBootstrap(params?: {
+  model?: string;
+  run?: string;
+  variable?: string;
+  region?: string;
+  signal?: AbortSignal;
+}): Promise<BootstrapResponse> {
+  const query = new URLSearchParams();
+  if (params?.model) {
+    query.set("model", params.model);
+  }
+  if (params?.run) {
+    query.set("run", params.run);
+  }
+  if (params?.variable) {
+    query.set("var", params.variable);
+  }
+  if (params?.region) {
+    query.set("region", params.region);
+  }
+  const suffix = query.toString();
+  const url = suffix ? `${API_V4_BASE}/bootstrap?${suffix}` : `${API_V4_BASE}/bootstrap`;
+  return fetchJson<BootstrapResponse>(url, { signal: params?.signal });
 }
 
 export async function fetchRegions(model: string, options?: FetchOptions): Promise<string[]> {

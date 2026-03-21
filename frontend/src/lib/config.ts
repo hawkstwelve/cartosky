@@ -93,3 +93,7 @@ export function isDeferredNonCriticalBootstrapEnabled(): boolean {
 export function isDeferredPrefetchUntilFirstPaintEnabled(): boolean {
   return readBooleanEnv(import.meta.env.VITE_CARTOSKY_DEFER_PREFETCH_UNTIL_FIRST_PAINT, true);
 }
+
+export function isViewportAwareTileReadinessEnabled(): boolean {
+  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_VIEWPORT_AWARE_TILE_READINESS, true);
+}

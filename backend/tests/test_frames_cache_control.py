@@ -346,3 +346,36 @@ async def test_runs_and_manifest_reject_out_of_cycle_gfs_run(client: httpx.Async
 
     invalid_manifest_resp = await client.get("/api/v4/gfs/20260224_20z/manifest")
     assert invalid_manifest_resp.status_code == 404
+
+
+async def test_bootstrap_endpoint_includes_selection_and_frames(client: httpx.AsyncClient) -> None:
+    response = await client.get("/api/v4/bootstrap?model=hrrr&run=latest&var=radar_ptype&region=conus")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["contract_version"] == "v1"
+    assert "capabilities" in payload
+    assert "regions" in payload
+    selection = payload["selection"]
+    assert selection["model"] == "hrrr"
+    assert selection["run"] == "20260224_14z"
+    assert selection["variable"] == "radar_ptype"
+    assert selection["region"] == "conus"
+    assert isinstance(payload.get("frames"), list)
+    assert payload["frames"]
+    server_timing = response.headers.get("server-timing", "")
+    assert "bootstrap_total;dur=" in server_timing
+
+
+async def test_manifest_frames_and_loop_manifest_include_server_timing(client: httpx.AsyncClient) -> None:
+    manifest_response = await client.get("/api/v4/hrrr/latest/manifest")
+    assert manifest_response.status_code == 200
+    assert "manifest_total;dur=" in manifest_response.headers.get("server-timing", "")
+
+    frames_response = await client.get("/api/v4/hrrr/latest/radar_ptype/frames")
+    assert frames_response.status_code == 200
+    assert "frames_total;dur=" in frames_response.headers.get("server-timing", "")
+
+    loop_manifest_response = await client.get("/api/v4/hrrr/latest/radar_ptype/loop-manifest")
+    assert loop_manifest_response.status_code == 200
+    assert "loop_manifest_total;dur=" in loop_manifest_response.headers.get("server-timing", "")
