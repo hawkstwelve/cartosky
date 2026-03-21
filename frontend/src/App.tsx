@@ -848,6 +848,7 @@ export default function App() {
   const [renderMode, setRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? "webp_tier0" : "tiles");
   const [visibleRenderMode, setVisibleRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? "webp_tier0" : "tiles");
   const [loopDisplayHour, setLoopDisplayHour] = useState<number | null>(null);
+  const [loopDisplayBitmap, setLoopDisplayBitmap] = useState<ImageBitmap | null>(null);
   const [isLoopPreloading, setIsLoopPreloading] = useState(false);
   const [isLoopAutoplayBuffering, setIsLoopAutoplayBuffering] = useState(false);
   const [loopProgress, setLoopProgress] = useState({ total: 0, ready: 0, failed: 0 });
@@ -1448,6 +1449,21 @@ export default function App() {
         return false;
       }
       return loopDecodedCacheRef.current.has(loopCacheKey(fh, mode));
+    },
+    [loopCacheKey]
+  );
+
+  const getDecodedLoopBitmap = useCallback(
+    (fh: number, mode: RenderModeState): ImageBitmap | null => {
+      if (mode === "tiles") {
+        return null;
+      }
+      const cached = loopDecodedCacheRef.current.get(loopCacheKey(fh, mode));
+      if (!cached) {
+        return null;
+      }
+      cached.lastUsedAt = Date.now();
+      return cached.bitmap;
     },
     [loopCacheKey]
   );
@@ -2552,6 +2568,7 @@ export default function App() {
       lastProgressAt: Date.now(),
     };
     setScrubRequestedHour(null);
+    setLoopDisplayBitmap(null);
     const version = ++bufferVersionRef.current;
     setBufferSnapshot({
       totalFrames: frameHours.length,
@@ -2780,6 +2797,21 @@ export default function App() {
 
   useEffect(() => {
     if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
+      if (loopDisplayBitmap !== null) {
+        setLoopDisplayBitmap(null);
+      }
+      return;
+    }
+    const displayHour = loopDisplayHour as number;
+    const nextBitmap = getDecodedLoopBitmap(displayHour, visibleRenderMode);
+    if (!nextBitmap) {
+      return;
+    }
+    setLoopDisplayBitmap((current) => (current === nextBitmap ? current : nextBitmap));
+  }, [isLoopDisplayActive, loopDisplayHour, visibleRenderMode, getDecodedLoopBitmap, loopDisplayBitmap]);
+
+  useEffect(() => {
+    if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
       return;
     }
     const displayHour = loopDisplayHour as number;
@@ -2799,6 +2831,7 @@ export default function App() {
           forecast_hour: displayHour,
           meta: {
             render_mode: visibleRenderMode,
+            presentation_path: loopDisplayBitmap ? "canvas" : "image-url",
           },
         });
       }
@@ -2826,6 +2859,7 @@ export default function App() {
           forecast_hour: displayHour,
           meta: {
             render_mode: visibleRenderMode,
+            presentation_path: loopDisplayBitmap ? "canvas" : "image-url",
           },
         });
       });
@@ -2837,7 +2871,15 @@ export default function App() {
         window.cancelAnimationFrame(rafBId);
       }
     };
-  }, [isLoopDisplayActive, loopDisplayHour, visibleRenderMode, loopCacheKey, telemetryRunId, region]);
+  }, [
+    isLoopDisplayActive,
+    loopDisplayHour,
+    visibleRenderMode,
+    loopCacheKey,
+    telemetryRunId,
+    region,
+    loopDisplayBitmap,
+  ]);
 
   const trackFirstViewerFrame = useCallback((frameHour: number | null) => {
     if (firstViewerFrameTrackedRef.current) {
@@ -4449,7 +4491,9 @@ export default function App() {
     ? "Loading frame"
     : `Loading frames ${preloadBufferedCount}/${preloadTotal}`;
   const activeLoopHour = loopDisplayHour ?? forecastHour;
-  const activeLoopUrl = isLoopDisplayActive ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode) : null;
+  const activeLoopUrl = isLoopDisplayActive && !loopDisplayBitmap
+    ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
+    : null;
   const permalinkLoopActive = controlsIsPlaying || isLoopAutoplayBuffering;
   const resolvedLoopPermalink = typeof pendingInitialLoopRef.current === "boolean"
     ? pendingInitialLoopRef.current
@@ -4697,6 +4741,7 @@ export default function App() {
           prefetchTileUrls={prefetchTileUrls}
           crossfade={isVariableSwitching}
           loopImageUrl={activeLoopUrl}
+          loopFrameBitmap={loopDisplayBitmap}
           loopImageBbox={loopManifest?.bbox ?? null}
           loopActive={isLoopDisplayActive}
           onFrameSettled={handleFrameSettled}
