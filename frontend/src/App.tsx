@@ -10,7 +10,6 @@ import { WeatherToolbar } from "@/components/weather-toolbar";
 import {
   buildContourUrl,
   fetchAnchorFeatureCollection,
-  fetchBootstrap,
   type CapabilitiesResponse,
   type CapabilityModel,
   type CapabilityVariable,
@@ -3387,34 +3386,10 @@ export default function App() {
         const requestedRegion = initialPermalink.region?.trim();
         const requestedRun = initialPermalink.run?.trim();
 
-        let capabilitiesData: CapabilitiesResponse;
-        let regionPresetData: Record<string, RegionPreset>;
-        let bootstrapSelection: { model: string; variable: string; region: string; run: string } | null = null;
-
-        try {
-          const bootstrapPayload = await fetchBootstrap({
-            model: requestedModel,
-            variable: requestedVariable,
-            region: requestedRegion,
-            run: requestedRun || "latest",
-            signal: controller.signal,
-          });
-          capabilitiesData = bootstrapPayload.capabilities;
-          regionPresetData = bootstrapPayload.regions?.regions ?? {};
-          if (bootstrapPayload.selection) {
-            bootstrapSelection = {
-              model: bootstrapPayload.selection.model,
-              variable: bootstrapPayload.selection.variable,
-              region: bootstrapPayload.selection.region,
-              run: bootstrapPayload.selection.run,
-            };
-          }
-        } catch {
-          [capabilitiesData, regionPresetData] = await Promise.all([
-            fetchCapabilities({ signal: controller.signal }),
-            fetchRegionPresets({ signal: controller.signal }),
-          ]);
-        }
+        const [capabilitiesData, regionPresetData] = await Promise.all([
+          fetchCapabilities({ signal: controller.signal }),
+          fetchRegionPresets({ signal: controller.signal }),
+        ]);
         if (controller.signal.aborted || generation !== requestGenerationRef.current) {
           return;
         }
@@ -3436,9 +3411,7 @@ export default function App() {
         });
         const nextModel = requestedModel && orderedVisibleModelIds.includes(requestedModel)
           ? requestedModel
-          : (bootstrapSelection?.model && orderedVisibleModelIds.includes(bootstrapSelection.model)
-            ? bootstrapSelection.model
-            : (preferredDefaultModel || availableModelId || orderedVisibleModelIds[0] || ""));
+          : (preferredDefaultModel || availableModelId || orderedVisibleModelIds[0] || "");
         const modelOptions = modelRows.map((entry) => ({
           value: entry.id,
           label: entry.displayName || entry.id,
@@ -3453,9 +3426,7 @@ export default function App() {
         const defaultVarKey = String(modelCapability?.defaults?.default_var_key ?? "").trim();
         const nextVariable = requestedVariable && variableIds.includes(requestedVariable)
           ? requestedVariable
-          : (bootstrapSelection?.variable && variableIds.includes(bootstrapSelection.variable)
-            ? bootstrapSelection.variable
-            : (variableIds.includes(defaultVarKey) ? defaultVarKey : (variableIds[0] ?? "")));
+          : (variableIds.includes(defaultVarKey) ? defaultVarKey : (variableIds[0] ?? ""));
         setVariables(variableOptions);
         setVariable(nextVariable);
 
@@ -3473,12 +3444,10 @@ export default function App() {
         ).trim();
         const nextRegion = requestedRegion && regionIds.includes(requestedRegion)
           ? requestedRegion
-          : (bootstrapSelection?.region && regionIds.includes(bootstrapSelection.region)
-            ? bootstrapSelection.region
-            : pickPreferred(regionIds, canonicalRegion || MAP_VIEW_DEFAULTS.region));
+          : pickPreferred(regionIds, canonicalRegion || MAP_VIEW_DEFAULTS.region);
         setRegion(nextRegion);
 
-        setRun(requestedRun || bootstrapSelection?.run || "latest");
+        setRun(requestedRun || "latest");
         setRuns([]);
         setRunManifest(null);
         setFrameRows([]);
