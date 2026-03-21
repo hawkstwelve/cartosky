@@ -65,16 +65,31 @@ export function getPlaybackBufferPolicy(params: {
 }
 
 export function isWebpDefaultRenderEnabled(): boolean {
-  const envValue = String(
-    import.meta.env.VITE_CARTOSKY_WEBP_DEFAULT_ENABLED ?? import.meta.env.VITE_TWF_V3_WEBP_DEFAULT_ENABLED ?? "",
-  )
-    .trim()
-    .toLowerCase();
+  return readBooleanEnv(
+    import.meta.env.VITE_CARTOSKY_WEBP_DEFAULT_ENABLED ?? import.meta.env.VITE_TWF_V3_WEBP_DEFAULT_ENABLED,
+    true,
+  );
+}
+
+function readBooleanEnv(value: unknown, fallback: boolean): boolean {
+  const envValue = String(value ?? "").trim().toLowerCase();
   if (envValue === "1" || envValue === "true" || envValue === "yes" || envValue === "on") {
     return true;
   }
   if (envValue === "0" || envValue === "false" || envValue === "no" || envValue === "off") {
     return false;
   }
-  return true;
+  return fallback;
+}
+
+export function isTileFirstInitialPaintEnabled(): boolean {
+  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_TILE_FIRST_INITIAL_PAINT, true);
+}
+
+export function isDeferredNonCriticalBootstrapEnabled(): boolean {
+  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_DEFER_NON_CRITICAL_BOOTSTRAP, true);
+}
+
+export function isDeferredPrefetchUntilFirstPaintEnabled(): boolean {
+  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_DEFER_PREFETCH_UNTIL_FIRST_PAINT, true);
 }

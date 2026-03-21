@@ -36,6 +36,9 @@ import {
 import {
   API_ORIGIN,
   getPlaybackBufferPolicy,
+  isDeferredNonCriticalBootstrapEnabled,
+  isDeferredPrefetchUntilFirstPaintEnabled,
+  isTileFirstInitialPaintEnabled,
   isWebpDefaultRenderEnabled,
   MAP_VIEW_DEFAULTS,
   OVERLAY_DEFAULT_OPACITY,
@@ -798,6 +801,9 @@ function buildLegend(meta: LegendMeta | null | undefined, opacity: number): Lege
 
 export default function App() {
   const webpDefaultEnabled = isWebpDefaultRenderEnabled();
+  const tileFirstInitialPaintEnabled = isTileFirstInitialPaintEnabled();
+  const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
+  const deferPrefetchUntilFirstPaintEnabled = isDeferredPrefetchUntilFirstPaintEnabled();
   const viewerLayoutMode = useViewerLayoutMode();
   const isDesktopViewerLayout = viewerLayoutMode === "desktop";
   const initialPermalink = useMemo(() => readPermalink(), []);
@@ -876,6 +882,7 @@ export default function App() {
   const [isMapReady, setIsMapReady] = useState(false);
   const [bootstrapHydrated, setBootstrapHydrated] = useState(false);
   const [permalinkHydrated, setPermalinkHydrated] = useState(false);
+  const [firstWeatherFramePainted, setFirstWeatherFramePainted] = useState(false);
   const [bufferSnapshot, setBufferSnapshot] = useState<BufferSnapshot>({
     totalFrames: 0,
     bufferedCount: 0,
@@ -1703,6 +1710,12 @@ export default function App() {
   useEffect(() => {
     transitionTokenRef.current += 1;
 
+    if (tileFirstInitialPaintEnabled && !firstWeatherFramePainted) {
+      setVisibleRenderMode("tiles");
+      setLoopDisplayHour(null);
+      return;
+    }
+
     if (!canUseLoopPlayback) {
       setVisibleRenderMode("tiles");
       setLoopDisplayHour(null);
@@ -1747,13 +1760,20 @@ export default function App() {
     renderMode,
     visibleRenderMode,
     canUseLoopPlayback,
+    tileFirstInitialPaintEnabled,
+    firstWeatherFramePainted,
     resolvedLoopForecastHour,
     resolveLoopUrlForHour,
     ensureLoopFrameDecoded,
   ]);
 
-  const isLoopPlaybackLocked = renderMode !== "tiles" && canUseLoopPlayback && (isPlaying || isLoopPreloading);
-  const isLoopDisplayActive = visibleRenderMode !== "tiles" && canUseLoopPlayback;
+  const loopPromotionAllowed = !tileFirstInitialPaintEnabled || firstWeatherFramePainted;
+  const isLoopPlaybackLocked =
+    renderMode !== "tiles"
+    && canUseLoopPlayback
+    && loopPromotionAllowed
+    && (isPlaying || isLoopPreloading);
+  const isLoopDisplayActive = visibleRenderMode !== "tiles" && canUseLoopPlayback && loopPromotionAllowed;
   const mapForecastHour = isLoopPlaybackLocked && Number.isFinite(loopBaseForecastHour)
     ? (loopBaseForecastHour as number)
     : forecastHour;
@@ -1940,10 +1960,13 @@ export default function App() {
     const ready = readyFramesRef.current;
     const failed = failedFramesRef.current;
     const inFlight = inFlightFramesRef.current;
-    const maxRequests = isPreloadingForPlay ? 8 : 4;
+    const bootstrapPrefetchBudget = deferPrefetchUntilFirstPaintEnabled && !firstWeatherFramePainted;
+    const maxRequests = isPreloadingForPlay
+      ? (bootstrapPrefetchBudget ? 4 : 8)
+      : (bootstrapPrefetchBudget ? 2 : 4);
     const targetReady = isPreloadingForPlay
       ? frameHours.length
-      : Math.min(frameHours.length, playbackPolicy.bufferTarget);
+      : Math.min(frameHours.length, bootstrapPrefetchBudget ? 2 : playbackPolicy.bufferTarget);
     const activeInFlight = frameHours.filter((fh) => inFlight.has(fh)).slice(0, maxRequests);
     if (ready.size + inFlight.size >= targetReady) {
       return activeInFlight;
@@ -2058,6 +2081,8 @@ export default function App() {
     bufferSnapshot.version,
     playbackPolicy.bufferTarget,
     isPreloadingForPlay,
+    firstWeatherFramePainted,
+    deferPrefetchUntilFirstPaintEnabled,
     isScrubbing,
     scrubRequestedHour,
     scrubCommitIntent,
@@ -2834,6 +2859,7 @@ export default function App() {
     firstViewerFrameTrackedRef.current = true;
     pendingFirstViewerFrameRef.current = false;
     pendingFirstViewerFrameHourRef.current = null;
+    setFirstWeatherFramePainted(true);
     const durationMs = performance.now() - viewerMountedAtRef.current;
     if (!Number.isFinite(durationMs) || durationMs < 0) {
       return;
@@ -3381,18 +3407,17 @@ export default function App() {
         const requestedRegion = initialPermalink.region?.trim();
         const requestedRun = initialPermalink.run?.trim();
 
-        const [capabilitiesData, regionPresetData, anchorData] = await Promise.all([
+        const [capabilitiesData, regionPresetData] = await Promise.all([
           fetchCapabilities({ signal: controller.signal }),
           fetchRegionPresets({ signal: controller.signal }),
-          fetchAnchorFeatureCollection({ signal: controller.signal }).catch(() => null),
         ]);
         if (controller.signal.aborted || generation !== requestGenerationRef.current) {
           return;
         }
 
         setCapabilities(capabilitiesData);
-        setAnchorBaseGeoJson(anchorData);
-        setAnchorDisplayGeoJson(anchorData ? buildInactiveAnchorFeatureCollection(anchorData) : null);
+        setAnchorBaseGeoJson(null);
+        setAnchorDisplayGeoJson(null);
 
         const supportedModelIds = capabilitiesData.supported_models.filter(
           (modelId) => Boolean(capabilitiesData.model_catalog?.[modelId])
@@ -3466,6 +3491,38 @@ export default function App() {
       controller.abort();
     };
   }, [initialPermalink]);
+
+  useEffect(() => {
+    const anchorsReadyToLoad = deferNonCriticalBootstrapEnabled
+      ? (bootstrapHydrated && firstWeatherFramePainted)
+      : bootstrapHydrated;
+    if (!anchorsReadyToLoad) {
+      return;
+    }
+    if (anchorBaseGeoJson) {
+      return;
+    }
+
+    const controller = new AbortController();
+    fetchAnchorFeatureCollection({ signal: controller.signal })
+      .then((anchorData) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setAnchorBaseGeoJson(anchorData);
+        setAnchorDisplayGeoJson(anchorData ? buildInactiveAnchorFeatureCollection(anchorData) : null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        console.warn("[anchors] deferred bootstrap fetch failed", error);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [deferNonCriticalBootstrapEnabled, bootstrapHydrated, firstWeatherFramePainted, anchorBaseGeoJson]);
 
   useEffect(() => {
     if (!model) return;
@@ -3548,6 +3605,9 @@ export default function App() {
       setLoopManifest(null);
       return;
     }
+    if (deferNonCriticalBootstrapEnabled && !firstWeatherFramePainted) {
+      return;
+    }
     const controller = new AbortController();
     const generation = requestGenerationRef.current;
 
@@ -3584,7 +3644,16 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [model, variable, resolvedRunForRequests, hasRenderableSelection, telemetryRunId, region]);
+  }, [
+    model,
+    variable,
+    resolvedRunForRequests,
+    hasRenderableSelection,
+    telemetryRunId,
+    region,
+    deferNonCriticalBootstrapEnabled,
+    firstWeatherFramePainted,
+  ]);
 
   useEffect(() => {
     if (!model || !variable || !hasRenderableSelection) return;
