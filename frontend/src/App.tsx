@@ -1803,6 +1803,7 @@ export default function App() {
     && loopPromotionAllowed
     && (isPlaying || isLoopPreloading);
   const isLoopDisplayActive = visibleRenderMode !== "tiles" && canUseLoopPlayback && loopPromotionAllowed;
+  const shouldEagerlyDecodeLoopFrames = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
   const mapForecastHour = isLoopPlaybackLocked && Number.isFinite(loopBaseForecastHour)
     ? (loopBaseForecastHour as number)
     : forecastHour;
@@ -2742,6 +2743,9 @@ export default function App() {
     const displayHour = loopDisplayHour as number;
     const nextBitmap = getDecodedLoopBitmap(displayHour, visibleRenderMode);
     if (!nextBitmap) {
+      if (loopDisplayBitmap !== null) {
+        setLoopDisplayBitmap(null);
+      }
       return;
     }
     setLoopDisplayBitmap((current) => (current === nextBitmap ? current : nextBitmap));
@@ -2880,6 +2884,9 @@ export default function App() {
     if (!loopDisplayHour) {
       return;
     }
+    if (!shouldEagerlyDecodeLoopFrames || loopDisplayBitmap === null) {
+      return;
+    }
     const pendingVarSwitch = pendingVariableSwitchRef.current;
     if (!pendingVarSwitch) {
       return;
@@ -2912,7 +2919,7 @@ export default function App() {
       meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch, "loop"),
     });
     setVariableSwitchState(null);
-  }, [loopDisplayHour, variable]);
+  }, [loopDisplayHour, variable, shouldEagerlyDecodeLoopFrames, loopDisplayBitmap]);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -2922,8 +2929,8 @@ export default function App() {
     if (!pending) {
       return;
     }
-    const durationMs = performance.now() - pending.startedAt;
     pendingLoopStartMetricRef.current = null;
+    const durationMs = performance.now() - pending.startedAt;
     if (!Number.isFinite(durationMs) || durationMs < 0) {
       return;
     }
@@ -2939,7 +2946,7 @@ export default function App() {
   }, [isPlaying]);
 
   useEffect(() => {
-    if (!isLoopDisplayActive || loopFrameHours.length === 0) {
+    if (!isLoopDisplayActive || !shouldEagerlyDecodeLoopFrames || loopFrameHours.length === 0) {
       return;
     }
 
@@ -3014,6 +3021,7 @@ export default function App() {
     };
   }, [
     isLoopDisplayActive,
+    shouldEagerlyDecodeLoopFrames,
     visibleRenderMode,
     loopFrameHours,
     ensureLoopFrameDecoded,
@@ -3235,6 +3243,12 @@ export default function App() {
           traceMeta: scrubTraceMeta,
         });
 
+        if (!shouldEagerlyDecodeLoopFrames) {
+          setTargetForecastHour(nextHour);
+          setLoopDisplayHour(nextHour);
+          return;
+        }
+
         const readyLoopHour = hasDecodedLoopFrame(nextHour, visibleRenderMode)
           ? nextHour
           : findNearestDecodedLoopScrubHour(nextHour, visibleRenderMode);
@@ -3312,6 +3326,9 @@ export default function App() {
         if (useExactScrubSelection) {
           setTargetForecastHour(nextHour);
           setLoopDisplayHour(nextHour);
+        } else if (!shouldEagerlyDecodeLoopFrames) {
+          setTargetForecastHour(nextHour);
+          setLoopDisplayHour(nextHour);
         } else {
           const readyLoopHour = findNearestDecodedLoopScrubHour(nextHour, visibleRenderMode);
           if (Number.isFinite(readyLoopHour)) {
@@ -3334,6 +3351,7 @@ export default function App() {
       findNearestReadyTileScrubHour,
       findNearestDecodedLoopScrubHour,
       startPendingFrameMetric,
+      shouldEagerlyDecodeLoopFrames,
     ]
   );
 
@@ -3350,6 +3368,12 @@ export default function App() {
       && !Number.isFinite(pendingVarSwitch.loopDecodeRequestedAt)
     ) {
       pendingVarSwitch.loopDecodeRequestedAt = performance.now();
+    }
+
+    if (!shouldEagerlyDecodeLoopFrames) {
+      loopDisplayDecodeTokenRef.current += 1;
+      setLoopDisplayHour(resolvedLoopForecastHour);
+      return;
     }
 
     loopDisplayDecodeTokenRef.current += 1;
@@ -3371,7 +3395,14 @@ export default function App() {
       .catch(() => {
         // keep previous display hour when decode fails.
       });
-  }, [isLoopDisplayActive, resolvedLoopForecastHour, visibleRenderMode, ensureLoopFrameDecoded, variable]);
+  }, [
+    isLoopDisplayActive,
+    resolvedLoopForecastHour,
+    visibleRenderMode,
+    ensureLoopFrameDecoded,
+    variable,
+    shouldEagerlyDecodeLoopFrames,
+  ]);
 
   useEffect(() => {
     const controller = new AbortController();
