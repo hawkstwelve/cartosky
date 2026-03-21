@@ -176,6 +176,13 @@ type PendingVariableSwitchMetric = {
   warmSourceAtVisible: TileReadySource | null;
 };
 
+type VariableSwitchState = {
+  fromVariable: string;
+  toVariable: string;
+  startedAt: number;
+  visualState: "holding_old" | "warming_new" | "promoting_new";
+};
+
 type ScrubPhase0aSnapshot = {
   liveStartedAt: number | null;
   liveEventCount: number;
@@ -824,6 +831,8 @@ export default function App() {
   const [region, setRegion] = useState(MAP_VIEW_DEFAULTS.region);
   const [run, setRun] = useState("latest");
   const [variable, setVariable] = useState("");
+  const [visualVariable, setVisualVariable] = useState("");
+  const [variableSwitchState, setVariableSwitchState] = useState<VariableSwitchState | null>(null);
   const [forecastHour, setForecastHour] = useState(Number.POSITIVE_INFINITY);
   const [targetForecastHour, setTargetForecastHour] = useState(Number.POSITIVE_INFINITY);
   const [, setZoomBucket] = useState(Math.round(MAP_VIEW_DEFAULTS.zoom));
@@ -1022,6 +1031,7 @@ export default function App() {
   );
   const selectedVariableDefaultFh = selectedCapabilityVarMap.get(variable)?.defaultFh ?? null;
   const selectedVariableKind = selectedCapabilityVarMap.get(variable)?.kind ?? null;
+  const visualVariableKind = selectedCapabilityVarMap.get(visualVariable)?.kind ?? selectedVariableKind;
   const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
   const overlayFadeOutZoom = useMemo(() => {
     const start = toNumberOrNull(selectedModelConstraints.overlay_fade_out_zoom_start);
@@ -1900,7 +1910,7 @@ export default function App() {
   }, [frameHours, forecastHour]);
 
   const contourGeoJsonUrl = useMemo(() => {
-    if (!hasRenderableSelection || variable !== "tmp2m") {
+    if (!hasRenderableSelection || visualVariable !== "tmp2m") {
       return null;
     }
     const frameMeta = extractLegendMeta(currentFrame);
@@ -1911,11 +1921,11 @@ export default function App() {
     return buildContourUrl({
       model,
       run: resolvedRunForRequests,
-      varKey: variable,
+      varKey: visualVariable,
       fh: mapForecastHour,
       key: "iso32f",
     });
-  }, [currentFrame, hasRenderableSelection, model, resolvedRunForRequests, variable, mapForecastHour]);
+  }, [currentFrame, hasRenderableSelection, model, resolvedRunForRequests, visualVariable, mapForecastHour]);
 
   const legend = useMemo(() => {
     const normalizedMeta = extractLegendMeta(currentFrame) ?? extractLegendMeta(frameRows[0] ?? null);
@@ -2327,6 +2337,15 @@ export default function App() {
       ) {
         pendingVarSwitch.firstTargetRequestAt = performance.now();
         pendingVarSwitch.expectedTileUrl = loadingTileUrl;
+        setVariableSwitchState((current) => {
+          if (!current || current.toVariable !== variable) {
+            return current;
+          }
+          return {
+            ...current,
+            visualState: "warming_new",
+          };
+        });
       }
 
       setMapLoadingTileUrl(loadingTileUrl);
@@ -2357,6 +2376,20 @@ export default function App() {
   useEffect(() => {
     requestGenerationRef.current += 1;
   }, [model, run, variable]);
+
+  useEffect(() => {
+    if (!variableSwitchState) {
+      if (visualVariable !== variable) {
+        setVisualVariable(variable);
+      }
+      return;
+    }
+
+    if (variableSwitchState.toVariable !== variable) {
+      setVariableSwitchState(null);
+      setVisualVariable(variable);
+    }
+  }, [variable, visualVariable, variableSwitchState]);
 
   const finalizePendingFrameMetric = useCallback((reason: "tile" | "loop") => {
     const pending = pendingFrameMetricRef.current;
@@ -2522,6 +2555,8 @@ export default function App() {
   // We do NOT clear on variable change because that's what starts the metric.
   useEffect(() => {
     pendingVariableSwitchRef.current = null;
+    setVariableSwitchState(null);
+    setVisualVariable(variable);
   }, [model, resolvedRunForRequests]);
 
   useEffect(() => {
@@ -2845,6 +2880,16 @@ export default function App() {
       return;
     }
     pendingVariableSwitchRef.current = null;
+    setVariableSwitchState((current) => {
+      if (!current || current.toVariable !== variable) {
+        return null;
+      }
+      return {
+        ...current,
+        visualState: "promoting_new",
+      };
+    });
+    setVisualVariable(variable);
     if (!Number.isFinite(pendingVarSwitch.firstVisibleAt)) {
       pendingVarSwitch.firstVisibleAt = performance.now();
     }
@@ -2861,7 +2906,8 @@ export default function App() {
       region_id: pendingVarSwitch.regionId,
       meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch, "loop"),
     });
-  }, [loopDisplayHour]);
+    setVariableSwitchState(null);
+  }, [loopDisplayHour, variable]);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -3493,7 +3539,9 @@ export default function App() {
     setTargetForecastHour(Number.POSITIVE_INFINITY);
     setLoopDisplayHour(null);
     setLoadedFramesKey("");
-  }, [model, run, variable]);
+    setVariableSwitchState(null);
+    setVisualVariable(variable);
+  }, [model, run]);
 
   useEffect(() => {
     if (!model || !variable || !hasRenderableSelection) {
@@ -3557,6 +3605,15 @@ export default function App() {
           if (pendingVarSwitch && !Number.isFinite(pendingVarSwitch.framesResolvedAt)) {
             pendingVarSwitch.framesResolvedAt = performance.now();
           }
+          setVariableSwitchState((current) => {
+            if (!current || current.toVariable !== variable) {
+              return current;
+            }
+            return {
+              ...current,
+              visualState: "warming_new",
+            };
+          });
           setFrameRows((prevRows) => mergeManifestRowsWithPrevious(rows, prevRows));
           setLoadedFramesKey(`${model}:${resolvedRunForRequests}:${variable}`);
           const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
@@ -3574,6 +3631,15 @@ export default function App() {
         if (pendingVarSwitch && !Number.isFinite(pendingVarSwitch.framesResolvedAt)) {
           pendingVarSwitch.framesResolvedAt = performance.now();
         }
+        setVariableSwitchState((current) => {
+          if (!current || current.toVariable !== variable) {
+            return current;
+          }
+          return {
+            ...current,
+            visualState: "warming_new",
+          };
+        });
         setFrameRows(rows);
         setLoadedFramesKey(`${model}:${resolvedRunForRequests}:${variable}`);
         const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
@@ -3585,6 +3651,7 @@ export default function App() {
           setLoadedFramesKey("");
           setError(err instanceof Error ? err.message : "Failed to load frames");
           setFrameRows([]);
+          setVariableSwitchState(null);
         }
       }
     }
@@ -4100,6 +4167,16 @@ export default function App() {
     const pendingVarSwitch = pendingVariableSwitchRef.current;
     if (pendingVarSwitch && readyTileUrl === tileUrl) {
       pendingVariableSwitchRef.current = null;
+      setVariableSwitchState((current) => {
+        if (!current || current.toVariable !== variable) {
+          return null;
+        }
+        return {
+          ...current,
+          visualState: "promoting_new",
+        };
+      });
+      setVisualVariable(variable);
       if (!Number.isFinite(pendingVarSwitch.firstTargetReadyAt)) {
         pendingVarSwitch.firstTargetReadyAt = performance.now();
       }
@@ -4122,6 +4199,7 @@ export default function App() {
           meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch, "tiles"),
         });
       }
+      setVariableSwitchState(null);
     }
     const pending = pendingFrameMetricRef.current;
     if (pending?.renderTarget === "tiles" && pending.expectedTileUrl === readyTileUrl) {
@@ -4145,6 +4223,7 @@ export default function App() {
     renderMode,
     tileUrl,
     visibleRenderMode,
+    variable,
     region,
     forecastHour,
     finalizePendingFrameMetric,
@@ -4177,9 +4256,13 @@ export default function App() {
   }, [variable, telemetryRunId, region, forecastHour]);
 
   const handleVariableChange = useCallback((nextVariable: string) => {
+    if (!nextVariable || nextVariable === variable) {
+      return;
+    }
+    const fromVariable = visualVariable || variable;
     pendingVariableSwitchRef.current = {
       startedAt: performance.now(),
-      fromVariableId: variable || null,
+      fromVariableId: fromVariable || null,
       toVariableId: nextVariable,
       modelId: model || null,
       runId: telemetryRunId,
@@ -4194,6 +4277,12 @@ export default function App() {
       warmAtVisible: null,
       warmSourceAtVisible: null,
     };
+    setVariableSwitchState({
+      fromVariable,
+      toVariable: nextVariable,
+      startedAt: performance.now(),
+      visualState: "holding_old",
+    });
     setVariable(nextVariable);
     trackUsageEvent({
       event_name: "variable_selected",
@@ -4203,7 +4292,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, telemetryRunId, region, forecastHour]);
+  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour]);
 
   useEffect(() => {
     if (isPlaying && isScrubbing) {
@@ -4220,6 +4309,16 @@ export default function App() {
     }
     setScrubCommitIntent(null);
   }, [forecastHour, scrubCommitIntent]);
+
+  const isVariableSwitching = useMemo(() => {
+    if (!variableSwitchState) {
+      return false;
+    }
+    if (variableSwitchState.toVariable !== variable) {
+      return false;
+    }
+    return variableSwitchState.visualState !== "promoting_new";
+  }, [variableSwitchState, variable]);
 
   // When the user starts scrubbing, cancel any pending buffering-recovery auto-restart
   // so it cannot preempt the in-progress scrub and re-lock the slider.
@@ -4521,13 +4620,13 @@ export default function App() {
           region={region}
           regionViews={regionViews}
           opacity={opacity}
-          mode={isLoopDisplayActive ? "scrub" : (isPlaying ? "autoplay" : "scrub")}
-          variable={variable}
-          variableKind={selectedVariableKind}
+          mode={isLoopDisplayActive ? "scrub" : (isPlaying ? "autoplay" : (isVariableSwitching ? "variable-switch" : "scrub"))}
+          variable={visualVariable || variable}
+          variableKind={visualVariableKind}
           overlayFadeOutZoom={overlayFadeOutZoom}
           basemapMode={basemapMode}
           prefetchTileUrls={prefetchTileUrls}
-          crossfade={false}
+          crossfade={isVariableSwitching}
           loopImageUrl={activeLoopUrl}
           loopImageBbox={loopManifest?.bbox ?? null}
           loopActive={isLoopDisplayActive}

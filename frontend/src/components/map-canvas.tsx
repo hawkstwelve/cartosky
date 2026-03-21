@@ -55,6 +55,7 @@ export type TileReadyMeta = {
 
 const SCRUB_SWAP_TIMEOUT_MS = 650;
 const AUTOPLAY_SWAP_TIMEOUT_MS = 1500;
+const VARIABLE_SWITCH_SWAP_TIMEOUT_MS = 1100;
 const SETTLE_TIMEOUT_MS = 1200;
 const CONTINUOUS_CROSSFADE_MS = 120;
 const MICRO_CROSSFADE_MS = 140;
@@ -106,7 +107,7 @@ const TRANSPARENT_PIXEL_DATA_URL =
 const DEFAULT_LOOP_BBOX: [number, number, number, number] = [-134.0, 24.0, -60.0, 55.0];
 
 type OverlayBuffer = "a" | "b";
-type PlaybackMode = "autoplay" | "scrub";
+type PlaybackMode = "autoplay" | "scrub" | "variable-switch";
 const GRAY_LOW_END_VARIABLES = new Set(["precip_total", "snowfall_total", "qpf6h", "wspd10m", "wgst10m"]);
 
 function sourceId(buffer: OverlayBuffer): string {
@@ -1190,7 +1191,13 @@ export function MapCanvas({
       timeoutMsOverride?: number
     ) => {
       const timeoutMs = timeoutMsOverride
-        ?? (modeValue === "autoplay" ? AUTOPLAY_SWAP_TIMEOUT_MS : SCRUB_SWAP_TIMEOUT_MS);
+        ?? (
+          modeValue === "autoplay"
+            ? AUTOPLAY_SWAP_TIMEOUT_MS
+            : modeValue === "variable-switch"
+              ? VARIABLE_SWITCH_SWAP_TIMEOUT_MS
+              : SCRUB_SWAP_TIMEOUT_MS
+        );
       let done = false;
       let timeoutId: number | null = null;
 
