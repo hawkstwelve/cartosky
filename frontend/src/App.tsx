@@ -4460,10 +4460,12 @@ export default function App() {
   const bufferStatusText = isScrubLoading
     ? "Loading frame"
     : `Loading frames ${preloadBufferedCount}/${preloadTotal}`;
-  const preferLoopImagePresentation = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
-  const activeLoopHour = preferLoopImagePresentation
+  const preferLoopImagePlaybackPresentation = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
+  const preferLoopImageScrubPresentation = isScrubbing;
+  const preferLoopImagePresentation = preferLoopImagePlaybackPresentation || preferLoopImageScrubPresentation;
+  const activeLoopHour = preferLoopImagePlaybackPresentation
     ? resolvedLoopForecastHour
-    : (loopDisplayHour ?? forecastHour);
+    : (preferLoopImageScrubPresentation ? (loopDisplayHour ?? resolvedLoopForecastHour) : (loopDisplayHour ?? forecastHour));
   const activeLoopBitmap = preferLoopImagePresentation ? null : loopDisplayBitmap;
   const activeLoopUrl = isLoopDisplayActive
     ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
