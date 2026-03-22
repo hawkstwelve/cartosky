@@ -898,6 +898,16 @@ export default function App() {
   const [frameStatusMessage, setFrameStatusMessage] = useState<string | null>(null);
   const [mapViewTick, setMapViewTick] = useState(0);
   const [isMapReady, setIsMapReady] = useState(false);
+
+  const isVariableSwitching = useMemo(() => {
+    if (!variableSwitchState) {
+      return false;
+    }
+    if (variableSwitchState.toVariable !== variable) {
+      return false;
+    }
+    return variableSwitchState.visualState !== "promoting_new";
+  }, [variableSwitchState, variable]);
   const [bootstrapHydrated, setBootstrapHydrated] = useState(false);
   const [permalinkHydrated, setPermalinkHydrated] = useState(false);
   const [firstWeatherFramePainted, setFirstWeatherFramePainted] = useState(false);
@@ -1503,6 +1513,27 @@ export default function App() {
     [loopCacheKey]
   );
 
+  const startForegroundLoopFrameDecode = useCallback(
+    (fh: number, mode: RenderModeState) => {
+      if (mode === "tiles") {
+        return;
+      }
+      loopDisplayDecodeAbortRef.current?.abort();
+      const controller = new AbortController();
+      loopDisplayDecodeAbortRef.current = controller;
+      ensureLoopFrameDecoded(fh, mode, controller.signal)
+        .catch(() => {
+          // Foreground interaction decode is best-effort warming for the exact frame.
+        })
+        .finally(() => {
+          if (loopDisplayDecodeAbortRef.current === controller) {
+            loopDisplayDecodeAbortRef.current = null;
+          }
+        });
+    },
+    [ensureLoopFrameDecoded]
+  );
+
   const countAheadReadyLoopFrames = useCallback(
     (
       currentHour: number,
@@ -1796,7 +1827,7 @@ export default function App() {
       return;
     }
 
-    const shouldPromoteViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
+    const shouldPromoteViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing || isVariableSwitching;
     if (shouldPromoteViaImageSource) {
       setVisibleRenderMode(renderMode);
       setLoopDisplayHour(resolvedLoopForecastHour);
@@ -1833,6 +1864,8 @@ export default function App() {
     isPlaying,
     isLoopPreloading,
     isLoopAutoplayBuffering,
+    isScrubbing,
+    isVariableSwitching,
   ]);
 
   const loopPromotionAllowed = !tileFirstInitialPaintEnabled || firstWeatherFramePainted;
@@ -2525,6 +2558,8 @@ export default function App() {
     inFlightStartedAtRef.current.clear();
     readyLatencyStatsRef.current = { totalMs: 0, count: 0 };
     autoplayPrimedRef.current = false;
+    loopDisplayDecodeAbortRef.current?.abort();
+    loopDisplayDecodeAbortRef.current = null;
     // Cancel any pending coalesced snapshot RAF and reset the equality baseline so
     // the first update after reset is never incorrectly skipped.
     if (bufferSnapshotRafRef.current !== null) {
@@ -2917,6 +2952,40 @@ export default function App() {
           finalizePendingFrameMetric("loop");
         }
 
+        const pendingVarSwitch = pendingVariableSwitchRef.current;
+        if (pendingVarSwitch && pendingVarSwitch.toVariableId === variable) {
+          pendingVariableSwitchRef.current = null;
+          setVariableSwitchState((current) => {
+            if (!current || current.toVariable !== variable) {
+              return null;
+            }
+            return {
+              ...current,
+              visualState: "promoting_new",
+            };
+          });
+          setVisualVariable(variable);
+          if (!Number.isFinite(pendingVarSwitch.firstTargetReadyAt)) {
+            pendingVarSwitch.firstTargetReadyAt = visibleAt;
+          }
+          pendingVarSwitch.firstVisibleAt = visibleAt;
+          pendingVarSwitch.warmAtVisible = hasDecodedLoopFrame(commit.displayHour, commit.renderMode);
+          pendingVarSwitch.warmSourceAtVisible = null;
+          const variableSwitchMs = visibleAt - pendingVarSwitch.startedAt;
+          if (Number.isFinite(variableSwitchMs) && variableSwitchMs >= 0) {
+            trackPerfEvent({
+              event_name: "variable_switch",
+              duration_ms: variableSwitchMs,
+              model_id: pendingVarSwitch.modelId,
+              variable_id: pendingVarSwitch.toVariableId,
+              run_id: pendingVarSwitch.runId,
+              region_id: pendingVarSwitch.regionId,
+              meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch, "loop"),
+            });
+          }
+          setVariableSwitchState(null);
+        }
+
         const pendingLoopStart = pendingLoopStartMetricRef.current;
         if (isPlaying && pendingLoopStart && commit.displayHour !== pendingLoopStart.forecastHour) {
           pendingLoopStartMetricRef.current = null;
@@ -2951,8 +3020,10 @@ export default function App() {
     telemetryRunId,
     region,
     finalizePendingFrameMetric,
+    hasDecodedLoopFrame,
     isPlaying,
     trackFirstViewerFrame,
+    variable,
   ]);
 
   useEffect(() => {
@@ -2967,49 +3038,6 @@ export default function App() {
     }
     trackFirstViewerFrame(pendingFirstViewerFrameHourRef.current);
   }, [hasRenderableSelection, loadedFramesKey, trackFirstViewerFrame]);
-
-  // Finalize variable_switch in loop mode: fires when the first loop frame for the
-  // new variable becomes displayable.
-  useEffect(() => {
-    if (!loopDisplayHour) {
-      return;
-    }
-    if (!shouldEagerlyDecodeLoopFrames || loopDisplayBitmap === null) {
-      return;
-    }
-    const pendingVarSwitch = pendingVariableSwitchRef.current;
-    if (!pendingVarSwitch) {
-      return;
-    }
-    pendingVariableSwitchRef.current = null;
-    setVariableSwitchState((current) => {
-      if (!current || current.toVariable !== variable) {
-        return null;
-      }
-      return {
-        ...current,
-        visualState: "promoting_new",
-      };
-    });
-    setVisualVariable(variable);
-    if (!Number.isFinite(pendingVarSwitch.firstVisibleAt)) {
-      pendingVarSwitch.firstVisibleAt = performance.now();
-    }
-    const durationMs = performance.now() - pendingVarSwitch.startedAt;
-    if (!Number.isFinite(durationMs) || durationMs < 0) {
-      return;
-    }
-    trackPerfEvent({
-      event_name: "variable_switch",
-      duration_ms: durationMs,
-      model_id: pendingVarSwitch.modelId,
-      variable_id: pendingVarSwitch.toVariableId,
-      run_id: pendingVarSwitch.runId,
-      region_id: pendingVarSwitch.regionId,
-      meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch, "loop"),
-    });
-    setVariableSwitchState(null);
-  }, [loopDisplayHour, variable, shouldEagerlyDecodeLoopFrames, loopDisplayBitmap]);
 
   useEffect(() => {
     if (!isLoopDisplayActive || !shouldEagerlyDecodeLoopFrames || loopFrameHours.length === 0) {
@@ -3396,6 +3424,13 @@ export default function App() {
           traceMeta: scrubTraceMeta,
         });
 
+        if (resolveLoopUrlForHour(nextHour, visibleRenderMode)) {
+          setTargetForecastHour(nextHour);
+          setLoopDisplayHour(nextHour);
+          startForegroundLoopFrameDecode(nextHour, visibleRenderMode);
+          return;
+        }
+
         if (!shouldEagerlyDecodeLoopFrames) {
           setTargetForecastHour(nextHour);
           setLoopDisplayHour(nextHour);
@@ -3410,23 +3445,7 @@ export default function App() {
           setTargetForecastHour(resolvedReadyHour);
           setLoopDisplayHour(resolvedReadyHour);
         }
-
-        loopDisplayDecodeTokenRef.current += 1;
-        const decodeToken = loopDisplayDecodeTokenRef.current;
-        ensureLoopFrameDecoded(nextHour, visibleRenderMode)
-          .then((ready) => {
-            if (!ready) {
-              return;
-            }
-            if (decodeToken !== loopDisplayDecodeTokenRef.current) {
-              return;
-            }
-            setLoopDisplayHour(nextHour);
-            setTargetForecastHour(nextHour);
-          })
-          .catch(() => {
-            // best-effort decode path for scrub commit; keep previous visible frame on failure.
-          });
+        startForegroundLoopFrameDecode(nextHour, visibleRenderMode);
         return;
       }
 
@@ -3476,10 +3495,11 @@ export default function App() {
         const nextHour = loopFrameHours.length > 0
           ? nearestFrame(loopFrameHours, requested)
           : requested;
-        if (useExactScrubSelection) {
+        if (resolveLoopUrlForHour(nextHour, visibleRenderMode)) {
           setTargetForecastHour(nextHour);
           setLoopDisplayHour(nextHour);
-        } else if (!shouldEagerlyDecodeLoopFrames) {
+          startForegroundLoopFrameDecode(nextHour, visibleRenderMode);
+        } else if (useExactScrubSelection || !shouldEagerlyDecodeLoopFrames) {
           setTargetForecastHour(nextHour);
           setLoopDisplayHour(nextHour);
         } else {
@@ -3501,8 +3521,10 @@ export default function App() {
       ensureLoopFrameDecoded,
       visibleRenderMode,
       hasDecodedLoopFrame,
+      resolveLoopUrlForHour,
       findNearestReadyTileScrubHour,
       findNearestDecodedLoopScrubHour,
+      startForegroundLoopFrameDecode,
       startPendingFrameMetric,
       shouldEagerlyDecodeLoopFrames,
     ]
@@ -3523,10 +3545,23 @@ export default function App() {
       pendingVarSwitch.loopDecodeRequestedAt = performance.now();
     }
 
-    const shouldCommitViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
+    if (
+      pendingVarSwitch
+      && pendingVarSwitch.toVariableId === variable
+      && !Number.isFinite(pendingVarSwitch.firstTargetRequestAt)
+      && resolveLoopUrlForHour(resolvedLoopForecastHour, visibleRenderMode)
+    ) {
+      pendingVarSwitch.firstTargetRequestAt = performance.now();
+    }
+
+    const shouldCommitViaImageSource =
+      isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing || isVariableSwitching;
     if (shouldCommitViaImageSource && resolveLoopUrlForHour(resolvedLoopForecastHour, visibleRenderMode)) {
       loopDisplayDecodeTokenRef.current += 1;
       setLoopDisplayHour(resolvedLoopForecastHour);
+      if (isScrubbing || isVariableSwitching) {
+        startForegroundLoopFrameDecode(resolvedLoopForecastHour, visibleRenderMode);
+      }
       return;
     }
 
@@ -3565,7 +3600,10 @@ export default function App() {
     isPlaying,
     isLoopPreloading,
     isLoopAutoplayBuffering,
+    isScrubbing,
+    isVariableSwitching,
     resolveLoopUrlForHour,
+    startForegroundLoopFrameDecode,
   ]);
 
   useEffect(() => {
@@ -4555,16 +4593,6 @@ export default function App() {
     setScrubCommitIntent(null);
   }, [forecastHour, scrubCommitIntent]);
 
-  const isVariableSwitching = useMemo(() => {
-    if (!variableSwitchState) {
-      return false;
-    }
-    if (variableSwitchState.toVariable !== variable) {
-      return false;
-    }
-    return variableSwitchState.visualState !== "promoting_new";
-  }, [variableSwitchState, variable]);
-
   // When the user starts scrubbing, cancel any pending buffering-recovery auto-restart
   // so it cannot preempt the in-progress scrub and re-lock the slider.
   useEffect(() => {
@@ -4626,10 +4654,16 @@ export default function App() {
     : `Loading frames ${preloadBufferedCount}/${preloadTotal}`;
   const preferLoopImagePlaybackPresentation = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
   const preferLoopImageScrubPresentation = isScrubbing;
-  const preferLoopImagePresentation = preferLoopImagePlaybackPresentation || preferLoopImageScrubPresentation;
+  const preferLoopImageVariableSwitchPresentation = isVariableSwitching;
+  const preferLoopImagePresentation =
+    preferLoopImagePlaybackPresentation
+    || preferLoopImageScrubPresentation
+    || preferLoopImageVariableSwitchPresentation;
   const activeLoopHour = preferLoopImagePlaybackPresentation
     ? resolvedLoopForecastHour
-    : (preferLoopImageScrubPresentation ? (loopDisplayHour ?? resolvedLoopForecastHour) : (loopDisplayHour ?? forecastHour));
+    : ((preferLoopImageScrubPresentation || preferLoopImageVariableSwitchPresentation)
+      ? (loopDisplayHour ?? resolvedLoopForecastHour)
+      : (loopDisplayHour ?? forecastHour));
   const activeLoopBitmap = preferLoopImagePresentation ? null : loopDisplayBitmap;
   const activeLoopUrl = isLoopDisplayActive
     ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
