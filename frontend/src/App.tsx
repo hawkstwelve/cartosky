@@ -3018,14 +3018,35 @@ export default function App() {
 
     let cancelled = false;
     const inFlight = new Set<number>();
+    const inFlightLane = new Map<number, "critical" | "idle">();
     const controllers = new Map<number, AbortController>();
 
-    const launchDecode = (fh: number) => {
+    const countInFlightForLane = (lane: "critical" | "idle"): number => {
+      let count = 0;
+      for (const activeLane of inFlightLane.values()) {
+        if (activeLane === lane) {
+          count += 1;
+        }
+      }
+      return count;
+    };
+
+    const abortIdleDecodes = () => {
+      for (const [fh, lane] of inFlightLane.entries()) {
+        if (lane !== "idle") {
+          continue;
+        }
+        controllers.get(fh)?.abort();
+      }
+    };
+
+    const launchDecode = (fh: number, lane: "critical" | "idle") => {
       if (cancelled || inFlight.has(fh)) {
         return;
       }
       const controller = new AbortController();
       inFlight.add(fh);
+      inFlightLane.set(fh, lane);
       controllers.set(fh, controller);
       ensureLoopFrameDecoded(fh, visibleRenderMode, controller.signal)
         .catch(() => {
@@ -3033,6 +3054,7 @@ export default function App() {
         })
         .finally(() => {
           inFlight.delete(fh);
+          inFlightLane.delete(fh);
           controllers.delete(fh);
         });
     };
@@ -3055,8 +3077,13 @@ export default function App() {
         return;
       }
 
-      const candidates: number[] = [];
-      for (let index = currentIndex + 1; index < loopFrameHours.length && candidates.length < targetAhead * 2; index += 1) {
+      const shortAheadTarget = Math.min(loopPlaybackPolicy.shortAheadTarget, targetAhead);
+      const criticalCandidates: number[] = [];
+      const idleCandidates: number[] = [];
+      const criticalEndIndex = Math.min(loopFrameHours.length - 1, currentIndex + shortAheadTarget);
+      const idleEndIndex = Math.min(loopFrameHours.length - 1, currentIndex + targetAhead);
+
+      for (let index = currentIndex + 1; index <= criticalEndIndex; index += 1) {
         const fh = loopFrameHours[index];
         if (hasDecodedLoopFrame(fh, visibleRenderMode)) {
           continue;
@@ -3064,15 +3091,56 @@ export default function App() {
         if (inFlight.has(fh)) {
           continue;
         }
-        candidates.push(fh);
+        criticalCandidates.push(fh);
       }
 
-      const concurrencyLimit = isLoopAutoplayBuffering
-        ? loopPlaybackPolicy.maxCriticalInFlight
-        : loopPlaybackPolicy.maxIdleInFlight;
-      const availableSlots = Math.max(0, concurrencyLimit - inFlight.size);
-      for (const fh of candidates.slice(0, availableSlots)) {
-        launchDecode(fh);
+      for (let index = criticalEndIndex + 1; index <= idleEndIndex; index += 1) {
+        const fh = loopFrameHours[index];
+        if (hasDecodedLoopFrame(fh, visibleRenderMode)) {
+          continue;
+        }
+        if (inFlight.has(fh)) {
+          continue;
+        }
+        idleCandidates.push(fh);
+      }
+
+      const suspendIdleLane = isLoopAutoplayBuffering
+        || isScrubbing
+        || Boolean(
+          variableSwitchState
+          && variableSwitchState.toVariable === variable
+          && variableSwitchState.visualState !== "promoting_new"
+        );
+
+      if (suspendIdleLane || criticalCandidates.length > 0) {
+        abortIdleDecodes();
+      }
+
+      const availableCriticalSlots = Math.max(
+        0,
+        loopPlaybackPolicy.maxCriticalInFlight - countInFlightForLane("critical"),
+      );
+      if (availableCriticalSlots > 0) {
+        for (const fh of criticalCandidates.slice(0, availableCriticalSlots)) {
+          launchDecode(fh, "critical");
+        }
+      }
+
+      if (suspendIdleLane || criticalCandidates.length > 0) {
+        return;
+      }
+
+      const availableIdleSlots = Math.max(
+        0,
+        loopPlaybackPolicy.maxIdleInFlight - countInFlightForLane("idle"),
+      );
+      if (availableIdleSlots <= 0) {
+        return;
+      }
+
+      for (const fh of idleCandidates.slice(0, availableIdleSlots)) {
+        launchDecode(fh, "idle");
       }
     };
 
@@ -3098,7 +3166,11 @@ export default function App() {
     isLoopAutoplayBuffering,
     loopPlaybackPolicy.maxCriticalInFlight,
     loopPlaybackPolicy.maxIdleInFlight,
+    loopPlaybackPolicy.shortAheadTarget,
     loopPlaybackPolicy.targetWarmAhead,
+    isScrubbing,
+    variableSwitchState,
+    variable,
   ]);
 
   // Playback ticker. Reads forecastHourRef so the interval stays stable across

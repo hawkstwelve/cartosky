@@ -31,6 +31,7 @@ export type PlaybackBufferPolicy = {
 export type LoopPlaybackPolicy = {
   minStartBuffer: number;
   minAheadWhilePlaying: number;
+  shortAheadTarget: number;
   targetWarmAhead: number;
   maxCriticalInFlight: number;
   maxIdleInFlight: number;
@@ -112,14 +113,19 @@ export function getLoopPlaybackPolicy(params: {
 
   const resolvedMinStartBuffer = Math.max(1, Math.min(minStartBuffer, safeFrameCount));
   const resolvedMinAheadWhilePlaying = Math.max(1, Math.min(minAheadWhilePlaying, safeFrameCount));
-  const resolvedTargetWarmAhead = Math.max(
+  const resolvedShortAheadTarget = Math.max(
     resolvedMinAheadWhilePlaying,
+    Math.min(tickMs >= 350 ? 3 : 4, safeFrameCount),
+  );
+  const resolvedTargetWarmAhead = Math.max(
+    resolvedShortAheadTarget,
     Math.min(targetWarmAhead, safeFrameCount),
   );
 
   return {
     minStartBuffer: resolvedMinStartBuffer,
     minAheadWhilePlaying: resolvedMinAheadWhilePlaying,
+    shortAheadTarget: resolvedShortAheadTarget,
     targetWarmAhead: resolvedTargetWarmAhead,
     maxCriticalInFlight,
     maxIdleInFlight,
