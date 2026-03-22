@@ -108,8 +108,8 @@ export function getLoopPlaybackPolicy(params: {
     targetWarmAhead = Math.max(4, Math.min(6, totalFrames));
   }
 
-  const maxCriticalInFlight = totalFrames >= 60 ? 5 : 4;
-  const maxIdleInFlight = totalFrames >= 36 ? 3 : 2;
+  const maxCriticalInFlight = totalFrames >= 72 ? 6 : totalFrames >= 36 ? 5 : 4;
+  const maxIdleInFlight = totalFrames >= 24 ? 2 : 1;
 
   const resolvedMinStartBuffer = Math.max(1, Math.min(minStartBuffer, safeFrameCount));
   const resolvedMinAheadWhilePlaying = Math.max(1, Math.min(minAheadWhilePlaying, safeFrameCount));

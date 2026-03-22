@@ -87,6 +87,22 @@ function viewportSignatureFromState(view: { lat: number; lon: number; z: number 
   return `${zoomBucket}|${latBucket}|${lonBucket}`;
 }
 
+function recentMedianSample(samples: readonly number[], maxSamples = 12): number | null {
+  if (samples.length === 0 || maxSamples <= 0) {
+    return null;
+  }
+  const recent = samples.slice(-Math.min(maxSamples, samples.length)).filter((value) => Number.isFinite(value) && value > 0);
+  if (recent.length === 0) {
+    return null;
+  }
+  recent.sort((left, right) => left - right);
+  const middle = Math.floor(recent.length / 2);
+  if (recent.length % 2 === 1) {
+    return recent[middle];
+  }
+  return (recent[middle - 1] + recent[middle]) / 2;
+}
+
 type RenderModeState = "webp_tier0" | "webp_tier1" | "tiles";
 
 type BufferSnapshot = {
@@ -3045,6 +3061,7 @@ export default function App() {
     }
 
     let cancelled = false;
+    let scheduleTimer: number | null = null;
     const inFlight = new Set<number>();
     const inFlightLane = new Map<number, "critical" | "idle">();
     const controllers = new Map<number, AbortController>();
@@ -3068,6 +3085,16 @@ export default function App() {
       }
     };
 
+    const queueSchedulePrefetch = (delayMs: number) => {
+      if (cancelled || scheduleTimer !== null) {
+        return;
+      }
+      scheduleTimer = window.setTimeout(() => {
+        scheduleTimer = null;
+        schedulePrefetch();
+      }, delayMs);
+    };
+
     const launchDecode = (fh: number, lane: "critical" | "idle") => {
       if (cancelled || inFlight.has(fh)) {
         return;
@@ -3084,6 +3111,7 @@ export default function App() {
           inFlight.delete(fh);
           inFlightLane.delete(fh);
           controllers.delete(fh);
+          queueSchedulePrefetch(0);
         });
     };
 
@@ -3104,6 +3132,26 @@ export default function App() {
       if (targetAhead <= 0) {
         return;
       }
+
+      const recentReadyMs = recentMedianSample(loopDecodeReadySamplesRef.current);
+      const recentDecodeMs = recentMedianSample(loopDecodeOnlySamplesRef.current);
+      const cachePressure = webpDecodeCacheBudgetBytes > 0
+        ? loopDecodedCacheBytesRef.current / webpDecodeCacheBudgetBytes
+        : 0;
+      const highCachePressure = cachePressure >= 0.82;
+      const slowCriticalDecode =
+        (Number.isFinite(recentReadyMs) && (recentReadyMs as number) >= AUTOPLAY_TICK_MS * 0.8)
+        || (Number.isFinite(recentDecodeMs) && (recentDecodeMs as number) >= AUTOPLAY_TICK_MS * 0.45);
+      const criticalConcurrencyCap = Math.max(
+        2,
+        Math.min(
+          6,
+          loopPlaybackPolicy.maxCriticalInFlight + (!highCachePressure && (isLoopAutoplayBuffering || slowCriticalDecode) ? 1 : 0),
+        ),
+      );
+      const idleConcurrencyCap = highCachePressure
+        ? 0
+        : Math.min(loopPlaybackPolicy.maxIdleInFlight, Math.max(1, criticalConcurrencyCap - 3));
 
       const shortAheadTarget = Math.min(loopPlaybackPolicy.shortAheadTarget, targetAhead);
       const criticalCandidates: number[] = [];
@@ -3135,6 +3183,7 @@ export default function App() {
 
       const suspendIdleLane = isLoopAutoplayBuffering
         || isScrubbing
+        || highCachePressure
         || Boolean(
           variableSwitchState
           && variableSwitchState.toVariable === variable
@@ -3147,7 +3196,7 @@ export default function App() {
 
       const availableCriticalSlots = Math.max(
         0,
-        loopPlaybackPolicy.maxCriticalInFlight - countInFlightForLane("critical"),
+        criticalConcurrencyCap - countInFlightForLane("critical"),
       );
       if (availableCriticalSlots > 0) {
         for (const fh of criticalCandidates.slice(0, availableCriticalSlots)) {
@@ -3161,7 +3210,7 @@ export default function App() {
 
       const availableIdleSlots = Math.max(
         0,
-        loopPlaybackPolicy.maxIdleInFlight - countInFlightForLane("idle"),
+        idleConcurrencyCap - countInFlightForLane("idle"),
       );
       if (availableIdleSlots <= 0) {
         return;
@@ -3173,11 +3222,18 @@ export default function App() {
     };
 
     schedulePrefetch();
-    const interval = window.setInterval(schedulePrefetch, 350);
+    const interval = window.setInterval(
+      schedulePrefetch,
+      isPlaying || isLoopAutoplayBuffering ? 180 : 320,
+    );
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      if (scheduleTimer !== null) {
+        window.clearTimeout(scheduleTimer);
+        scheduleTimer = null;
+      }
       for (const controller of controllers.values()) {
         controller.abort();
       }
@@ -3187,6 +3243,7 @@ export default function App() {
   }, [
     isLoopDisplayActive,
     shouldEagerlyDecodeLoopFrames,
+    isPlaying,
     visibleRenderMode,
     loopFrameHours,
     ensureLoopFrameDecoded,
@@ -3199,6 +3256,7 @@ export default function App() {
     isScrubbing,
     variableSwitchState,
     variable,
+    webpDecodeCacheBudgetBytes,
   ]);
 
   // Playback ticker. Reads forecastHourRef so the interval stays stable across
