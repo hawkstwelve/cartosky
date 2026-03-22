@@ -1475,6 +1475,19 @@ export default function App() {
     [loopCacheKey]
   );
 
+  const isLoopFrameReadyForPresentation = useCallback(
+    (fh: number, mode: RenderModeState, presentationPath: "image-url" | "canvas"): boolean => {
+      if (mode === "tiles") {
+        return false;
+      }
+      if (presentationPath === "image-url") {
+        return Boolean(resolveLoopUrlForHour(fh, mode));
+      }
+      return hasDecodedLoopFrame(fh, mode);
+    },
+    [resolveLoopUrlForHour, hasDecodedLoopFrame]
+  );
+
   const getDecodedLoopBitmap = useCallback(
     (fh: number, mode: RenderModeState): ImageBitmap | null => {
       if (mode === "tiles") {
@@ -1491,7 +1504,12 @@ export default function App() {
   );
 
   const countAheadReadyLoopFrames = useCallback(
-    (currentHour: number, mode: RenderModeState, maxAhead: number): number => {
+    (
+      currentHour: number,
+      mode: RenderModeState,
+      maxAhead: number,
+      presentationPath: "image-url" | "canvas" = "canvas"
+    ): number => {
       if (mode === "tiles" || loopFrameHours.length === 0 || maxAhead <= 0) {
         return 0;
       }
@@ -1504,14 +1522,14 @@ export default function App() {
       const endIndex = Math.min(loopFrameHours.length - 1, currentIndex + maxAhead);
       for (let index = currentIndex + 1; index <= endIndex; index += 1) {
         const fh = loopFrameHours[index];
-        if (!hasDecodedLoopFrame(fh, mode)) {
+        if (!isLoopFrameReadyForPresentation(fh, mode, presentationPath)) {
           break;
         }
         ready += 1;
       }
       return ready;
     },
-    [loopFrameHours, hasDecodedLoopFrame]
+    [loopFrameHours, isLoopFrameReadyForPresentation]
   );
 
   const canUseLoopPlayback = useMemo(() => {
@@ -1778,9 +1796,16 @@ export default function App() {
       return;
     }
 
+    const shouldPromoteViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
+    if (shouldPromoteViaImageSource) {
+      setVisibleRenderMode(renderMode);
+      setLoopDisplayHour(resolvedLoopForecastHour);
+      return;
+    }
+
     // No signal passed to ensureLoopFrameDecoded: the decode always runs to
     // completion so its result is stored in the LRU cache for immediate reuse
-    // by playback or scrub paths. The token gates whether we actually commit
+    // by paused-path presentation. The token gates whether we actually commit
     // the visible mode change — preventing stale results from being applied.
     const token = transitionTokenRef.current;
     ensureLoopFrameDecoded(resolvedLoopForecastHour, renderMode)
@@ -1805,6 +1830,9 @@ export default function App() {
     resolvedLoopForecastHour,
     resolveLoopUrlForHour,
     ensureLoopFrameDecoded,
+    isPlaying,
+    isLoopPreloading,
+    isLoopAutoplayBuffering,
   ]);
 
   const loopPromotionAllowed = !tileFirstInitialPaintEnabled || firstWeatherFramePainted;
@@ -2610,9 +2638,9 @@ export default function App() {
     };
 
     // Attempt to start playback early once the loop playback policy's minimum
-    // decoded frames exist ahead of the current position. The remaining in-flight
-    // decodes continue to completion via processNext() and warm the LRU cache so
-    // the playback ticker never stalls waiting for frames.
+    // presentable frames exist ahead of the current position. For the image-source
+    // path, URL-presentable readiness is enough to begin playback; bitmap decode
+    // becomes a warm-path accelerator rather than the universal gate.
     let earlyStarted = false;
     const tryEarlyStart = (): boolean => {
       if (earlyStarted) return false;
@@ -2623,7 +2651,7 @@ export default function App() {
       if (neededAhead <= 0) return false;
       let consecutiveAhead = 0;
       for (let i = currentIdx + 1; i < loopFrameHours.length && consecutiveAhead < neededAhead; i++) {
-        if (readySet.has(loopFrameHours[i])) {
+        if (isLoopFrameReadyForPresentation(loopFrameHours[i], renderMode, "image-url")) {
           consecutiveAhead++;
         } else {
           break;
@@ -2644,6 +2672,16 @@ export default function App() {
       setIsPlaying(true);
       return true;
     };
+
+    if (tryEarlyStart()) {
+      return () => {
+        loopPreloadTokenRef.current += 1;
+        if (progressRafId !== null) {
+          window.cancelAnimationFrame(progressRafId);
+          progressRafId = null;
+        }
+      };
+    }
 
     const mark = (fh: number, ok: boolean) => {
       if (token !== loopPreloadTokenRef.current) {
@@ -2733,6 +2771,7 @@ export default function App() {
     renderMode,
     forecastHour,
     ensureLoopFrameDecoded,
+    isLoopFrameReadyForPresentation,
     loopPlaybackPolicy.maxCriticalInFlight,
     loopPlaybackPolicy.minStartBuffer,
   ]);
@@ -3063,9 +3102,9 @@ export default function App() {
   ]);
 
   // Playback ticker. Reads forecastHourRef so the interval stays stable across
-  // frame advances — no teardown/rebuild every 250ms. If the next frame isn't
-  // decoded yet, the tick is silently skipped (the current frame holds) instead
-  // of entering a pause/resume cycle that causes visible button jitter.
+  // frame advances — no teardown/rebuild every 250ms. For image-source playback,
+  // URL-presentable readiness is enough to advance; bitmap decode remains a warm
+  // path accelerator rather than the gate for visible progression.
   useEffect(() => {
     if (!isPlaying || renderMode === "tiles" || loopFrameHours.length === 0) {
       return;
@@ -3091,11 +3130,11 @@ export default function App() {
       const nextHour = loopFrameHours[nextIndex];
       const remainingAhead = Math.max(0, loopFrameHours.length - 1 - currentIndex);
       const minAheadRequired = Math.min(loopPlaybackPolicy.minAheadWhilePlaying, remainingAhead);
-      const readyAhead = countAheadReadyLoopFrames(currentHour, visibleRenderMode, minAheadRequired);
+      const readyAhead = countAheadReadyLoopFrames(currentHour, visibleRenderMode, minAheadRequired, "image-url");
       const shouldBuffer = minAheadRequired > 0 && readyAhead < minAheadRequired;
       setIsLoopAutoplayBuffering((current) => (current === shouldBuffer ? current : shouldBuffer));
 
-      if (hasDecodedLoopFrame(nextHour, visibleRenderMode)) {
+      if (isLoopFrameReadyForPresentation(nextHour, visibleRenderMode, "image-url")) {
         lastLoopAdvanceRef.current = Date.now();
         setTargetForecastHour(nextHour);
       } else {
@@ -3144,7 +3183,7 @@ export default function App() {
     loopFrameHours,
     visibleRenderMode,
     countAheadReadyLoopFrames,
-    hasDecodedLoopFrame,
+    isLoopFrameReadyForPresentation,
     loopPlaybackPolicy.minAheadWhilePlaying,
   ]);
 
@@ -3412,6 +3451,13 @@ export default function App() {
       pendingVarSwitch.loopDecodeRequestedAt = performance.now();
     }
 
+    const shouldCommitViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
+    if (shouldCommitViaImageSource && resolveLoopUrlForHour(resolvedLoopForecastHour, visibleRenderMode)) {
+      loopDisplayDecodeTokenRef.current += 1;
+      setLoopDisplayHour(resolvedLoopForecastHour);
+      return;
+    }
+
     if (!shouldEagerlyDecodeLoopFrames) {
       loopDisplayDecodeTokenRef.current += 1;
       setLoopDisplayHour(resolvedLoopForecastHour);
@@ -3444,6 +3490,10 @@ export default function App() {
     ensureLoopFrameDecoded,
     variable,
     shouldEagerlyDecodeLoopFrames,
+    isPlaying,
+    isLoopPreloading,
+    isLoopAutoplayBuffering,
+    resolveLoopUrlForHour,
   ]);
 
   useEffect(() => {
