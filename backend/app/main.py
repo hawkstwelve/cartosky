@@ -290,6 +290,42 @@ _twf_rate_lock = threading.Lock()
 _twf_ip_windows: dict[str, deque[float]] = {}
 _twf_session_windows: dict[str, deque[float]] = {}
 _twf_last_prune_monotonic = 0.0
+_LOOP_REQUEST_SOURCE_LOG_EVERY = 100
+_loop_request_counter_lock = threading.Lock()
+_loop_request_source_totals: dict[str, int] = {"cache": 0, "generated": 0, "rendered": 0}
+_loop_request_source_by_target: dict[str, dict[tuple[str, str, int], int]] = {
+    "cache": {},
+    "generated": {},
+    "rendered": {},
+}
+
+
+def _record_loop_request_source(source: str, *, model: str, var: str, tier: int) -> None:
+    if source not in _loop_request_source_totals:
+        return
+    with _loop_request_counter_lock:
+        _loop_request_source_totals[source] = _loop_request_source_totals.get(source, 0) + 1
+        key = (str(model or "").strip().lower(), str(var or "").strip().lower(), int(tier))
+        per_source = _loop_request_source_by_target.setdefault(source, {})
+        per_source[key] = per_source.get(key, 0) + 1
+
+        total = sum(_loop_request_source_totals.values())
+        if total <= 0 or total % _LOOP_REQUEST_SOURCE_LOG_EVERY != 0:
+            return
+
+        top_targets = {
+            current_source: sorted(entries.items(), key=lambda item: item[1], reverse=True)[:4]
+            for current_source, entries in _loop_request_source_by_target.items()
+        }
+
+    logger.info(
+        "Loop WebP request sources total=%d cache=%d generated=%d rendered=%d top_targets=%s",
+        total,
+        _loop_request_source_totals.get("cache", 0),
+        _loop_request_source_totals.get("generated", 0),
+        _loop_request_source_totals.get("rendered", 0),
+        top_targets,
+    )
 
 
 def _frames_cache_control(run: str, *, run_complete: bool) -> str:
@@ -3138,6 +3174,7 @@ def get_loop_webp(
 
     legacy_path = _legacy_loop_webp_path(model, resolved, var, fh, tier=tier)
     if legacy_path is not None:
+        _record_loop_request_source("cache", model=model, var=var, tier=tier)
         cache_control = CACHE_HIT if run != "latest" else CACHE_MISS
         return FileResponse(
             path=str(legacy_path),
@@ -3148,6 +3185,8 @@ def get_loop_webp(
     out_path = _loop_webp_path(model, resolved, var, fh, tier=tier)
     if out_path is None:
         return Response(status_code=404, headers={"Cache-Control": CACHE_MISS})
+
+    out_path_preexisting = out_path.is_file()
 
     if not _ensure_loop_webp(
         cog_path,
@@ -3163,6 +3202,7 @@ def get_loop_webp(
         if tier == 1:
             tier0_legacy = _legacy_loop_webp_path(model, resolved, var, fh, tier=0)
             if tier0_legacy is not None:
+                _record_loop_request_source("cache", model=model, var=var, tier=0)
                 return FileResponse(
                     path=str(tier0_legacy),
                     media_type="image/webp",
@@ -3170,20 +3210,28 @@ def get_loop_webp(
                 )
 
             tier0_out = _loop_webp_path(model, resolved, var, fh, tier=0)
-            if tier0_out is not None and _ensure_loop_webp(
-                cog_path,
-                tier0_out,
-                model_id=model,
-                var_key=var,
-                tier=0,
-                value_cog_path=value_cog_path,
-                run_id=resolved,
-            ):
-                return FileResponse(
-                    path=str(tier0_out),
-                    media_type="image/webp",
-                    headers={"Cache-Control": CACHE_MISS},
-                )
+            if tier0_out is not None:
+                tier0_out_preexisting = tier0_out.is_file()
+                if _ensure_loop_webp(
+                    cog_path,
+                    tier0_out,
+                    model_id=model,
+                    var_key=var,
+                    tier=0,
+                    value_cog_path=value_cog_path,
+                    run_id=resolved,
+                ):
+                    _record_loop_request_source(
+                        "cache" if tier0_out_preexisting else "generated",
+                        model=model,
+                        var=var,
+                        tier=0,
+                    )
+                    return FileResponse(
+                        path=str(tier0_out),
+                        media_type="image/webp",
+                        headers={"Cache-Control": CACHE_MISS},
+                    )
 
             tier0_bytes = _render_loop_webp_bytes(
                 cog_path,
@@ -3194,6 +3242,7 @@ def get_loop_webp(
                 run_id=resolved,
             )
             if tier0_bytes is not None:
+                _record_loop_request_source("rendered", model=model, var=var, tier=0)
                 return Response(content=tier0_bytes, media_type="image/webp", headers={"Cache-Control": CACHE_MISS})
 
         content = _render_loop_webp_bytes(
@@ -3205,10 +3254,12 @@ def get_loop_webp(
             run_id=resolved,
         )
         if content is not None:
+            _record_loop_request_source("rendered", model=model, var=var, tier=tier)
             return Response(content=content, media_type="image/webp", headers={"Cache-Control": CACHE_MISS})
 
         return Response(status_code=404, headers={"Cache-Control": CACHE_MISS})
 
+    _record_loop_request_source("cache" if out_path_preexisting else "generated", model=model, var=var, tier=tier)
     cache_control = CACHE_HIT if run != "latest" else CACHE_MISS
     return FileResponse(
         path=str(out_path),

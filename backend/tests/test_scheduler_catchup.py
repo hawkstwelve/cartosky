@@ -11,14 +11,34 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services import scheduler as scheduler_module
+from app.models.base import ModelCapabilities, VariableCapability
 
 
 class _FakePlugin:
     id = "hrrr"
+    capabilities = None
 
     def scheduled_fhs_for_var(self, var_key: str, cycle_hour: int) -> list[int]:
         del var_key, cycle_hour
         return [0, 1, 2, 3, 4]
+
+
+class _FakeCapabilityPlugin(_FakePlugin):
+    capabilities = ModelCapabilities(
+        model_id="hrrr",
+        name="HRRR",
+        ui_defaults={"default_var_key": "radar_ptype"},
+        variable_catalog={
+            "tmp2m": VariableCapability(var_key="tmp2m", name="TMP", default_fh=0),
+            "radar_ptype": VariableCapability(var_key="radar_ptype", name="PType", default_fh=2),
+        },
+    )
+
+    def get_var_capability(self, var_key: str) -> VariableCapability | None:
+        return self.capabilities.variable_catalog.get(var_key)
+
+    def normalize_var_id(self, var_id: str) -> str:
+        return str(var_id).strip().lower()
 
 
 class _FakeGFSPlugin:
@@ -31,6 +51,13 @@ class _FakeGFSPlugin:
 
 def test_resolve_promotion_fhs_uses_model_schedule() -> None:
     assert scheduler_module._resolve_promotion_fhs(_FakeGFSPlugin(), ["tmp2m"], 18) == (0, 3, 6)
+
+
+def test_resolve_loop_prewarm_targets_use_default_var_and_default_fh() -> None:
+    plugin = _FakeCapabilityPlugin()
+
+    assert scheduler_module._resolve_loop_prewarm_var(plugin, ["tmp2m", "radar_ptype"], ["tmp2m"]) == "radar_ptype"
+    assert scheduler_module._resolve_loop_prewarm_fhs(plugin, "radar_ptype", 12, limit=3) == (2, 3, 4)
 
 
 def test_process_run_uses_resolved_promotion_fhs(
@@ -483,7 +510,7 @@ def test_process_run_skips_loop_pregen_for_incomplete_run(
 
     built: set[tuple[str, int]] = set()
     available_up_to = {"tmp2m": 2}
-    loop_pregen_calls = 0
+    loop_pregen_calls: list[dict[str, object]] = []
 
     def fake_frame_artifacts_exist(
         data_root: Path,
@@ -515,9 +542,8 @@ def test_process_run_skips_loop_pregen_for_incomplete_run(
         return ("tmp2m", 2) in built
 
     def fake_loop_pregen(*args: object, **kwargs: object) -> None:
-        del args, kwargs
-        nonlocal loop_pregen_calls
-        loop_pregen_calls += 1
+        del args
+        loop_pregen_calls.append(dict(kwargs))
 
     monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
     monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
@@ -548,7 +574,10 @@ def test_process_run_skips_loop_pregen_for_incomplete_run(
         loop_tier1_fixed_w=2400,
     )
 
-    assert loop_pregen_calls == 0
+    assert len(loop_pregen_calls) == 1
+    assert loop_pregen_calls[0]["variables"] == ("tmp2m",)
+    assert loop_pregen_calls[0]["tiers"] == (0,)
+    assert loop_pregen_calls[0]["forecast_hours"] == (0, 1, 2, 3, 4)
 
 
 def test_process_run_pregenerates_loop_cache_when_run_is_complete(
@@ -560,7 +589,7 @@ def test_process_run_pregenerates_loop_cache_when_run_is_complete(
 
     built: set[tuple[str, int]] = set()
     available_up_to = {"tmp2m": 4}
-    loop_pregen_calls = 0
+    loop_pregen_calls: list[dict[str, object]] = []
 
     def fake_frame_artifacts_exist(
         data_root: Path,
@@ -592,9 +621,8 @@ def test_process_run_pregenerates_loop_cache_when_run_is_complete(
         return ("tmp2m", 2) in built
 
     def fake_loop_pregen(*args: object, **kwargs: object) -> None:
-        del args, kwargs
-        nonlocal loop_pregen_calls
-        loop_pregen_calls += 1
+        del args
+        loop_pregen_calls.append(dict(kwargs))
 
     monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
     monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
@@ -625,7 +653,12 @@ def test_process_run_pregenerates_loop_cache_when_run_is_complete(
         loop_tier1_fixed_w=2400,
     )
 
-    assert loop_pregen_calls == 1
+    assert len(loop_pregen_calls) == 2
+    assert loop_pregen_calls[0]["variables"] == ("tmp2m",)
+    assert loop_pregen_calls[0]["tiers"] == (0,)
+    assert loop_pregen_calls[0]["forecast_hours"] == (0, 1, 2, 3, 4)
+    assert "variables" not in loop_pregen_calls[1]
+    assert "tiers" not in loop_pregen_calls[1]
 
 
 def _write_sidecar(tmp_path: Path, run_id: str, var_id: str, fh: int, *, quality: str, quality_flags: list[str]) -> None:

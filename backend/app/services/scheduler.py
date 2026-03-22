@@ -122,6 +122,7 @@ ENV_DERIVE_BUNDLE = ("CARTOSKY_DERIVE_BUNDLE", "CARTOSKY_V3_DERIVE_BUNDLE", "TWF
 DEFAULT_LOOP_PREGENERATE_ENABLED = True
 DEFAULT_LOOP_CACHE_ROOT = DEFAULT_DATA_ROOT / "loop_cache"
 DEFAULT_LOOP_PREGENERATE_WORKERS = 4
+DEFAULT_LOOP_PREWARM_FRAME_COUNT = 8
 DEFAULT_PROGRESS_PUBLISH_MIN_NEW_FRAMES = 12
 DEFAULT_LOOP_WEBP_QUALITY = 82
 DEFAULT_LOOP_WEBP_MAX_DIM = 1600
@@ -887,6 +888,110 @@ def _resolve_promotion_fhs(plugin: Any, primary_vars: list[str], cycle_hour: int
     return tuple(int(fh) for fh in DEFAULT_PROMOTION_FHS)
 
 
+def _resolve_loop_prewarm_var(plugin: Any, vars_to_build: list[str], primary_vars: list[str]) -> str | None:
+    normalized_available: list[str] = []
+    seen: set[str] = set()
+
+    def _normalize(candidate: object) -> str | None:
+        if not isinstance(candidate, str):
+            return None
+        trimmed = candidate.strip().lower()
+        if not trimmed:
+            return None
+        normalize_var_id = getattr(plugin, "normalize_var_id", None)
+        if callable(normalize_var_id):
+            trimmed = str(normalize_var_id(trimmed)).strip().lower()
+        return trimmed or None
+
+    for collection in (vars_to_build, primary_vars):
+        for item in collection:
+            normalized = _normalize(item)
+            if normalized is None or normalized in seen:
+                continue
+            normalized_available.append(normalized)
+            seen.add(normalized)
+
+    if not normalized_available:
+        return None
+
+    candidates: list[str] = []
+    capabilities = getattr(plugin, "capabilities", None)
+    ui_defaults = getattr(capabilities, "ui_defaults", None)
+    if isinstance(ui_defaults, dict):
+        default_var = _normalize(ui_defaults.get("default_var_key"))
+        if default_var is not None:
+            candidates.append(default_var)
+
+    for item in primary_vars:
+        normalized = _normalize(item)
+        if normalized is not None:
+            candidates.append(normalized)
+    for item in vars_to_build:
+        normalized = _normalize(item)
+        if normalized is not None:
+            candidates.append(normalized)
+
+    fallback = _normalize(DEFAULT_PRIMARY_VAR)
+    if fallback is not None:
+        candidates.append(fallback)
+
+    for candidate in candidates:
+        if candidate in seen:
+            return candidate
+    return normalized_available[0]
+
+
+def _resolve_loop_prewarm_fhs(plugin: Any, var_id: str, cycle_hour: int, *, limit: int) -> tuple[int, ...]:
+    if not var_id or limit <= 0:
+        return ()
+
+    scheduled: list[int] = []
+    seen: set[int] = set()
+    try:
+        if hasattr(plugin, "scheduled_fhs_for_var"):
+            raw_fhs = plugin.scheduled_fhs_for_var(var_id, cycle_hour)
+        else:
+            raw_fhs = plugin.target_fhs(cycle_hour)
+    except Exception:
+        raw_fhs = []
+
+    for raw in raw_fhs:
+        try:
+            fh = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if fh < 0 or fh in seen:
+            continue
+        seen.add(fh)
+        scheduled.append(fh)
+
+    if not scheduled:
+        return ()
+
+    default_fh: int | None = None
+    get_var_capability = getattr(plugin, "get_var_capability", None)
+    if callable(get_var_capability):
+        capability = get_var_capability(var_id)
+        raw_default_fh = getattr(capability, "default_fh", None)
+        if isinstance(raw_default_fh, (int, float)) and np.isfinite(raw_default_fh):
+            default_fh = int(raw_default_fh)
+
+    pivot_index = 0
+    if default_fh is not None:
+        pivot_index = min(
+            range(len(scheduled)),
+            key=lambda idx: (abs(scheduled[idx] - default_fh), scheduled[idx]),
+        )
+
+    forward = scheduled[pivot_index:pivot_index + limit]
+    if len(forward) >= min(limit, len(scheduled)):
+        return tuple(forward)
+
+    needed = min(limit, len(scheduled)) - len(forward)
+    backfill_start = max(0, pivot_index - needed)
+    return tuple(scheduled[backfill_start:pivot_index] + forward)
+
+
 def _promote_run(data_root: Path, model: str, run_id: str) -> None:
     stage_run = data_root / "staging" / model / run_id
     if not stage_run.is_dir():
@@ -1317,10 +1422,17 @@ def _pregenerate_loop_webp_for_run(
     tier1_quality: int,
     tier1_max_dim: int,
     tier1_fixed_w: int,
+    variables: Iterable[str] | None = None,
+    forecast_hours: Iterable[int] | None = None,
+    tiers: Iterable[int] | None = None,
 ) -> tuple[int, int]:
     published_run = data_root / "published" / model / run_id
     if not published_run.is_dir():
         return 0, 0
+
+    allowed_variables = {str(item).strip().lower() for item in (variables or []) if str(item).strip()}
+    allowed_fhs = {int(item) for item in (forecast_hours or [])}
+    allowed_tiers = {int(item) for item in (tiers or [])}
 
     tier_specs = (
         (0, int(tier0_quality), int(tier0_max_dim), int(tier0_fixed_w)),
@@ -1329,11 +1441,18 @@ def _pregenerate_loop_webp_for_run(
 
     jobs: list[tuple[str, Path, Path | None, Path, int, int, int, int]] = []
     for var_dir in sorted([p for p in published_run.iterdir() if p.is_dir()]):
-        variable = var_dir.name
+        variable = var_dir.name.strip().lower()
+        if allowed_variables and variable not in allowed_variables:
+            continue
         for cog_path in sorted(var_dir.glob("fh*.rgba.cog.tif")):
             fh = cog_path.name.split(".")[0]
+            fh_int = int(fh.removeprefix("fh"))
+            if allowed_fhs and fh_int not in allowed_fhs:
+                continue
             value_cog_path = var_dir / f"{fh}.val.cog.tif"
             for tier, quality, max_dim, fixed_w in tier_specs:
+                if allowed_tiers and tier not in allowed_tiers:
+                    continue
                 out_path = loop_cache_root / model / run_id / variable / f"tier{tier}" / f"{fh}.loop.webp"
                 if out_path.is_file():
                     continue
@@ -1343,7 +1462,7 @@ def _pregenerate_loop_webp_for_run(
         return 0, 0
 
     logger.info(
-        "Loop pre-generate start: model=%s run=%s jobs=%d workers=%d tier0=(q=%d,max=%d) tier1=(q=%d,max=%d) root=%s",
+        "Loop pre-generate start: model=%s run=%s jobs=%d workers=%d tier0=(q=%d,max=%d) tier1=(q=%d,max=%d) vars=%s fhs=%s tiers=%s root=%s",
         model,
         run_id,
         len(jobs),
@@ -1352,6 +1471,9 @@ def _pregenerate_loop_webp_for_run(
         tier0_max_dim,
         tier1_quality,
         tier1_max_dim,
+        sorted(allowed_variables) if allowed_variables else None,
+        sorted(allowed_fhs) if allowed_fhs else None,
+        sorted(allowed_tiers) if allowed_tiers else None,
         loop_cache_root,
     )
 
@@ -1444,6 +1566,13 @@ def _process_run(
         DEFAULT_PROGRESS_PUBLISH_MIN_NEW_FRAMES,
         min_value=1,
     )
+    loop_prewarm_var = _resolve_loop_prewarm_var(plugin, vars_to_build, primary_vars)
+    loop_prewarm_fhs = _resolve_loop_prewarm_fhs(
+        plugin,
+        loop_prewarm_var or "",
+        cycle_hour,
+        limit=DEFAULT_LOOP_PREWARM_FRAME_COUNT,
+    )
     published_once = False
     built_ok_at_last_publish = -1
     rebuild_attempts: dict[tuple[str, str, int], int] = {}
@@ -1459,20 +1588,38 @@ def _process_run(
             plugin=plugin,
         )
         _write_latest_pointer(data_root, model_id, run_id)
-        if loop_pregenerate_enabled and pregenerate_loops:
-            _pregenerate_loop_webp_for_run(
-                data_root=data_root,
-                model=model_id,
-                run_id=run_id,
-                loop_cache_root=loop_cache_root,
-                workers=loop_workers,
-                tier0_quality=loop_tier0_quality,
-                tier0_max_dim=loop_tier0_max_dim,
-                tier0_fixed_w=loop_tier0_fixed_w,
-                tier1_quality=loop_tier1_quality,
-                tier1_max_dim=loop_tier1_max_dim,
-                tier1_fixed_w=loop_tier1_fixed_w,
-            )
+        if loop_pregenerate_enabled:
+            if pregenerate_loops:
+                _pregenerate_loop_webp_for_run(
+                    data_root=data_root,
+                    model=model_id,
+                    run_id=run_id,
+                    loop_cache_root=loop_cache_root,
+                    workers=loop_workers,
+                    tier0_quality=loop_tier0_quality,
+                    tier0_max_dim=loop_tier0_max_dim,
+                    tier0_fixed_w=loop_tier0_fixed_w,
+                    tier1_quality=loop_tier1_quality,
+                    tier1_max_dim=loop_tier1_max_dim,
+                    tier1_fixed_w=loop_tier1_fixed_w,
+                )
+            elif loop_prewarm_var and loop_prewarm_fhs:
+                _pregenerate_loop_webp_for_run(
+                    data_root=data_root,
+                    model=model_id,
+                    run_id=run_id,
+                    loop_cache_root=loop_cache_root,
+                    workers=loop_workers,
+                    tier0_quality=loop_tier0_quality,
+                    tier0_max_dim=loop_tier0_max_dim,
+                    tier0_fixed_w=loop_tier0_fixed_w,
+                    tier1_quality=loop_tier1_quality,
+                    tier1_max_dim=loop_tier1_max_dim,
+                    tier1_fixed_w=loop_tier1_fixed_w,
+                    variables=(loop_prewarm_var,),
+                    forecast_hours=loop_prewarm_fhs,
+                    tiers=(0,),
+                )
         logger.info(
             "Published run snapshot: run=%s model=%s reason=%s built=%d/%d",
             run_id,
