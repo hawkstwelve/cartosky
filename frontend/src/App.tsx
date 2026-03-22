@@ -2055,11 +2055,18 @@ export default function App() {
     setBufferSnapshot(snapshot);
   }, [frameHours, forecastHour]);
 
+  const displayedOverlayVariable = isLoopDisplayActive ? (visualVariable || variable) : variable;
+  const displayedOverlayVariableKind = isLoopDisplayActive ? visualVariableKind : selectedVariableKind;
+
   const contourGeoJsonUrl = useMemo(() => {
-    if (!hasRenderableSelection || visualVariable !== "tmp2m") {
+    if (!firstWeatherFramePainted) {
       return null;
     }
-    const frameMeta = extractLegendMeta(currentFrame);
+    if (!hasRenderableSelection || displayedOverlayVariable !== "tmp2m") {
+      return null;
+    }
+    const contourFrame = frameByHour.get(mapForecastHour) ?? currentFrame;
+    const frameMeta = extractLegendMeta(contourFrame);
     const contourSpec = frameMeta?.contours?.iso32f;
     if (!contourSpec) {
       return null;
@@ -2067,11 +2074,20 @@ export default function App() {
     return buildContourUrl({
       model,
       run: resolvedRunForRequests,
-      varKey: visualVariable,
+      varKey: displayedOverlayVariable,
       fh: mapForecastHour,
       key: "iso32f",
     });
-  }, [currentFrame, hasRenderableSelection, model, resolvedRunForRequests, visualVariable, mapForecastHour]);
+  }, [
+    currentFrame,
+    displayedOverlayVariable,
+    firstWeatherFramePainted,
+    frameByHour,
+    hasRenderableSelection,
+    mapForecastHour,
+    model,
+    resolvedRunForRequests,
+  ]);
 
   const legend = useMemo(() => {
     const normalizedMeta = extractLegendMeta(currentFrame) ?? extractLegendMeta(frameRows[0] ?? null);
@@ -3556,7 +3572,6 @@ export default function App() {
         if (resolveLoopUrlForHour(nextHour, visibleRenderMode)) {
           setTargetForecastHour(nextHour);
           setLoopDisplayHour(nextHour);
-          startForegroundLoopFrameDecode(nextHour, visibleRenderMode);
         } else if (useExactScrubSelection || !shouldEagerlyDecodeLoopFrames) {
           setTargetForecastHour(nextHour);
           setLoopDisplayHour(nextHour);
@@ -4960,9 +4975,9 @@ export default function App() {
           region={region}
           regionViews={regionViews}
           opacity={opacity}
-          mode={isLoopDisplayActive ? "scrub" : (isPlaying ? "autoplay" : (isVariableSwitching ? "variable-switch" : "scrub"))}
-          variable={visualVariable || variable}
-          variableKind={visualVariableKind}
+          mode={isPlaying ? "autoplay" : (isVariableSwitching ? "variable-switch" : "scrub")}
+          variable={displayedOverlayVariable}
+          variableKind={displayedOverlayVariableKind}
           overlayFadeOutZoom={overlayFadeOutZoom}
           basemapMode={basemapMode}
           prefetchTileUrls={prefetchTileUrls}
