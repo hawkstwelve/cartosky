@@ -3817,9 +3817,6 @@ export default function App() {
       setLoopManifest(null);
       return;
     }
-    if (deferNonCriticalBootstrapEnabled && !firstWeatherFramePainted) {
-      return;
-    }
     const controller = new AbortController();
     const generation = requestGenerationRef.current;
 
@@ -3863,8 +3860,6 @@ export default function App() {
     hasRenderableSelection,
     telemetryRunId,
     region,
-    deferNonCriticalBootstrapEnabled,
-    firstWeatherFramePainted,
   ]);
 
   useEffect(() => {
