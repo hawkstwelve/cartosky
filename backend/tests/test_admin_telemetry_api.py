@@ -96,6 +96,73 @@ async def test_perf_telemetry_ingest_and_admin_summary(client: httpx.AsyncClient
     assert body["metrics"]["frame_change"]["target_ms"] == 250.0
 
 
+async def test_perf_telemetry_summary_supports_phase1_loop_metrics(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    payloads = [
+        {
+            "event_name": "loop_decode_to_commit",
+            "duration_ms": 42.0,
+            "session_id": "viewer-session-1",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "run_id": "20260308_00z",
+            "region_id": "conus",
+            "forecast_hour": 3,
+            "device_type": "desktop",
+            "viewport_bucket": "xl",
+            "page": "/viewer",
+        },
+        {
+            "event_name": "loop_commit_to_visible",
+            "duration_ms": 18.0,
+            "session_id": "viewer-session-1",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "run_id": "20260308_00z",
+            "region_id": "conus",
+            "forecast_hour": 3,
+            "device_type": "desktop",
+            "viewport_bucket": "xl",
+            "page": "/viewer",
+        },
+    ]
+
+    for payload in payloads:
+        response = await client.post(
+            "/api/v4/telemetry/perf",
+            cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+            json=payload,
+        )
+        assert response.status_code == 204
+
+    summary = await client.get(
+        "/api/v4/admin/performance/summary?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert summary.status_code == 200
+    body = summary.json()["metrics"]
+    assert body["loop_decode_to_commit"] == {
+        "count": 1,
+        "avg_ms": 42.0,
+        "min_ms": 42.0,
+        "max_ms": 42.0,
+        "p50_ms": 42.0,
+        "p95_ms": 42.0,
+        "target_ms": 120.0,
+    }
+    assert body["loop_commit_to_visible"] == {
+        "count": 1,
+        "avg_ms": 18.0,
+        "min_ms": 18.0,
+        "max_ms": 18.0,
+        "p50_ms": 18.0,
+        "p95_ms": 18.0,
+        "target_ms": 80.0,
+    }
+
+
 async def test_admin_perf_summary_requires_admin_membership(client: httpx.AsyncClient) -> None:
     _create_session(session_id="normal-session", member_id=99, name="User")
 

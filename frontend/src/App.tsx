@@ -35,6 +35,7 @@ import {
 } from "@/lib/anchor-labels";
 import {
   API_ORIGIN,
+  getLoopPlaybackPolicy,
   getPlaybackBufferPolicy,
   isDeferredNonCriticalBootstrapEnabled,
   isDeferredPrefetchUntilFirstPaintEnabled,
@@ -74,9 +75,6 @@ const FRAME_MAX_RETRIES = 3;
 const FRAME_HARD_DEADLINE_MS = 30_000;
 const FRAME_RETRY_BASE_MS = 1200;
 const SCRUB_COMMIT_NEIGHBOR_WINDOW = 2;
-const LOOP_PRELOAD_MIN_READY = 2;
-const LOOP_AHEAD_READY_TARGET = 8;
-const MAX_CONCURRENT_DECODES = 4;
 const WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES = 256 * 1024 * 1024;
 const WEBP_DECODE_CACHE_BUDGET_MOBILE_BYTES = 128 * 1024 * 1024;
 const EMPTY_TILE_DATA_URL = "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=";
@@ -168,6 +166,15 @@ type PendingLoopStartMetric = {
   runId: string | null;
   regionId: string | null;
   forecastHour: number | null;
+};
+
+type LoopDisplayCommitMetric = {
+  token: number;
+  displayHour: number;
+  renderMode: RenderModeState;
+  committedAt: number;
+  decodedAt: number | null;
+  presentationPath: "canvas" | "image-url";
 };
 
 type PendingVariableSwitchMetric = {
@@ -952,6 +959,9 @@ export default function App() {
   const loopDecodeFetchSamplesRef = useRef<number[]>([]);
   const loopDecodeOnlySamplesRef = useRef<number[]>([]);
   const loopDecodeCompletedAtRef = useRef<Map<string, number>>(new Map());
+  const loopDisplayCommitRef = useRef<LoopDisplayCommitMetric | null>(null);
+  const loopDisplayCommitTokenRef = useRef(0);
+  const loopDisplayPaintedTokenRef = useRef(0);
   const longTaskSampleCounterRef = useRef(0);
   const loopVisiblePaintTokenRef = useRef(0);
   const tierFailoverCycleRef = useRef<{ key: string; emitted: boolean }>({ key: "", emitted: false });
@@ -1494,9 +1504,10 @@ export default function App() {
       const endIndex = Math.min(loopFrameHours.length - 1, currentIndex + maxAhead);
       for (let index = currentIndex + 1; index <= endIndex; index += 1) {
         const fh = loopFrameHours[index];
-        if (hasDecodedLoopFrame(fh, mode)) {
-          ready += 1;
+        if (!hasDecodedLoopFrame(fh, mode)) {
+          break;
         }
+        ready += 1;
       }
       return ready;
     },
@@ -1845,6 +1856,14 @@ export default function App() {
         autoplayTickMs: AUTOPLAY_TICK_MS,
       }),
     [frameHours.length]
+  );
+  const loopPlaybackPolicy = useMemo(
+    () =>
+      getLoopPlaybackPolicy({
+        totalFrames: loopFrameHours.length,
+        autoplayTickMs: AUTOPLAY_TICK_MS,
+      }),
+    [loopFrameHours.length]
   );
 
   const updateBufferSnapshot = useCallback(() => {
@@ -2590,7 +2609,7 @@ export default function App() {
       });
     };
 
-    // Attempt to start playback early once LOOP_AHEAD_READY_TARGET consecutive
+    // Attempt to start playback early once the loop playback policy's minimum
     // decoded frames exist ahead of the current position. The remaining in-flight
     // decodes continue to completion via processNext() and warm the LRU cache so
     // the playback ticker never stalls waiting for frames.
@@ -2600,10 +2619,8 @@ export default function App() {
       const currentIdx = loopFrameHours.indexOf(forecastHour);
       if (currentIdx < 0) return false;
       const remainingAhead = loopFrameHours.length - 1 - currentIdx;
-      const neededAhead = Math.min(LOOP_AHEAD_READY_TARGET, remainingAhead);
+      const neededAhead = Math.min(loopPlaybackPolicy.minStartBuffer, remainingAhead);
       if (neededAhead <= 0) return false;
-      // All neededAhead frames must be consecutively ready to guarantee
-      // the playback ticker won't stall before background decodes catch up.
       let consecutiveAhead = 0;
       for (let i = currentIdx + 1; i < loopFrameHours.length && consecutiveAhead < neededAhead; i++) {
         if (readySet.has(loopFrameHours[i])) {
@@ -2655,7 +2672,7 @@ export default function App() {
       flushProgress();
       if (earlyStarted) return;
       setIsLoopPreloading(false);
-      const minReady = Math.min(LOOP_PRELOAD_MIN_READY, loopFrameHours.length);
+      const minReady = Math.min(loopPlaybackPolicy.minStartBuffer, loopFrameHours.length);
       if (readySet.size >= minReady) {
         if (renderMode !== "tiles") {
           setVisibleRenderMode(renderMode);
@@ -2671,7 +2688,6 @@ export default function App() {
 
     // Process frames in priority order (starting at current forecast hour) with
     // bounded concurrency to stay within the browser's HTTP/2 stream budget.
-    const PRELOAD_CONCURRENCY = 4;
     let inFlight = 0;
     let nextIndex = 0;
     let stopped = false;
@@ -2681,7 +2697,7 @@ export default function App() {
       // or unmount). Already-in-flight fetches complete but won't chain further,
       // preventing runaway cache filling that evicts the frames playback needs.
       if (stopped) return;
-      while (inFlight < PRELOAD_CONCURRENCY && nextIndex < orderedFrames.length) {
+      while (inFlight < loopPlaybackPolicy.maxCriticalInFlight && nextIndex < orderedFrames.length) {
         const fh = orderedFrames[nextIndex];
         nextIndex += 1;
         if (!resolveLoopUrlForHour(fh, renderMode)) {
@@ -2717,21 +2733,27 @@ export default function App() {
     renderMode,
     forecastHour,
     ensureLoopFrameDecoded,
+    loopPlaybackPolicy.maxCriticalInFlight,
+    loopPlaybackPolicy.minStartBuffer,
   ]);
 
   useEffect(() => {
-    if (!loopDisplayHour) {
+    if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
+      loopDisplayCommitRef.current = null;
       return;
     }
-    const pending = pendingFrameMetricRef.current;
-    if (!pending || pending.renderTarget !== "loop" || pending.expectedLoopHour !== loopDisplayHour) {
-      return;
-    }
-    if (!Number.isFinite(pending.firstVisibleAt)) {
-      pending.firstVisibleAt = performance.now();
-    }
-    finalizePendingFrameMetric("loop");
-  }, [loopDisplayHour, finalizePendingFrameMetric]);
+    const displayHour = loopDisplayHour as number;
+    const cacheKey = loopCacheKey(displayHour, visibleRenderMode);
+    const decodedAt = loopDecodeCompletedAtRef.current.get(cacheKey) ?? null;
+    loopDisplayCommitRef.current = {
+      token: ++loopDisplayCommitTokenRef.current,
+      displayHour,
+      renderMode: visibleRenderMode,
+      committedAt: performance.now(),
+      decodedAt: Number.isFinite(decodedAt) ? (decodedAt as number) : null,
+      presentationPath: getDecodedLoopBitmap(displayHour, visibleRenderMode) ? "canvas" : "image-url",
+    };
+  }, [isLoopDisplayActive, loopDisplayHour, visibleRenderMode, loopCacheKey, getDecodedLoopBitmap]);
 
   useEffect(() => {
     if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
@@ -2750,77 +2772,6 @@ export default function App() {
     }
     setLoopDisplayBitmap((current) => (current === nextBitmap ? current : nextBitmap));
   }, [isLoopDisplayActive, loopDisplayHour, visibleRenderMode, getDecodedLoopBitmap, loopDisplayBitmap]);
-
-  useEffect(() => {
-    if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
-      return;
-    }
-    const displayHour = loopDisplayHour as number;
-
-    const cacheKey = loopCacheKey(displayHour, visibleRenderMode);
-    const decodedAt = loopDecodeCompletedAtRef.current.get(cacheKey) ?? null;
-    if (Number.isFinite(decodedAt)) {
-      const queueDurationMs = performance.now() - (decodedAt as number);
-      if (Number.isFinite(queueDurationMs) && queueDurationMs >= 0) {
-        trackPerfEvent({
-          event_name: "loop_queue_to_visible",
-          duration_ms: queueDurationMs,
-          model_id: modelRef.current || null,
-          variable_id: variableRef.current || null,
-          run_id: telemetryRunId,
-          region_id: region || null,
-          forecast_hour: displayHour,
-          meta: {
-            render_mode: visibleRenderMode,
-            presentation_path: loopDisplayBitmap ? "canvas" : "image-url",
-          },
-        });
-      }
-    }
-
-    const paintToken = ++loopVisiblePaintTokenRef.current;
-    const paintedStartAt = performance.now();
-    let rafBId: number | null = null;
-    const rafA = window.requestAnimationFrame(() => {
-      rafBId = window.requestAnimationFrame(() => {
-        if (paintToken !== loopVisiblePaintTokenRef.current) {
-          return;
-        }
-        const durationMs = performance.now() - paintedStartAt;
-        if (!Number.isFinite(durationMs) || durationMs < 0) {
-          return;
-        }
-        trackPerfEvent({
-          event_name: "loop_first_visible_paint",
-          duration_ms: durationMs,
-          model_id: modelRef.current || null,
-          variable_id: variableRef.current || null,
-          run_id: telemetryRunId,
-          region_id: region || null,
-          forecast_hour: displayHour,
-          meta: {
-            render_mode: visibleRenderMode,
-            presentation_path: loopDisplayBitmap ? "canvas" : "image-url",
-          },
-        });
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(rafA);
-      if (rafBId !== null) {
-        window.cancelAnimationFrame(rafBId);
-      }
-    };
-  }, [
-    isLoopDisplayActive,
-    loopDisplayHour,
-    visibleRenderMode,
-    loopCacheKey,
-    telemetryRunId,
-    region,
-    loopDisplayBitmap,
-  ]);
 
   const trackFirstViewerFrame = useCallback((frameHour: number | null) => {
     if (firstViewerFrameTrackedRef.current) {
@@ -2859,6 +2810,113 @@ export default function App() {
   }, [telemetryRunId, region, hasRenderableSelection, loadedFramesKey]);
 
   useEffect(() => {
+    if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
+      return;
+    }
+    const commit = loopDisplayCommitRef.current;
+    if (!commit || commit.displayHour !== loopDisplayHour || commit.renderMode !== visibleRenderMode) {
+      return;
+    }
+    if (loopDisplayPaintedTokenRef.current === commit.token) {
+      return;
+    }
+
+    if (Number.isFinite(commit.decodedAt)) {
+      const decodedToCommitMs = commit.committedAt - (commit.decodedAt as number);
+      if (Number.isFinite(decodedToCommitMs) && decodedToCommitMs >= 0) {
+        trackPerfEvent({
+          event_name: "loop_decode_to_commit",
+          duration_ms: decodedToCommitMs,
+          model_id: modelRef.current || null,
+          variable_id: variableRef.current || null,
+          run_id: telemetryRunId,
+          region_id: region || null,
+          forecast_hour: commit.displayHour,
+          meta: {
+            render_mode: commit.renderMode,
+            presentation_path: commit.presentationPath,
+          },
+        });
+      }
+    }
+
+    const paintToken = ++loopVisiblePaintTokenRef.current;
+    let rafBId: number | null = null;
+    const rafA = window.requestAnimationFrame(() => {
+      rafBId = window.requestAnimationFrame(() => {
+        if (paintToken !== loopVisiblePaintTokenRef.current) {
+          return;
+        }
+        if (loopDisplayCommitRef.current?.token !== commit.token) {
+          return;
+        }
+        loopDisplayPaintedTokenRef.current = commit.token;
+        const visibleAt = performance.now();
+        const durationMs = visibleAt - commit.committedAt;
+        if (!Number.isFinite(durationMs) || durationMs < 0) {
+          return;
+        }
+        trackPerfEvent({
+          event_name: "loop_commit_to_visible",
+          duration_ms: durationMs,
+          model_id: modelRef.current || null,
+          variable_id: variableRef.current || null,
+          run_id: telemetryRunId,
+          region_id: region || null,
+          forecast_hour: commit.displayHour,
+          meta: {
+            render_mode: commit.renderMode,
+            presentation_path: commit.presentationPath,
+          },
+        });
+
+        const pending = pendingFrameMetricRef.current;
+        if (pending && pending.renderTarget === "loop" && pending.expectedLoopHour === commit.displayHour) {
+          if (!Number.isFinite(pending.firstVisibleAt)) {
+            pending.firstVisibleAt = visibleAt;
+          }
+          finalizePendingFrameMetric("loop");
+        }
+
+        const pendingLoopStart = pendingLoopStartMetricRef.current;
+        if (isPlaying && pendingLoopStart && commit.displayHour !== pendingLoopStart.forecastHour) {
+          pendingLoopStartMetricRef.current = null;
+          const loopStartMs = visibleAt - pendingLoopStart.startedAt;
+          if (Number.isFinite(loopStartMs) && loopStartMs >= 0) {
+            trackPerfEvent({
+              event_name: "loop_start",
+              duration_ms: loopStartMs,
+              model_id: pendingLoopStart.modelId,
+              variable_id: pendingLoopStart.variableId,
+              run_id: pendingLoopStart.runId,
+              region_id: pendingLoopStart.regionId,
+              forecast_hour: commit.displayHour,
+            });
+          }
+        }
+
+        trackFirstViewerFrame(commit.displayHour);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafA);
+      if (rafBId !== null) {
+        window.cancelAnimationFrame(rafBId);
+      }
+    };
+  }, [
+    isLoopDisplayActive,
+    loopDisplayHour,
+    visibleRenderMode,
+    telemetryRunId,
+    region,
+    finalizePendingFrameMetric,
+    isPlaying,
+    trackFirstViewerFrame,
+  ]);
+
+  useEffect(() => {
     if (firstViewerFrameTrackedRef.current) {
       return;
     }
@@ -2870,13 +2928,6 @@ export default function App() {
     }
     trackFirstViewerFrame(pendingFirstViewerFrameHourRef.current);
   }, [hasRenderableSelection, loadedFramesKey, trackFirstViewerFrame]);
-
-  useEffect(() => {
-    if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
-      return;
-    }
-    trackFirstViewerFrame(loopDisplayHour);
-  }, [isLoopDisplayActive, loopDisplayHour, trackFirstViewerFrame]);
 
   // Finalize variable_switch in loop mode: fires when the first loop frame for the
   // new variable becomes displayable.
@@ -2922,30 +2973,6 @@ export default function App() {
   }, [loopDisplayHour, variable, shouldEagerlyDecodeLoopFrames, loopDisplayBitmap]);
 
   useEffect(() => {
-    if (!isPlaying) {
-      return;
-    }
-    const pending = pendingLoopStartMetricRef.current;
-    if (!pending) {
-      return;
-    }
-    pendingLoopStartMetricRef.current = null;
-    const durationMs = performance.now() - pending.startedAt;
-    if (!Number.isFinite(durationMs) || durationMs < 0) {
-      return;
-    }
-    trackPerfEvent({
-      event_name: "loop_start",
-      duration_ms: durationMs,
-      model_id: pending.modelId,
-      variable_id: pending.variableId,
-      run_id: pending.runId,
-      region_id: pending.regionId,
-      forecast_hour: pending.forecastHour,
-    });
-  }, [isPlaying]);
-
-  useEffect(() => {
     if (!isLoopDisplayActive || !shouldEagerlyDecodeLoopFrames || loopFrameHours.length === 0) {
       return;
     }
@@ -2984,7 +3011,7 @@ export default function App() {
       }
 
       const remainingAhead = Math.max(0, loopFrameHours.length - 1 - currentIndex);
-      const targetAhead = Math.min(LOOP_AHEAD_READY_TARGET, remainingAhead);
+      const targetAhead = Math.min(loopPlaybackPolicy.targetWarmAhead, remainingAhead);
       if (targetAhead <= 0) {
         return;
       }
@@ -3001,7 +3028,10 @@ export default function App() {
         candidates.push(fh);
       }
 
-      const availableSlots = Math.max(0, MAX_CONCURRENT_DECODES - inFlight.size);
+      const concurrencyLimit = isLoopAutoplayBuffering
+        ? loopPlaybackPolicy.maxCriticalInFlight
+        : loopPlaybackPolicy.maxIdleInFlight;
+      const availableSlots = Math.max(0, concurrencyLimit - inFlight.size);
       for (const fh of candidates.slice(0, availableSlots)) {
         launchDecode(fh);
       }
@@ -3026,6 +3056,10 @@ export default function App() {
     loopFrameHours,
     ensureLoopFrameDecoded,
     hasDecodedLoopFrame,
+    isLoopAutoplayBuffering,
+    loopPlaybackPolicy.maxCriticalInFlight,
+    loopPlaybackPolicy.maxIdleInFlight,
+    loopPlaybackPolicy.targetWarmAhead,
   ]);
 
   // Playback ticker. Reads forecastHourRef so the interval stays stable across
@@ -3055,6 +3089,12 @@ export default function App() {
       }
 
       const nextHour = loopFrameHours[nextIndex];
+      const remainingAhead = Math.max(0, loopFrameHours.length - 1 - currentIndex);
+      const minAheadRequired = Math.min(loopPlaybackPolicy.minAheadWhilePlaying, remainingAhead);
+      const readyAhead = countAheadReadyLoopFrames(currentHour, visibleRenderMode, minAheadRequired);
+      const shouldBuffer = minAheadRequired > 0 && readyAhead < minAheadRequired;
+      setIsLoopAutoplayBuffering((current) => (current === shouldBuffer ? current : shouldBuffer));
+
       if (hasDecodedLoopFrame(nextHour, visibleRenderMode)) {
         lastLoopAdvanceRef.current = Date.now();
         setTargetForecastHour(nextHour);
@@ -3103,7 +3143,9 @@ export default function App() {
     renderMode,
     loopFrameHours,
     visibleRenderMode,
+    countAheadReadyLoopFrames,
     hasDecodedLoopFrame,
+    loopPlaybackPolicy.minAheadWhilePlaying,
   ]);
 
   useEffect(() => {

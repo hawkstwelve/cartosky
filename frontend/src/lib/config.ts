@@ -28,6 +28,14 @@ export type PlaybackBufferPolicy = {
   minAheadWhilePlaying: number;
 };
 
+export type LoopPlaybackPolicy = {
+  minStartBuffer: number;
+  minAheadWhilePlaying: number;
+  targetWarmAhead: number;
+  maxCriticalInFlight: number;
+  maxIdleInFlight: number;
+};
+
 export function getPlaybackBufferPolicy(params: {
   totalFrames: number;
   autoplayTickMs: number;
@@ -61,6 +69,60 @@ export function getPlaybackBufferPolicy(params: {
     bufferTarget: Math.max(minStartBuffer, Math.min(bufferTarget, totalFrames || bufferTarget)),
     minStartBuffer,
     minAheadWhilePlaying,
+  };
+}
+
+export function getLoopPlaybackPolicy(params: {
+  totalFrames: number;
+  autoplayTickMs: number;
+}): LoopPlaybackPolicy {
+  const totalFrames = Math.max(0, Number(params.totalFrames) || 0);
+  const tickMs = Math.max(60, Number(params.autoplayTickMs) || 250);
+  const safeFrameCount = Math.max(1, totalFrames);
+
+  let minStartBuffer = 4;
+  if (totalFrames >= 72) {
+    minStartBuffer = 5;
+  } else if (totalFrames >= 18) {
+    minStartBuffer = 4;
+  } else if (totalFrames > 0) {
+    minStartBuffer = Math.min(3, totalFrames);
+  }
+
+  let minAheadWhilePlaying = 4;
+  if (tickMs <= 180) {
+    minAheadWhilePlaying = 5;
+  } else if (tickMs >= 350) {
+    minAheadWhilePlaying = 3;
+  }
+
+  let targetWarmAhead = 8;
+  if (totalFrames >= 72) {
+    targetWarmAhead = 10;
+  } else if (totalFrames >= 36) {
+    targetWarmAhead = 8;
+  } else if (totalFrames >= 18) {
+    targetWarmAhead = 6;
+  } else if (totalFrames > 0) {
+    targetWarmAhead = Math.max(4, Math.min(6, totalFrames));
+  }
+
+  const maxCriticalInFlight = totalFrames >= 60 ? 5 : 4;
+  const maxIdleInFlight = totalFrames >= 36 ? 3 : 2;
+
+  const resolvedMinStartBuffer = Math.max(1, Math.min(minStartBuffer, safeFrameCount));
+  const resolvedMinAheadWhilePlaying = Math.max(1, Math.min(minAheadWhilePlaying, safeFrameCount));
+  const resolvedTargetWarmAhead = Math.max(
+    resolvedMinAheadWhilePlaying,
+    Math.min(targetWarmAhead, safeFrameCount),
+  );
+
+  return {
+    minStartBuffer: resolvedMinStartBuffer,
+    minAheadWhilePlaying: resolvedMinAheadWhilePlaying,
+    targetWarmAhead: resolvedTargetWarmAhead,
+    maxCriticalInFlight,
+    maxIdleInFlight,
   };
 }
 

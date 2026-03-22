@@ -28,8 +28,8 @@ type MetricKey =
   | "tile_fetch"
   | "loop_manifest_resolve"
   | "loop_decode_ready"
-  | "loop_queue_to_visible"
-  | "loop_first_visible_paint"
+  | "loop_decode_to_commit"
+  | "loop_commit_to_visible"
   | "long_task_blocking"
   | "loop_frame_drop_gap";
 
@@ -386,8 +386,8 @@ export default function AdminPerformancePage() {
   const [tileFetchTrend, setTileFetchTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [loopManifestTrend, setLoopManifestTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [loopDecodeTrend, setLoopDecodeTrend] = useState<PerfTimeseriesPoint[]>([]);
-  const [loopQueueTrend, setLoopQueueTrend] = useState<PerfTimeseriesPoint[]>([]);
-  const [loopPaintTrend, setLoopPaintTrend] = useState<PerfTimeseriesPoint[]>([]);
+  const [loopDecodeToCommitTrend, setLoopDecodeToCommitTrend] = useState<PerfTimeseriesPoint[]>([]);
+  const [loopCommitToVisibleTrend, setLoopCommitToVisibleTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [longTaskTrend, setLongTaskTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [loopDropTrend, setLoopDropTrend] = useState<PerfTimeseriesPoint[]>([]);
   const [modelBreakdown, setModelBreakdown] = useState<PerfBreakdownItem[]>([]);
@@ -406,8 +406,8 @@ export default function AdminPerformancePage() {
   const [tileFetchModelBreakdown, setTileFetchModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [loopManifestModelBreakdown, setLoopManifestModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [loopDecodeModelBreakdown, setLoopDecodeModelBreakdown] = useState<PerfBreakdownItem[]>([]);
-  const [loopQueueModelBreakdown, setLoopQueueModelBreakdown] = useState<PerfBreakdownItem[]>([]);
-  const [loopPaintModelBreakdown, setLoopPaintModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [loopDecodeToCommitModelBreakdown, setLoopDecodeToCommitModelBreakdown] = useState<PerfBreakdownItem[]>([]);
+  const [loopCommitToVisibleModelBreakdown, setLoopCommitToVisibleModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [longTaskDeviceBreakdown, setLongTaskDeviceBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [loopDropModelBreakdown, setLoopDropModelBreakdown] = useState<PerfBreakdownItem[]>([]);
   const [activeMetric, setActiveMetric] = useState<MetricKey | null>(null);
@@ -431,12 +431,12 @@ export default function AdminPerformancePage() {
         const [
           summaryData,
           frameSeries, loopSeries, firstFrameSeries, varSwitchSeries, tileFetchSeries,
-          loopManifestSeries, loopDecodeSeries, loopQueueSeries, loopPaintSeries, longTaskSeries, loopDropSeries,
+          loopManifestSeries, loopDecodeSeries, loopDecodeToCommitSeries, loopCommitToVisibleSeries, longTaskSeries, loopDropSeries,
           modelData, frameDeviceData, deviceData, loopModelData, loopVariableData,
           firstFrameModelData, firstFrameDeviceData,
           scrubModelData, scrubVariableData, animationStallModelData, animationStallVariableData, frameVariableData,
           varSwitchModelData, tileFetchModelData,
-          loopManifestModelData, loopDecodeModelData, loopQueueModelData, loopPaintModelData,
+          loopManifestModelData, loopDecodeModelData, loopDecodeToCommitModelData, loopCommitToVisibleModelData,
           longTaskDeviceData, loopDropModelData,
         ] = await Promise.all([
           fetchAdminPerfSummary({ window: windowValue, device: deviceValue, latestRuns }),
@@ -447,8 +447,8 @@ export default function AdminPerformancePage() {
           fetchAdminPerfTimeseries({ metric: "tile_fetch", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfTimeseries({ metric: "loop_manifest_resolve", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfTimeseries({ metric: "loop_decode_ready", window: windowValue, device: deviceValue, latestRuns }),
-          fetchAdminPerfTimeseries({ metric: "loop_queue_to_visible", window: windowValue, device: deviceValue, latestRuns }),
-          fetchAdminPerfTimeseries({ metric: "loop_first_visible_paint", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "loop_decode_to_commit", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfTimeseries({ metric: "loop_commit_to_visible", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfTimeseries({ metric: "long_task_blocking", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfTimeseries({ metric: "loop_frame_drop_gap", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "frame_change", by: "model", window: windowValue, device: deviceValue, latestRuns }),
@@ -467,8 +467,8 @@ export default function AdminPerformancePage() {
           fetchAdminPerfBreakdown({ metric: "tile_fetch", by: "model", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "loop_manifest_resolve", by: "model", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "loop_decode_ready", by: "model", window: windowValue, device: deviceValue, latestRuns }),
-          fetchAdminPerfBreakdown({ metric: "loop_queue_to_visible", by: "model", window: windowValue, device: deviceValue, latestRuns }),
-          fetchAdminPerfBreakdown({ metric: "loop_first_visible_paint", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "loop_decode_to_commit", by: "model", window: windowValue, device: deviceValue, latestRuns }),
+          fetchAdminPerfBreakdown({ metric: "loop_commit_to_visible", by: "model", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "long_task_blocking", by: "device", window: windowValue, device: deviceValue, latestRuns }),
           fetchAdminPerfBreakdown({ metric: "loop_frame_drop_gap", by: "model", window: windowValue, device: deviceValue, latestRuns }),
         ]);
@@ -482,8 +482,8 @@ export default function AdminPerformancePage() {
         setTileFetchTrend(tileFetchSeries.points);
         setLoopManifestTrend(loopManifestSeries.points);
         setLoopDecodeTrend(loopDecodeSeries.points);
-        setLoopQueueTrend(loopQueueSeries.points);
-        setLoopPaintTrend(loopPaintSeries.points);
+        setLoopDecodeToCommitTrend(loopDecodeToCommitSeries.points);
+        setLoopCommitToVisibleTrend(loopCommitToVisibleSeries.points);
         setLongTaskTrend(longTaskSeries.points);
         setLoopDropTrend(loopDropSeries.points);
         setModelBreakdown(modelData.items);
@@ -502,8 +502,8 @@ export default function AdminPerformancePage() {
         setTileFetchModelBreakdown(tileFetchModelData.items);
         setLoopManifestModelBreakdown(loopManifestModelData.items);
         setLoopDecodeModelBreakdown(loopDecodeModelData.items);
-        setLoopQueueModelBreakdown(loopQueueModelData.items);
-        setLoopPaintModelBreakdown(loopPaintModelData.items);
+        setLoopDecodeToCommitModelBreakdown(loopDecodeToCommitModelData.items);
+        setLoopCommitToVisibleModelBreakdown(loopCommitToVisibleModelData.items);
         setLongTaskDeviceBreakdown(longTaskDeviceData.items);
         setLoopDropModelBreakdown(loopDropModelData.items);
       } catch (nextError) {
@@ -639,7 +639,7 @@ export default function AdminPerformancePage() {
         {
           key: "loop_start",
           title: "Loop Start",
-          description: "Time from play action to actual loop playback start.",
+          description: "Time from play action to the first advancing visible loop frame.",
           icon: Activity,
           metric: summary.loop_start,
           detailContent: (
@@ -854,47 +854,47 @@ export default function AdminPerformancePage() {
           ),
         },
         {
-          key: "loop_queue_to_visible",
-          title: "Loop Queue to Visible",
-          description: "Time from decoded frame availability to loop frame visibility.",
+          key: "loop_decode_to_commit",
+          title: "Loop Decode to Commit",
+          description: "Age of a decoded loop frame when it is committed for presentation.",
           icon: TimerReset,
-          metric: summary.loop_queue_to_visible,
+          metric: summary.loop_decode_to_commit,
           detailContent: (
             <>
               <TrendChart
-                title="Loop Queue to Visible Trend"
-                subtitle="Queue-to-visible delay for promoted loop frames."
-                points={loopQueueTrend}
+                title="Loop Decode to Commit Trend"
+                subtitle="How long decoded loop frames wait before presentation commit."
+                points={loopDecodeToCommitTrend}
                 lineColor="#f2c27a"
                 percentile={trendPercentile}
               />
               <BreakdownList
-                title="Loop Queue to Visible by Model"
-                subtitle="Promotion delay split by model."
-                items={loopQueueModelBreakdown}
+                title="Loop Decode to Commit by Model"
+                subtitle="Decoded-frame age at commit split by model."
+                items={loopDecodeToCommitModelBreakdown}
               />
             </>
           ),
         },
         {
-          key: "loop_first_visible_paint",
-          title: "Loop First Visible Paint",
-          description: "Time from loop frame promotion to first visible paint confirmation.",
+          key: "loop_commit_to_visible",
+          title: "Loop Commit to Visible",
+          description: "Time from loop frame commit to first visible paint confirmation.",
           icon: Zap,
-          metric: summary.loop_first_visible_paint,
+          metric: summary.loop_commit_to_visible,
           detailContent: (
             <>
               <TrendChart
-                title="Loop First Visible Paint Trend"
-                subtitle="Visibility confirmation timing after loop frame promotion."
-                points={loopPaintTrend}
+                title="Loop Commit to Visible Trend"
+                subtitle="Commit-to-visible latency for loop frames."
+                points={loopCommitToVisibleTrend}
                 lineColor="#d5b2ff"
                 percentile={trendPercentile}
               />
               <BreakdownList
-                title="Loop First Visible Paint by Model"
-                subtitle="First-paint visibility timing split by model."
-                items={loopPaintModelBreakdown}
+                title="Loop Commit to Visible by Model"
+                subtitle="Commit-to-visible timing split by model."
+                items={loopCommitToVisibleModelBreakdown}
               />
             </>
           ),

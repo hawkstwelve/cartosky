@@ -117,6 +117,15 @@ def _parse_hint_int(value: Any, *, default: int, minimum: int = 0) -> int:
     return max(int(minimum), int(parsed))
 
 
+def _is_apcp_seed_grid_mismatch_error(exc: BaseException) -> bool:
+    message = str(exc)
+    return (
+        isinstance(exc, ValueError)
+        and "APCP_STEP_RESOLUTION" in message
+        and "grid mismatch" in message
+    )
+
+
 def _parse_kuchera_levels_hpa(value: Any) -> list[int]:
     if isinstance(value, (list, tuple, set)):
         tokens = list(value)
@@ -2585,27 +2594,65 @@ def _derive_snowfall_total_10to1_cumulative(
         step_valid = apcp_valid & csnow_valid
         return step_snow_kgm2, step_valid
 
-    cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
-        model_id=model_id,
-        var_key=var_key,
-        product=product,
-        run_date=run_date,
-        fh=fh,
-        step_fhs=active_step_fhs,
-        model_plugin=model_plugin,
-        ctx=ctx,
-        apcp_component=apcp_component,
-        apcp_product=None,
-        use_warped=use_warped,
-        target_region=target_region,
-        target_grid_id=target_grid_id,
-        resampling=resampling,
-        use_inventory_resolution=use_inventory_resolution,
-        process_step=_process_step,
-        error_label=f"No cumulative snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}",
-        first_step_expected_start_fh=first_step_expected_start_fh,
-        initial_apcp_cumulative=initial_apcp_cumulative,
-    )
+    try:
+        cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
+            model_id=model_id,
+            var_key=var_key,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            step_fhs=active_step_fhs,
+            model_plugin=model_plugin,
+            ctx=ctx,
+            apcp_component=apcp_component,
+            apcp_product=None,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            use_inventory_resolution=use_inventory_resolution,
+            process_step=_process_step,
+            error_label=f"No cumulative snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+            first_step_expected_start_fh=first_step_expected_start_fh,
+            initial_apcp_cumulative=initial_apcp_cumulative,
+        )
+    except ValueError as exc:
+        if not (reused_prev_cumulative and _is_apcp_seed_grid_mismatch_error(exc)):
+            raise
+        logger.warning(
+            "snow10to1_incremental apcp-seed grid mismatch at fh=%03d; retrying full rebuild",
+            fh,
+        )
+        active_step_fhs = list(step_fhs)
+        reused_prev_cumulative = False
+        base_fh = None
+        base_cumulative_kgm2 = None
+        base_crs = None
+        base_transform = None
+        first_step_expected_start_fh = None
+        initial_apcp_cumulative = None
+        current_step_fetch_counts = {"apcp": 0, "csnow": 0}
+        cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
+            model_id=model_id,
+            var_key=var_key,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            step_fhs=active_step_fhs,
+            model_plugin=model_plugin,
+            ctx=ctx,
+            apcp_component=apcp_component,
+            apcp_product=None,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            use_inventory_resolution=use_inventory_resolution,
+            process_step=_process_step,
+            error_label=f"No cumulative snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+            first_step_expected_start_fh=None,
+            initial_apcp_cumulative=None,
+        )
 
     if base_cumulative_kgm2 is not None and base_crs is not None and base_transform is not None:
         shape_match = base_cumulative_kgm2.shape == cumulative_kgm2.shape
