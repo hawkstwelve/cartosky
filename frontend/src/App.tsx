@@ -885,7 +885,6 @@ export default function App() {
   const [isLoopPreloading, setIsLoopPreloading] = useState(false);
   const [isLoopAutoplayBuffering, setIsLoopAutoplayBuffering] = useState(false);
   const [loopProgress, setLoopProgress] = useState({ total: 0, ready: 0, failed: 0 });
-  const [loopBaseForecastHour, setLoopBaseForecastHour] = useState<number | null>(null);
   const [isPreloadingForPlay, setIsPreloadingForPlay] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubRequestedHour, setScrubRequestedHour] = useState<number | null>(null);
@@ -1898,16 +1897,9 @@ export default function App() {
   ]);
 
   const loopPromotionAllowed = !tileFirstInitialPaintEnabled || firstWeatherFramePainted;
-  const isLoopPlaybackLocked =
-    renderMode !== "tiles"
-    && canUseLoopPlayback
-    && loopPromotionAllowed
-    && (isPlaying || isLoopPreloading);
   const isLoopDisplayActive = visibleRenderMode !== "tiles" && canUseLoopPlayback && loopPromotionAllowed;
   const shouldEagerlyDecodeLoopFrames = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
-  const mapForecastHour = isLoopPlaybackLocked && Number.isFinite(loopBaseForecastHour)
-    ? (loopBaseForecastHour as number)
-    : forecastHour;
+  const mapForecastHour = isLoopDisplayActive ? targetForecastHour : forecastHour;
 
   const tileUrlForHour = useCallback(
     (fh: number): string => {
@@ -2615,7 +2607,6 @@ export default function App() {
     setIsLoopPreloading(false);
     setIsLoopAutoplayBuffering(false);
     setLoopProgress({ total: loopFrameHours.length, ready: 0, failed: 0 });
-    setLoopBaseForecastHour(null);
     setLoopDisplayHour(null);
     loopPreloadTokenRef.current += 1;
     loopReadyHoursRef.current.clear();
@@ -4431,7 +4422,6 @@ export default function App() {
     });
 
     if (canUseLoopPlayback && webpDefaultEnabled) {
-      setLoopBaseForecastHour(forecastHour);
       setIsPlaying(false);
       setIsPreloadingForPlay(false);
       setIsLoopPreloading(true);
