@@ -1,5 +1,6 @@
 import { useState, type ComponentType, type ReactNode } from "react";
 import {
+  ArrowUpRight,
   Boxes,
   CalendarClock,
   ChevronDown,
@@ -7,6 +8,7 @@ import {
   MapPin,
   Send,
   SlidersHorizontal,
+  X,
 } from "lucide-react";
 
 import type { BasemapMode } from "@/components/map-canvas";
@@ -55,6 +57,12 @@ type WeatherToolbarProps = {
   onOpacityChange: (next: number) => void;
   onPostToTwf?: () => void;
   layoutMode?: ViewerLayoutMode;
+  runDisplayLabel?: string;
+  latestAvailableRunLabel?: string | null;
+  hasNewerRunAvailable?: boolean;
+  newRunNoticeMessage?: string | null;
+  onViewLatestRun?: () => void;
+  onDismissRunNotice?: () => void;
 };
 
 function ToolbarSelect(props: {
@@ -68,9 +76,22 @@ function ToolbarSelect(props: {
   grouped?: boolean;
   triggerClassName?: string;
   hideLabel?: boolean;
+  selectedLabelOverride?: string;
 }) {
-  const { label, icon: Icon, value, onValueChange, options, disabled, placeholder, grouped, triggerClassName, hideLabel = false } = props;
-  const selectedLabel = options.find((opt) => opt.value === value)?.label ?? placeholder;
+  const {
+    label,
+    icon: Icon,
+    value,
+    onValueChange,
+    options,
+    disabled,
+    placeholder,
+    grouped,
+    triggerClassName,
+    hideLabel = false,
+    selectedLabelOverride,
+  } = props;
+  const selectedLabel = selectedLabelOverride ?? options.find((opt) => opt.value === value)?.label ?? placeholder;
 
   let content: ReactNode;
   if (grouped) {
@@ -242,6 +263,12 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     onOpacityChange,
     onPostToTwf,
     layoutMode = "desktop",
+    runDisplayLabel,
+    latestAvailableRunLabel,
+    hasNewerRunAvailable = false,
+    newRunNoticeMessage,
+    onViewLatestRun,
+    onDismissRunNotice,
   } = props;
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const isDesktopLayout = layoutMode === "desktop";
@@ -250,7 +277,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
 
   const selectedModelLabel = models.find((opt) => opt.value === model)?.label ?? "Model";
   const selectedVariableLabel = variables.find((opt) => opt.value === variable)?.label ?? "Variable";
-  const selectedRunLabel = (runs.find((opt) => opt.value === run)?.label ?? "Run").replace(
+  const selectedRunLabel = (runDisplayLabel ?? runs.find((opt) => opt.value === run)?.label ?? "Run").replace(
     /^Latest\s*\((.*)\)$/,
     "$1"
   );
@@ -293,6 +320,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               disabled={disabled}
               placeholder="Run"
               hideLabel
+              selectedLabelOverride={runDisplayLabel}
               triggerClassName="min-w-[142px] max-w-[142px] rounded-full border-white/10 bg-white/8 px-3"
             />
 
@@ -309,6 +337,40 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               triggerClassName="min-w-[248px] max-w-[248px] rounded-full border-white/10 bg-white/8 px-3"
             />
           </div>
+
+          {hasNewerRunAvailable ? (
+            <div className="glass-overlay ml-3 inline-flex max-w-[360px] items-center gap-3 rounded-2xl border border-emerald-300/18 px-3 py-2 text-xs text-white/90 shadow-[0_18px_40px_rgba(0,0,0,0.28)]">
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-200/78">
+                  New Run Available
+                </div>
+                <div className="truncate text-white/88">
+                  {newRunNoticeMessage ?? (latestAvailableRunLabel ? `${latestAvailableRunLabel} is ready.` : "A newer run is ready.")}
+                </div>
+              </div>
+              {onViewLatestRun ? (
+                <button
+                  type="button"
+                  onClick={onViewLatestRun}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-300/24 bg-emerald-300/12 px-2.5 py-1 text-[11px] font-semibold text-emerald-50 transition-colors duration-150 hover:bg-emerald-300/18"
+                >
+                  View latest
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+              {onDismissRunNotice ? (
+                <button
+                  type="button"
+                  onClick={onDismissRunNotice}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/6 text-white/64 transition-colors duration-150 hover:bg-white/12 hover:text-white"
+                  aria-label="Dismiss new run notice"
+                  title="Dismiss"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -352,6 +414,33 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
           ) : null}
         </div>
 
+        {hasNewerRunAvailable ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-emerald-300/18 bg-emerald-300/10 px-3 py-2 text-[11px] text-white/88">
+            <span className="font-semibold text-emerald-100">
+              {newRunNoticeMessage ?? (latestAvailableRunLabel ? `New run available: ${latestAvailableRunLabel}` : "A newer run is available.")}
+            </span>
+            {onViewLatestRun ? (
+              <button
+                type="button"
+                onClick={onViewLatestRun}
+                className="inline-flex items-center gap-1 rounded-full border border-emerald-300/25 bg-emerald-300/12 px-2 py-1 font-semibold text-emerald-50"
+              >
+                View latest
+                <ArrowUpRight className="h-3 w-3" />
+              </button>
+            ) : null}
+            {onDismissRunNotice ? (
+              <button
+                type="button"
+                onClick={onDismissRunNotice}
+                className="inline-flex items-center rounded-full border border-white/12 bg-white/8 px-2 py-1 text-white/72"
+              >
+                Dismiss
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         {mobilePanelOpen ? (
           <div
             id="mobile-layers-panel"
@@ -386,6 +475,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 options={runs}
                 disabled={disabled}
                 placeholder="Run"
+                selectedLabelOverride={runDisplayLabel}
               />
 
               <ToolbarSelect

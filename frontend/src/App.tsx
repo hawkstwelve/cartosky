@@ -47,7 +47,7 @@ import {
   WEBP_RENDER_MODE_THRESHOLDS,
 } from "@/lib/config";
 import { selectPrefetchFrameHours } from "@/lib/render-scheduler";
-import { buildRunOptions } from "@/lib/run-options";
+import { buildRunOptions, formatRunLabel, pickLatestRunId, sortRunIdsDescending } from "@/lib/run-options";
 import { type ScreenshotExportState } from "@/lib/screenshot_export";
 import { buildTileUrlFromFrame } from "@/lib/tiles";
 import { readPermalink } from "@/lib/permalink-read";
@@ -117,6 +117,56 @@ type BufferSnapshot = {
   statusText: string;
   version: number;
 };
+
+type NewRunNoticeState = {
+  model: string;
+  previousRunId: string;
+  latestRunId: string;
+};
+
+function areStringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function withUpdatedLatestRun(
+  capabilities: CapabilitiesResponse | null,
+  modelId: string,
+  latestRunId: string | null,
+  publishedRuns?: string[]
+): CapabilitiesResponse | null {
+  if (!capabilities) {
+    return capabilities;
+  }
+  const currentAvailability = capabilities.availability?.[modelId];
+  if (!currentAvailability) {
+    return capabilities;
+  }
+  const nextPublishedRuns = publishedRuns ?? currentAvailability.published_runs ?? [];
+  const latestUnchanged = currentAvailability.latest_run === latestRunId;
+  const runsUnchanged = areStringArraysEqual(currentAvailability.published_runs ?? [], nextPublishedRuns);
+  if (latestUnchanged && runsUnchanged) {
+    return capabilities;
+  }
+  return {
+    ...capabilities,
+    availability: {
+      ...capabilities.availability,
+      [modelId]: {
+        ...currentAvailability,
+        latest_run: latestRunId,
+        published_runs: [...nextPublishedRuns],
+      },
+    },
+  };
+}
 
 type AnchorBatchRequestContext = {
   selectionKey: string;
@@ -869,6 +919,7 @@ export default function App() {
   const [model, setModel] = useState("");
   const [region, setRegion] = useState(MAP_VIEW_DEFAULTS.region);
   const [run, setRun] = useState("latest");
+  const [newRunNotice, setNewRunNotice] = useState<NewRunNoticeState | null>(null);
   const [variable, setVariable] = useState("");
   const [visualVariable, setVisualVariable] = useState("");
   const [variableSwitchState, setVariableSwitchState] = useState<VariableSwitchState | null>(null);
@@ -1251,14 +1302,15 @@ export default function App() {
   const latestRunId = useMemo(() => {
     const manifestLatest =
       run === "latest" && runManifest?.model === model ? (runManifest.run ?? null) : null;
+    const runsLatest = pickLatestRunId(runs);
     const availabilityLatest =
       model && capabilities?.availability?.[model]
         ? (capabilities.availability[model].latest_run ?? null)
         : null;
-    const fallbackRun = runs[0] ?? frameRows[0]?.run ?? null;
-    const candidates = [manifestLatest, availabilityLatest, fallbackRun].filter((value): value is string => Boolean(value));
+    const fallbackRun = currentFrame?.run ?? frameRows[0]?.run ?? null;
+    const candidates = [manifestLatest, runsLatest, availabilityLatest, fallbackRun].filter((value): value is string => Boolean(value));
     return candidates[0] ?? null;
-  }, [run, runManifest, model, capabilities, runs, frameRows]);
+  }, [run, runManifest, model, capabilities, runs, currentFrame, frameRows]);
   const resolvedRunForRequests = run === "latest" ? (latestRunId ?? "latest") : run;
   const telemetryRunId = resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null);
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
@@ -3831,7 +3883,7 @@ export default function App() {
         const runDataPromise = shouldFetchRuns
           ? fetchRuns(model, { signal: controller.signal })
           : Promise.resolve(runs);
-        const [runData, requestedManifest] = await Promise.all([
+        const [runDataRaw, requestedManifest] = await Promise.all([
           runDataPromise,
           fetchManifest(model, run, { signal: controller.signal }).catch(() => null),
         ]);
@@ -3839,6 +3891,7 @@ export default function App() {
           return;
         }
 
+        const runData = sortRunIdsDescending(runDataRaw);
         const nextRun = run !== "latest" && runData.includes(run) ? run : "latest";
         let manifestData = requestedManifest;
         if (!manifestData && nextRun !== run) {
@@ -3851,6 +3904,7 @@ export default function App() {
         if (shouldFetchRuns) {
           runsLoadedForModelRef.current = model;
           setRuns(runData);
+          setCapabilities((current) => withUpdatedLatestRun(current, model, pickLatestRunId(runData), runData));
         }
         setRun(nextRun);
 
@@ -4154,14 +4208,34 @@ export default function App() {
     const interval = window.setInterval(() => {
       tickController?.abort();
       tickController = new AbortController();
-      const manifestMatchesSelection =
-        Boolean(runManifest) &&
-        runManifest?.model === model &&
-        (run === "latest" || runManifest?.run === run || runManifest?.run === resolvedRunForRequests);
+      void (async () => {
+        try {
+          const nextRuns = sortRunIdsDescending(await fetchRuns(model, { signal: tickController?.signal }));
+          if (cancelled || tickController?.signal.aborted) {
+            return;
+          }
+          const nextLatestRunId = pickLatestRunId(nextRuns);
+          setRuns((prevRuns) => (areStringArraysEqual(prevRuns, nextRuns) ? prevRuns : nextRuns));
+          setCapabilities((current) => withUpdatedLatestRun(current, model, nextLatestRunId, nextRuns));
 
-      if (manifestMatchesSelection) {
-        fetchManifest(model, run, { signal: tickController.signal })
-          .then((manifestData) => {
+          const currentlyViewedRun = resolvedRunForRequests;
+          if (currentlyViewedRun && nextLatestRunId && nextLatestRunId !== currentlyViewedRun) {
+            setRun(currentlyViewedRun);
+            setNewRunNotice({
+              model,
+              previousRunId: currentlyViewedRun,
+              latestRunId: nextLatestRunId,
+            });
+            return;
+          }
+
+          const manifestMatchesSelection =
+            Boolean(runManifest) &&
+            runManifest?.model === model &&
+            (runManifest?.run === "latest" || runManifest?.run === currentlyViewedRun || runManifest?.run === nextLatestRunId);
+
+          if (manifestMatchesSelection) {
+            const manifestData = await fetchManifest(model, run, { signal: tickController.signal });
             if (cancelled || tickController?.signal.aborted) {
               return;
             }
@@ -4181,40 +4255,71 @@ export default function App() {
             if (hasFrameList) {
               setFrameRows((prevRows) => {
                 const merged = mergeManifestRowsWithPrevious(rows, prevRows);
-                // If no new frames were added, return the same reference to avoid
-                // cascading through memos and restarting any in-progress preload.
                 return merged.length === prevRows.length ? prevRows : merged;
               });
               const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
               setForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
               setTargetForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
             }
-          })
-          .catch((err) => {
-            if (err instanceof DOMException && err.name === "AbortError") {
-              return;
-            }
-            // Background refresh should not interrupt active UI.
-          });
-        return;
-      }
+            return;
+          }
 
-      // Use `run` ("latest" when in live mode) rather than the resolved run ID so
-      // the request hits the short-TTL ETag path and bypasses any stale immutable
-      // browser-cache entries for the resolved run URL.
-      fetchFrames(model, run, variable, { signal: tickController.signal })
-        .then((rows) => {
+          const rows = await fetchFrames(model, run, variable, { signal: tickController.signal });
           if (cancelled || tickController?.signal.aborted) {
             return;
           }
-          setFrameRows((prevRows) => {
-            // Only update the reference if new frames actually arrived to avoid
-            // cascading through memos and restarting any in-progress preload.
-            return rows.length === prevRows.length ? prevRows : rows;
-          });
+          setFrameRows((prevRows) => (rows.length === prevRows.length ? prevRows : rows));
           const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
           setForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
           setTargetForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") {
+            return;
+          }
+          // Background refresh should not interrupt active UI.
+        }
+      })();
+    }, 30000);
+
+    return () => {
+      cancelled = true;
+      tickController?.abort();
+      window.clearInterval(interval);
+    };
+  }, [model, run, variable, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, hasRenderableSelection]);
+
+  useEffect(() => {
+    if (!model || run === "latest" || !isPageVisible) {
+      return;
+    }
+
+    let cancelled = false;
+    let tickController: AbortController | null = null;
+
+    const interval = window.setInterval(() => {
+      tickController?.abort();
+      tickController = new AbortController();
+      void fetchRuns(model, { signal: tickController.signal })
+        .then((nextRunsRaw) => {
+          if (cancelled || tickController?.signal.aborted) {
+            return;
+          }
+          const nextRuns = sortRunIdsDescending(nextRunsRaw);
+          const nextLatestRunId = pickLatestRunId(nextRuns);
+          setRuns((prevRuns) => (areStringArraysEqual(prevRuns, nextRuns) ? prevRuns : nextRuns));
+          setCapabilities((current) => withUpdatedLatestRun(current, model, nextLatestRunId, nextRuns));
+          setNewRunNotice((current) => {
+            if (!current || current.model !== model || !nextLatestRunId) {
+              return current;
+            }
+            if (current.latestRunId === nextLatestRunId) {
+              return current;
+            }
+            return {
+              ...current,
+              latestRunId: nextLatestRunId,
+            };
+          });
         })
         .catch((err) => {
           if (err instanceof DOMException && err.name === "AbortError") {
@@ -4229,7 +4334,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, hasRenderableSelection]);
+  }, [model, run, isPageVisible]);
 
   useEffect(() => {
     if (!isPlaying || renderMode !== "tiles" || frameHours.length === 0) return;
@@ -4604,6 +4709,12 @@ export default function App() {
   }, [model, variable, telemetryRunId, forecastHour]);
 
   const handleModelChange = useCallback((nextModel: string) => {
+    setNewRunNotice((current) => (current?.model === nextModel ? current : null));
+    setRun("latest");
+    setRuns([]);
+    setRunManifest(null);
+    setFrameRows([]);
+    setLoopManifest(null);
     setModel(nextModel);
     trackUsageEvent({
       event_name: "model_selected",
@@ -4614,6 +4725,28 @@ export default function App() {
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
   }, [variable, telemetryRunId, region, forecastHour]);
+
+  const handleRunChange = useCallback((nextRun: string) => {
+    setRun(nextRun);
+    setNewRunNotice((current) => {
+      if (!current || current.model !== model) {
+        return current;
+      }
+      if (nextRun === "latest" || nextRun === current.latestRunId) {
+        return null;
+      }
+      return current.previousRunId === nextRun ? current : null;
+    });
+  }, [model]);
+
+  const handleViewLatestRun = useCallback(() => {
+    setRun("latest");
+    setNewRunNotice(null);
+  }, []);
+
+  const handleDismissNewRunNotice = useCallback(() => {
+    setNewRunNotice(null);
+  }, []);
 
   const handleVariableChange = useCallback((nextVariable: string) => {
     if (!nextVariable || nextVariable === variable) {
@@ -4762,10 +4895,53 @@ export default function App() {
       return fromOptions;
     }
     if (run === "latest") {
-      return latestRunId ? `Latest (${latestRunId})` : "Latest";
+      return latestRunId ? `Latest (${formatRunLabel(latestRunId)})` : "Latest";
     }
-    return run;
+    return formatRunLabel(run);
   }, [runOptions, run, latestRunId]);
+  const latestAvailableRunLabel = useMemo(() => {
+    return latestRunId ? formatRunLabel(latestRunId) : null;
+  }, [latestRunId]);
+  const hasNewerRunAvailable = Boolean(
+    latestRunId
+    && run !== "latest"
+    && run !== latestRunId
+  );
+  const runNoticeForCurrentModel = newRunNotice?.model === model ? newRunNotice : null;
+  const showNewRunNotice = Boolean(
+    runNoticeForCurrentModel
+    && latestRunId
+    && latestRunId === runNoticeForCurrentModel.latestRunId
+    && run === runNoticeForCurrentModel.previousRunId
+  );
+  const newRunNoticeMessage = useMemo(() => {
+    if (showNewRunNotice && latestRunId) {
+      return `${formatRunLabel(latestRunId)} is ready. You're still viewing ${formatRunLabel(run)}.`;
+    }
+    if (hasNewerRunAvailable && latestRunId) {
+      return `Latest available: ${formatRunLabel(latestRunId)}.`;
+    }
+    return null;
+  }, [showNewRunNotice, hasNewerRunAvailable, latestRunId, run]);
+
+  useEffect(() => {
+    setNewRunNotice((current) => {
+      if (!current) {
+        return current;
+      }
+      if (current.model !== model) {
+        return null;
+      }
+      if (run === "latest" || !latestRunId || run === latestRunId) {
+        return null;
+      }
+      if (current.previousRunId !== run) {
+        return current.latestRunId === latestRunId ? current : { ...current, latestRunId };
+      }
+      return current.latestRunId === latestRunId ? current : { ...current, latestRunId };
+    });
+  }, [model, run, latestRunId]);
+
   const selectedVariableLabel = useMemo(() => {
     const fromOptions = variables.find((entry) => entry.value === variable)?.label;
     if (fromOptions) {
@@ -4955,7 +5131,7 @@ export default function App() {
         model={model}
         onModelChange={handleModelChange}
         run={run}
-        onRunChange={setRun}
+        onRunChange={handleRunChange}
         variable={variable}
         onVariableChange={handleVariableChange}
         regions={regions}
@@ -4973,6 +5149,12 @@ export default function App() {
         onOpacityChange={setOpacity}
         onPostToTwf={handleOpenShareModal}
         layoutMode={viewerLayoutMode}
+        runDisplayLabel={selectedRunLabel}
+        latestAvailableRunLabel={latestAvailableRunLabel}
+        hasNewerRunAvailable={hasNewerRunAvailable}
+        newRunNoticeMessage={newRunNoticeMessage}
+        onViewLatestRun={hasNewerRunAvailable ? handleViewLatestRun : undefined}
+        onDismissRunNotice={showNewRunNotice ? handleDismissNewRunNotice : undefined}
       />
 
       <div className="relative flex-1 min-h-0 overflow-hidden">

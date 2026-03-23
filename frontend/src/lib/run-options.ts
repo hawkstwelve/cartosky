@@ -21,11 +21,17 @@ export function latestRunLabel(runId: string | null): string {
   return `Latest (${formatRunLabel(runId)})`;
 }
 
+export function sortRunIdsDescending(runs: string[]): string[] {
+  return Array.from(new Set(runs.filter(Boolean))).sort((a, b) => b.localeCompare(a));
+}
+
+export function pickLatestRunId(runs: string[]): string | null {
+  return sortRunIdsDescending(runs)[0] ?? null;
+}
+
 export function buildRunOptions(runs: string[], latestRunId: string | null): RunOption[] {
-  const unique = Array.from(new Set(runs.filter(Boolean)));
-  const concrete = unique
-    .filter((runId) => runId !== latestRunId)
-    .sort((a, b) => b.localeCompare(a));
+  const concrete = sortRunIdsDescending(runs)
+    .filter((runId) => runId !== latestRunId);
 
   return [
     { value: "latest", label: latestRunLabel(latestRunId) },
