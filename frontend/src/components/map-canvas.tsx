@@ -766,6 +766,8 @@ export function MapCanvas({
   const loopToTileStableTimerRef = useRef<number | null>(null);
   const loopToTileIdleCleanupRef = useRef<(() => void) | null>(null);
   const loopToTileTokenRef = useRef(0);
+  const loopImageRequestTokenRef = useRef(0);
+  const loopImagePreloadRef = useRef<HTMLImageElement | null>(null);
   const previousLoopActiveRef = useRef(loopActive);
   const isLoopToTileTransitioningRef = useRef(false);
   const anchorMarkersRef = useRef<Map<string, AnchorMarkerRecord>>(new Map());
@@ -887,6 +889,71 @@ export function MapCanvas({
       map.setPaintProperty(id, "raster-brightness-max", paintSettings.brightnessMax);
     },
     []
+  );
+
+  const cancelPendingLoopImageUpdate = useCallback(() => {
+    loopImageRequestTokenRef.current += 1;
+    const pending = loopImagePreloadRef.current;
+    if (!pending) {
+      return;
+    }
+    pending.onload = null;
+    pending.onerror = null;
+    loopImagePreloadRef.current = null;
+  }, []);
+
+  const queueLoopImageUpdate = useCallback(
+    (
+      map: maplibregl.Map,
+      nextLoopImageUrl: string | null | undefined,
+      nextLoopImageCoordinates: [[number, number], [number, number], [number, number], [number, number]],
+    ) => {
+      cancelPendingLoopImageUpdate();
+      if (!nextLoopImageUrl) {
+        return;
+      }
+
+      const requestToken = loopImageRequestTokenRef.current;
+      const image = new Image();
+      image.decoding = "async";
+      image.crossOrigin = "anonymous";
+      loopImagePreloadRef.current = image;
+
+      image.onload = () => {
+        if (loopImageRequestTokenRef.current !== requestToken) {
+          return;
+        }
+        const loopSource = map.getSource(LOOP_SOURCE_ID) as maplibregl.ImageSource | undefined;
+        if (!loopSource || typeof loopSource.updateImage !== "function") {
+          return;
+        }
+        try {
+          loopSource.updateImage({
+            url: nextLoopImageUrl,
+            coordinates: nextLoopImageCoordinates,
+          });
+        } catch (error) {
+          console.warn("[map] failed to update loop image source", { loopImageUrl: nextLoopImageUrl, error });
+        } finally {
+          if (loopImagePreloadRef.current === image) {
+            loopImagePreloadRef.current = null;
+          }
+        }
+      };
+
+      image.onerror = () => {
+        if (loopImageRequestTokenRef.current !== requestToken) {
+          return;
+        }
+        console.warn("[map] failed to preload loop image", { loopImageUrl: nextLoopImageUrl });
+        if (loopImagePreloadRef.current === image) {
+          loopImagePreloadRef.current = null;
+        }
+      };
+
+      image.src = nextLoopImageUrl;
+    },
+    [cancelPendingLoopImageUpdate]
   );
 
   const enforceLayerOrder = useCallback((map: maplibregl.Map) => {
@@ -1408,9 +1475,10 @@ export function MapCanvas({
       clearAnchorMarkers();
       map.remove();
       mapRef.current = null;
+      cancelPendingLoopImageUpdate();
       setIsLoaded(false);
     };
-  }, [cancelCrossfade, cancelLoopToTileTransition, clearAnchorMarkers, enforceLayerOrder, initializeSourceTracking]);
+  }, [cancelCrossfade, cancelLoopToTileTransition, cancelPendingLoopImageUpdate, clearAnchorMarkers, enforceLayerOrder, initializeSourceTracking]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1513,13 +1581,7 @@ export function MapCanvas({
       }
 
       if (loopImageUrl) {
-        const loopSource = map.getSource(LOOP_SOURCE_ID) as maplibregl.ImageSource | undefined;
-        if (loopSource && typeof loopSource.updateImage === "function") {
-          loopSource.updateImage({
-            url: loopImageUrl,
-            coordinates: loopImageCoordinates,
-          });
-        }
+        queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates);
       }
       const loopCanvasSource = map.getSource(LOOP_CANVAS_SOURCE_ID) as maplibregl.CanvasSource | undefined;
       if (loopCanvasSource && typeof loopCanvasSource.setCoordinates === "function") {
@@ -1557,11 +1619,13 @@ export function MapCanvas({
 
     return () => {
       map.off("styledata", onStyleData);
+      cancelPendingLoopImageUpdate();
     };
   }, [
     basemapMode,
     isLoaded,
     cancelCrossfade,
+    cancelPendingLoopImageUpdate,
     contourGeoJsonUrl,
     enforceLayerOrder,
     initializeSourceTracking,
@@ -1572,6 +1636,7 @@ export function MapCanvas({
     loopImageUrl,
     overlayFadeOutZoom,
     opacity,
+    queueLoopImageUpdate,
     setLayerOpacity,
     setLayerRasterPaint,
     variable,
@@ -2031,17 +2096,7 @@ export function MapCanvas({
       return;
     }
 
-    const loopSource = map.getSource(LOOP_SOURCE_ID) as maplibregl.ImageSource | undefined;
-    if (loopSource && typeof loopSource.updateImage === "function" && loopImageUrl) {
-      try {
-        loopSource.updateImage({
-          url: loopImageUrl,
-          coordinates: loopImageCoordinates,
-        });
-      } catch (error) {
-        console.warn("[map] failed to update loop image source", { loopImageUrl, error });
-      }
-    }
+    queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates);
     const loopCanvasSource = map.getSource(LOOP_CANVAS_SOURCE_ID) as maplibregl.CanvasSource | undefined;
     if (loopCanvasSource && typeof loopCanvasSource.setCoordinates === "function") {
       loopCanvasSource.setCoordinates(loopImageCoordinates);
@@ -2064,6 +2119,7 @@ export function MapCanvas({
     variable,
     hasCanvasLoopFrame,
     hasLoopVisual,
+    queueLoopImageUpdate,
     enforceLayerOrder,
   ]);
 
