@@ -1344,6 +1344,13 @@ export default function App() {
     return nearestFrame(loopFrameHours, forecastHour);
   }, [loopFrameHours, forecastHour]);
 
+  const resolvedLoopTargetForecastHour = useMemo(() => {
+    if (loopFrameHours.length === 0) {
+      return targetForecastHour;
+    }
+    return nearestFrame(loopFrameHours, targetForecastHour);
+  }, [loopFrameHours, targetForecastHour]);
+
   const resolveLoopUrlForHour = useCallback(
     (fh: number, preferredMode: RenderModeState): string | null => {
       if (preferredMode === "webp_tier1") {
@@ -1837,7 +1844,11 @@ export default function App() {
       return;
     }
 
-    if (!resolveLoopUrlForHour(resolvedLoopForecastHour, renderMode)) {
+    const commitLoopHour = isPlaying || isLoopPreloading || isLoopAutoplayBuffering
+      ? resolvedLoopForecastHour
+      : resolvedLoopTargetForecastHour;
+
+    if (!resolveLoopUrlForHour(commitLoopHour, renderMode)) {
       setVisibleRenderMode("tiles");
       setLoopDisplayHour(null);
       return;
@@ -1846,7 +1857,7 @@ export default function App() {
     const shouldPromoteViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing || isVariableSwitching;
     if (shouldPromoteViaImageSource) {
       setVisibleRenderMode(renderMode);
-      setLoopDisplayHour(resolvedLoopForecastHour);
+      setLoopDisplayHour(commitLoopHour);
       return;
     }
 
@@ -1855,14 +1866,14 @@ export default function App() {
     // by paused-path presentation. The token gates whether we actually commit
     // the visible mode change — preventing stale results from being applied.
     const token = transitionTokenRef.current;
-    ensureLoopFrameDecoded(resolvedLoopForecastHour, renderMode)
+    ensureLoopFrameDecoded(commitLoopHour, renderMode)
       .then((ready) => {
         if (token !== transitionTokenRef.current) {
           return;
         }
         if (ready) {
           setVisibleRenderMode(renderMode);
-          setLoopDisplayHour(resolvedLoopForecastHour);
+          setLoopDisplayHour(commitLoopHour);
         }
       })
       .catch(() => {
@@ -1874,7 +1885,9 @@ export default function App() {
     canUseLoopPlayback,
     tileFirstInitialPaintEnabled,
     firstWeatherFramePainted,
+    targetForecastHour,
     resolvedLoopForecastHour,
+    resolvedLoopTargetForecastHour,
     resolveLoopUrlForHour,
     ensureLoopFrameDecoded,
     isPlaying,
@@ -3618,29 +3631,33 @@ export default function App() {
       pendingVarSwitch.loopDecodeRequestedAt = performance.now();
     }
 
+    const commitLoopHour = isPlaying || isLoopPreloading || isLoopAutoplayBuffering
+      ? resolvedLoopForecastHour
+      : resolvedLoopTargetForecastHour;
+
     if (
       pendingVarSwitch
       && pendingVarSwitch.toVariableId === variable
       && !Number.isFinite(pendingVarSwitch.firstTargetRequestAt)
-      && resolveLoopUrlForHour(resolvedLoopForecastHour, visibleRenderMode)
+      && resolveLoopUrlForHour(commitLoopHour, visibleRenderMode)
     ) {
       pendingVarSwitch.firstTargetRequestAt = performance.now();
     }
 
     const shouldCommitViaImageSource =
       isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing || isVariableSwitching;
-    if (shouldCommitViaImageSource && resolveLoopUrlForHour(resolvedLoopForecastHour, visibleRenderMode)) {
+    if (shouldCommitViaImageSource && resolveLoopUrlForHour(commitLoopHour, visibleRenderMode)) {
       loopDisplayDecodeTokenRef.current += 1;
-      setLoopDisplayHour(resolvedLoopForecastHour);
+      setLoopDisplayHour(commitLoopHour);
       if (isScrubbing || isVariableSwitching) {
-        startForegroundLoopFrameDecode(resolvedLoopForecastHour, visibleRenderMode);
+        startForegroundLoopFrameDecode(commitLoopHour, visibleRenderMode);
       }
       return;
     }
 
     if (!shouldEagerlyDecodeLoopFrames) {
       loopDisplayDecodeTokenRef.current += 1;
-      setLoopDisplayHour(resolvedLoopForecastHour);
+      setLoopDisplayHour(commitLoopHour);
       return;
     }
 
@@ -3650,7 +3667,7 @@ export default function App() {
     // No signal: the decode always completes and its result is stored in the LRU
     // cache. The token guards the commit; scrubbing to a new frame only invalidates
     // the commit, not the inflight fetch — keeping every touched frame warm.
-    ensureLoopFrameDecoded(resolvedLoopForecastHour, visibleRenderMode)
+    ensureLoopFrameDecoded(commitLoopHour, visibleRenderMode)
       .then((ready) => {
         if (!ready) {
           return;
@@ -3658,14 +3675,16 @@ export default function App() {
         if (decodeToken !== loopDisplayDecodeTokenRef.current) {
           return;
         }
-        setLoopDisplayHour(resolvedLoopForecastHour);
+        setLoopDisplayHour(commitLoopHour);
       })
       .catch(() => {
         // keep previous display hour when decode fails.
       });
   }, [
     isLoopDisplayActive,
+    targetForecastHour,
     resolvedLoopForecastHour,
+    resolvedLoopTargetForecastHour,
     visibleRenderMode,
     ensureLoopFrameDecoded,
     variable,
@@ -4730,8 +4749,8 @@ export default function App() {
   const activeLoopHour = preferLoopImagePlaybackPresentation
     ? resolvedLoopForecastHour
     : ((preferLoopImageScrubPresentation || preferLoopImageVariableSwitchPresentation)
-      ? (loopDisplayHour ?? resolvedLoopForecastHour)
-      : (loopDisplayHour ?? forecastHour));
+      ? (loopDisplayHour ?? resolvedLoopTargetForecastHour)
+      : (loopDisplayHour ?? resolvedLoopTargetForecastHour));
   const activeLoopBitmap = preferLoopImagePresentation ? null : loopDisplayBitmap;
   const activeLoopUrl = isLoopDisplayActive
     ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
